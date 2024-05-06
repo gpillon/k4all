@@ -78,7 +78,7 @@ jobs:
         ls -lan ./k4all
     
     - name: Install qemu-img
-      run: sudo apt-get -qq update && sudo -qq apt-get install -y qemu-utils
+      run: sudo apt-get -qq update && sudo apt-get -qq install -y qemu-utils
 
     - name: Create k4all QCOW2 image
       run: |
