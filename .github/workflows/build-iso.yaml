@@ -68,8 +68,18 @@ jobs:
 
     - name: Generate k4all ISO
       run: |
-        docker run --privileged --rm -v /dev:/dev -v .:/data -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i /data/install.ign -o "/k4all/k4all-${{ env.version }}-k8s.iso" "/k4all/fedora-coreos.iso"
+        docker run --privileged --rm -v /dev:/dev -v .:/data -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i /data/install.ign -o "/k4all/k4all-${{ env.version }}.iso" "/k4all/fedora-coreos.iso"
       shell: bash
+    
+    - name: Install qemu-img
+      run: sudo apt-get update && sudo apt-get install -y qemu-utils
+
+    - name: Create k4all QCOW2 image
+      run: |
+        qemu-img convert -O qcow2 ./k4all/k4all-${{ env.version }}.iso ./k4all/k4all-${{ env.version }}.qcow2
+        qemu-img resize ./k4all/k4all-${{ env.version }}.qcow2 60G
+      shell: bash
+
     - name: Check ISO directory and FIX file permissions
       run: |
         sudo chown -R 1001:127 ./k4all
@@ -84,6 +94,8 @@ jobs:
         name: Release ${{ env.version }}
         draft: ${{ env.draft }}
         prerelease: ${{ env.prerelease }}
-        files: ./k4all/k4all-${{ env.version }}-k8s.iso
+        files: |
+          ./k4all/k4all-${{ env.version }}.iso
+          ./k4all/k4all-${{ env.version }}.qcow2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
