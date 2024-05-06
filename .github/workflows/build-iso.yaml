@@ -11,6 +11,7 @@ on:
 jobs:
   build-iso:
     runs-on: ubuntu-latest
+    permissions: --user root
 
     steps:
     - name: Check out the repository
@@ -84,7 +85,7 @@ jobs:
     - name: Check ISO directory and file permissions
       run: |
         ls -lan ./k4all
-        sudo chown -R 1001:127 ./k4all
+        sudo chown -R 127:127 ./k4all
         sudo chmod -R 644 ./k4all
         
     
