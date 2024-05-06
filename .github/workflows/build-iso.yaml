@@ -73,31 +73,12 @@ jobs:
 
     - name: Create a GitHub Release
       id: create_release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ env.version }}
         name: Release ${{ env.version }}
         draft: ${{ env.draft }}
         prerelease: ${{ env.prerelease }}
+        files: ./k4all/k4all-${{ env.version }}-k8s.iso
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-     
-    - name: Check ISO directory and file permissions
-      run: |
-        id
-        ls -lan ./k4all
-        sudo chown -R 1001:127 ./k4all
-        #sudo chmod -R 644 ./k4all
-        sudo ls -lan ./k4all
-        ls -lan ./k4all
-    
-    - name: Upload ISO to GitHub Release
-      uses: actions/upload-release-asset@v1
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: "./k4all/k4all-${{ env.version }}-k8s.iso"
-        asset_name: "k4all-${{ env.version }}-k8s.iso"
-        asset_content_type: "application/octet-stream"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
