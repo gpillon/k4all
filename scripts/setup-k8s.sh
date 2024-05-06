@@ -8,9 +8,18 @@ if [ -f "/var/lib/k8s-setup.done" ]; then
 fi
 
 # Install Kubernetes packages using rpm-ostree
-rpm-ostree install kubeadm kubectl kubelet crio
+rpm-ostree install --idempotent kubeadm kubectl kubelet crio
 
-rpm-ostree apply-live
+
+output=$(rpm-ostree status)
+
+# Check for pending deployments; look for '●' indicating non-active but ready deployments
+if grep -q '●' <<< "$output"; then
+  echo "Pending changes detected. Applying changes live..."
+  rpm-ostree apply-live
+else
+  echo "No pending changes."
+fi
 
 # Enable and start kubelet service
 systemctl enable --now crio
