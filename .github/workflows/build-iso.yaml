@@ -84,6 +84,7 @@ jobs:
      
     - name: Check ISO directory and file permissions
       run: |
+        id
         sudo chown -R 1001:127 ./k4all
         sudo chmod -R 644 ./k4all
         ls -lan ./k4all
