@@ -84,7 +84,9 @@ jobs:
     - name: Check ISO directory and file permissions
       run: |
         ls -lan ./k4all
-        chmod -R 644 ./k4all
+        sudo chown -R 1001:127 ./k4all
+        sudo chmod -R 644 ./k4all
+        
     
     - name: Upload ISO to GitHub Release
       uses: actions/upload-release-asset@v1
