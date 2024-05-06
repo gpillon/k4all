@@ -69,7 +69,7 @@ jobs:
     - name: Generate k4all ISO
       run: |
         docker run --privileged --rm -v /dev:/dev -v .:/data -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i /data/install.ign -o "/k4all/k4all-${{ env.version }}.iso" "/k4all/fedora-coreos.iso"
-         docker run --privileged --rm -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso kargs modify -a coreos.liveiso.fromram /fcos/fcos39-k8s.iso
+         docker run --privileged --rm -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso kargs modify -a coreos.liveiso.fromram "/k4all/k4all-${{ env.version }}.iso"
 
     - name: Check ISO directory and FIX file permissions
       run: |
