@@ -80,10 +80,11 @@ jobs:
     - name: Install qemu-img
       run: sudo apt-get -qq update && sudo apt-get -qq install -y qemu-utils
 
-    - name: Create k4all QCOW2 image
+    - name: Create k4all QCOW2 / VDI image
       run: |
         qemu-img convert -O qcow2 ./k4all/k4all-${{ env.version }}.iso ./k4all/k4all-${{ env.version }}.qcow2
         qemu-img resize ./k4all/k4all-${{ env.version }}.qcow2 60G
+        qemu-img convert -O vdi ./k4all/k4all-${{ env.version }}.qcow2 ./k4all/k4all-${{ env.version }}.vdi
       shell: bash
 
     - name: Create a GitHub Release
@@ -97,5 +98,6 @@ jobs:
         files: |
           ./k4all/k4all-${{ env.version }}.iso
           ./k4all/k4all-${{ env.version }}.qcow2
+          ./k4all/k4all-${{ env.version }}.vdi
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
