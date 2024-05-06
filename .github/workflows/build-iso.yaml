@@ -42,7 +42,7 @@ jobs:
       run: |
         mkdir k4all
         COREOS_URL="https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/39.20240407.3.0/x86_64/fedora-coreos-39.20240407.3.0-live.x86_64.iso"
-        wget -O ./k4all/fedora-coreos.iso "$COREOS_URL"
+        wget -q -O ./k4all/fedora-coreos.iso "$COREOS_URL"
       shell: bash
 
     - name: Make scripts executable
@@ -65,7 +65,6 @@ jobs:
 
     - name: Generate k4all ISO
       run: |
-        rm -rf "./k4all/k4all-${{ env.version }}-k8s.iso"
         docker run --privileged --rm -v /dev:/dev -v .:/data -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i /data/install.ign -o "/k4all/k4all-${{ env.version }}-k8s.iso" "/k4all/fedora-coreos.iso"
       shell: bash
 
