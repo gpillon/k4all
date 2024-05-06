@@ -78,7 +78,12 @@ jobs:
         prerelease: ${{ env.prerelease }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+     
+    - name: Check ISO directory and file permissions
+      run: |
+        chmod -R 644 ./k4all
+        ls -l ./k4all
+    
     - name: Upload ISO to GitHub Release
       uses: actions/upload-release-asset@v1
       with:
