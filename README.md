@@ -12,6 +12,11 @@ Key features include:
 - **LVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
 - **NGINX Ingress Controller**: Manages external access to services in the cluster.
 
+## Why k4all?
+- 1st time, it's ok.
+- 2nd time, you did it better.
+- 3rd time, automate it.
+
 ## Requirements:
 - 2 CPU Cores.
 - 4GB Ram (8G for running workloads).
