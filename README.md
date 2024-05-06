@@ -1,6 +1,6 @@
 # k4all ISO
 
-The `k4all` ISO provides a pre-configured Fedora CoreOS environment tailored for Kubernetes home mini-servers and virtual machines. This ISO includes essential tools and services like Kubernetes, Calico networking, the metrics server, Logical Volume Manager (LVM), and NGINX as an Ingress controller.
+The `k4all` ISO provides a pre-configured Fedora CoreOS environment tailored for Kubernetes home servers and virtual machines. This ISO includes also essential tools and services for k8s, Calico networking, the metrics server, Logical Volume Manager (LVM), and NGINX as an Ingress controller.
 
 ## Overview
 
@@ -12,6 +12,12 @@ Key features include:
 - **LVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
 - **NGINX Ingress Controller**: Manages external access to services in the cluster.
 
+## Requirements:
+- 2 CPU Cores.
+- 4GB Ram (8G for running workloads).
+- 20 Minutes.
+- Coffee, Sugar, Milk (not required).
+
 ## Installation
 
 ### Building the ISO
@@ -22,9 +28,12 @@ Key features include:
 
 ### Using the ISO
 
+0. Prepare a good Coffee (Expresso or American, depending on the hardware).
 1. Boot the ISO on the target system.
 2. The installation is fully automated and will format the entire `/dev/sda` disk.
 3. Once completed, the system will reboot into the new environment.
+4. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK).
+5. Follow next steps
 
 ## Default Setup
 
@@ -32,9 +41,7 @@ Key features include:
   - After login, use `passwd` to set a new password for the `core` user.
 
 - **Access Dashboard and Token**:
-  - Access the system with `sudo -i`.
-  - Run the provided script to obtain the dashboard URL and access token.
-
+  - Access the system with `sudo -i` (if credentials are not shown, wait for the end of the installation process).
 ## Post-Installation Notes
 
 - **Sample Pod**: A sample pod will be created in the `default` namespace if the LVM setup is successful. You can safely delete this pod.
@@ -56,6 +63,15 @@ To create a bootable USB device with the `k4all` ISO:
    - Download [Rufus](https://rufus.ie/)
    - Select the `k4all` ISO, choose your USB device, and click `Start`.
 
+## Debugging Failed Setup
+
+Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
+
 ## Further Information
 
-**Multi-Node Cluster:** For a multi-node cluster, follow the official Kubernetes setup guide.
+**Multi-Node Cluster:** ATM, the installtion is only for a single node cluster. _Feel free to contribute!_
+
+## Looking for an enterprise solution? 
+Let's take a look to [Openshift Single Node](https://docs.openshift.com/container-platform/latest/installing/installing_sno/install-sno-installing-sno.html)
+
+ 
