@@ -98,4 +98,6 @@ jobs:
         asset_path: "./k4all/k4all-${{ env.version }}-k8s.iso"
         asset_name: "k4all-${{ env.version }}-k8s.iso"
         asset_content_type: "application/octet-stream"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
