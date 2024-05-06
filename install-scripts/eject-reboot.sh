@@ -24,5 +24,5 @@ try_eject
 
 # Prompt system-wide to manually remove the CD-ROM
 
-#reboot
+reboot
 		  
