@@ -40,6 +40,7 @@ jobs:
 
     - name: Download Fedora CoreOS ISO
       run: |
+        mkdir k4all
         COREOS_URL="https://builds.coreos.fedoraproject.org/streams/stable/releases/latest/x86_64/fedora-coreos-39.20240407.3.0-live.x86_64.iso"
         wget -O ./k4all/fedora-coreos.iso "$COREOS_URL"
       shell: bash
