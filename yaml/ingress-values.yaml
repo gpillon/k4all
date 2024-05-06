@@ -1,0 +1,6 @@
+controller:
+  allowSnippetAnnotations: true
+  hostNetwork: true
+  ingressClassResource:
+    enabled: true
+  replicaCount: 1

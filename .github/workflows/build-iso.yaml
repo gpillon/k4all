@@ -1,0 +1,89 @@
+name: Build and Release k4all ISO
+
+on:
+  push:
+    tags:
+      - '*'
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v3
+
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v2
+
+    - name: Extract branch or tag version
+      id: version
+      run: |
+        if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+          VERSION="${GITHUB_REF_NAME}"
+          # Determine prerelease status based on tag format "vX.Y.Z-<alpha or beta>"
+          if [[ "$VERSION" =~ v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta) ]]; then
+            echo "prerelease=true" >> $GITHUB_ENV
+          else
+            echo "prerelease=false" >> $GITHUB_ENV
+          fi
+          echo "draft=false" >> $GITHUB_ENV
+        else
+          VERSION="${GITHUB_REF_NAME:-main}"
+          echo "draft=true" >> $GITHUB_ENV
+          echo "prerelease=false" >> $GITHUB_ENV
+        fi
+        echo "version=$VERSION" >> $GITHUB_ENV
+
+    - name: Download Fedora CoreOS ISO
+      run: |
+        COREOS_URL="https://builds.coreos.fedoraproject.org/streams/stable/releases/latest/x86_64/fedora-coreos-39.20240407.3.0-live.x86_64.iso"
+        wget -O ./k4all/fedora-coreos.iso "$COREOS_URL"
+      shell: bash
+
+    - name: Make scripts executable
+      run: |
+        chmod +x ./install-scripts/*
+        chmod +x ./scripts/*
+
+    - name: Create required directories
+      run: mkdir -p ./k4all
+
+    - name: Generate k8s.ign
+      run: |
+        docker run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < k8s.bu > k8s.ign
+      shell: bash
+
+    - name: Generate install.ign
+      run: |
+        docker run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < install.bu > install.ign
+      shell: bash
+
+    - name: Generate k4all ISO
+      run: |
+        rm -rf "./k4all/k4all-${{ env.version }}-k8s.iso"
+        docker run --privileged --rm -v /dev:/dev -v .:/data -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i /data/install.ign -o "/k4all/k4all-${{ env.version }}-k8s.iso" "/k4all/fedora-coreos.iso"
+      shell: bash
+
+    - name: Create a GitHub Release
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ env.version }}
+        name: Release ${{ env.version }}
+        draft: ${{ env.draft }}
+        prerelease: ${{ env.prerelease }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload ISO to GitHub Release
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: "./k4all/k4all-${{ env.version }}-k8s.iso"
+        asset_name: "k4all-${{ env.version }}-k8s.iso"
+        asset_content_type: "application/octet-stream"
+

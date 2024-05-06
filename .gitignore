@@ -1,0 +1,6 @@
+# Ignore specific files in the root folder
+k8s.ign
+install.ign
+
+# Ignore files starting with "private-" in the "manifests" subfolder
+manifests/private-*

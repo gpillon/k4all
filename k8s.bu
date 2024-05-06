@@ -1,0 +1,281 @@
+# k8s.bu
+variant: fcos
+version: 1.5.0
+
+kernel_arguments:
+  should_exist:
+    - mitigations=off
+  should_not_exist:
+    - mitigations=auto,nosmt
+    
+passwd:
+  users:
+    - name: core
+      password_hash: "$6$xyz$CCw54pypmRZ5rXtbwICd253nhHKkgqAAqenBsi.shPNfjDVnJ/Sz/.p2ovQiSA7eUl61lLQkDyq6itQQTMqfX0"
+      ssh_authorized_keys:
+        - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCmrZxO11M3Tmg6IAZPdllrelpFyXIFsespjNQJcSJaBsq5f2FPyj+t+RfZk4v7T058RJToDIAoqa/2X35vHDq8TdM423t2MLwGBrz4IgwvBR7WveJY/ZUanDUBpZyKUHiFJiSm7NoItOOH5X/d5KtBdHj8daqKjVk+lhT47nCSEoAbBso+4g4POsIHikVcLZqRxPJQryxM2Lg95m05uZVRkbkxEQxXsjjM5PyX341yj59zO+5Wpaqd6WAexksAc8Grp1iKo4fHwtSRTaEeso4PnQglOK+1zuRw2M5yjXOeDlwdJCSQWrKzMHsZqsXUadQxtExgxpmopE+dLZJ11DSB giorgio@giorgio-X541UVK
+
+
+systemd:
+  units:
+    - name: fck8s-set-hostname.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set Hostname
+        After=network.target
+        Requires=network.target
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/set-hostname.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-lvm-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Setup LVM
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-lvm.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-k8s-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Kubernetes
+        After=fck8s-set-hostname.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-k8s.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-helm-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Helm
+         
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-helm.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-node-ready-and-schedulable.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Wait for a node ready and schedulable
+        After=fck8s-k8s-setup.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/node-ready-and-schedulable.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-metric-server-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install Metric Server
+        After=fck8s-node-ready-and-schedulable.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-metrics.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-taint-master-schedulable.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Taint Master Node as Schedulable
+        After=fck8s-k8s-setup.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=setup-taint-master-scheduleable.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-dashboard-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install Dashboard
+        After=fck8s-node-ready-and-schedulable.service
+        After=fck8s-helm-setup.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-dashboard.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-ingress-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install Dashboard
+        After=fck8s-dashboard-setup.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-ingress.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-topolvm-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up topolvm
+        After=fck8s-node-ready-and-schedulable.service
+        After=fck8s-lvm-setup.service
+        After=fck8s-helm-setup.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-topolvm.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-calico-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Calico
+        After=fck8s-node-ready-and-schedulable.service
+        After=fck8s-helm-setup.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-calico.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-wait-default-service-account.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Wait default service account creation
+        After=fck8s-node-ready-and-schedulable.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/wait-default-service-account.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-custom-manifests-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install Custom Manifests
+        After=fck8s-wait-default-service-account.service
+         
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-custom-manifests.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-update-routes.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Update Kubernetes Ingress Routes for the Dashboard
+        After=fck8s-ingress-setup.service
+        
+        [Service]
+        ExecStart=/usr/local/bin/update-routes.sh
+        Type=oneshot
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-update-routes.timer
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Timer to periodically update Kubernetes Ingress for the Dashboard
+        
+        [Timer]
+        OnCalendar=*:0/10
+        
+        [Install]
+        WantedBy=multi-user.target
+storage:
+  disks:
+    - device: /dev/sda
+      wipe_table: false
+      partitions:
+        - label: root
+          number: 4
+          size_mib: 50000
+          resize: true
+        - label: lvm
+          size_mib: 0
+          wipe_partition_entry: true
+  trees:
+    - local: manifests
+      path: /usr/local/share/mainifests/
+    - local: scripts
+      path: /usr/local/bin/
+  #filesystems:
+  #  - device: /dev/disk/by-label/lvm
+  #    format: none 
+  #    path: /data/
+      
+  files:
+    - path: "/etc/k8s-config.yaml"
+      mode: 420
+      contents:
+        local: yaml/k8s-config.yaml
+    - path: "/etc/sysctl.d/k8s.conf"
+      mode: 420
+      contents:
+        inline: |
+         net.ipv4.ip_forward = 1
+    - path: "/etc/yum.repos.d/kubernetes.repo"
+      mode: 420
+      contents:
+        local: repo/kubernetes.repo
+    - path: /usr/local/share/lvm-values.yaml
+      mode: 0420
+      contents:
+        local: yaml/lvm-values.yaml
+    - path: /usr/local/share/ingress-values.yaml
+      mode: 0420
+      contents:
+        local: yaml/ingress-values.yaml
+    - path: /usr/local/share/dashboard-users.yaml
+      mode: 0420
+      contents:
+        local: yaml/dashboard-users.yaml
+    - path: /usr/local/share/dashboard-ingress-routes.yaml
+      mode: 0420
+      contents:
+        local: yaml/dashboard-ingress-routes.yaml

@@ -1,0 +1,86 @@
+variant: fcos
+version: 1.5.0
+passwd:
+  users:
+    - name: core
+      password_hash: >-
+        $6$xyz$CCw54pypmRZ5rXtbwICd253nhHKkgqAAqenBsi.shPNfjDVnJ/Sz/.p2ovQiSA7eUl61lLQkDyq6itQQTMqfX0
+      ssh_authorized_keys:
+        - >-
+          ssh-rsa
+          AAAAB3NzaC1yc2EAAAADAQABAAABAQCmrZxO11M3Tmg6IAZPdllrelpFyXIFsespjNQJcSJaBsq5f2FPyj+t+RfZk4v7T058RJToDIAoqa/2X35vHDq8TdM423t2MLwGBrz4IgwvBR7WveJY/ZUanDUBpZyKUHiFJiSm7NoItOOH5X/d5KtBdHj8daqKjVk+lhT47nCSEoAbBso+4g4POsIHikVcLZqRxPJQryxM2Lg95m05uZVRkbkxEQxXsjjM5PyX341yj59zO+5Wpaqd6WAexksAc8Grp1iKo4fHwtSRTaEeso4PnQglOK+1zuRw2M5yjXOeDlwdJCSQWrKzMHsZqsXUadQxtExgxpmopE+dLZJ11DSB
+storage:
+  trees:
+    - local: install-scripts
+      path: /usr/local/bin/
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: kube-install
+    - path: /etc/modprobe.d/blacklist-lvm.conf
+      mode: 0644
+      contents:
+        inline: |
+          blacklist dm_mod
+    - path: /usr/local/bin/k8s.ign
+      mode: 420
+      contents:
+        local: k8s.ign
+
+systemd:
+  units:
+    - name: unmount-lvm.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Unmount LVM Partitions
+        
+        [Service]
+        RemainAfterExit=yes
+        Type=oneshot
+        ExecStart=/usr/local/bin/unmount-lvm-coreos.sh
+         
+        [Install]
+        WantedBy=multi-user.target
+    - name: clean-aux-partition.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Cleanup aux partition
+        After=clean-aux-partition.service
+        
+        [Service]
+        RemainAfterExit=yes
+        Type=oneshot
+        ExecStart=/usr/local/bin/cleanup-lvm-coreos.sh
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: coreos-install.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install Fedora CoreOS
+        
+        [Service]
+        RemainAfterExit=yes
+        Type=oneshot
+        ExecStart=/usr/local/bin/install-coreos.sh
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: eject-reboot.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Reboor CoreOS
+        After=coreos-install.service
+        
+        [Service]
+        RemainAfterExit=yes
+        Type=oneshot
+        ExecStart=/usr/local/bin/eject-reboot.sh
+        
+        [Install]
+        WantedBy=multi-user.target
