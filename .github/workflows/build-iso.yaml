@@ -70,9 +70,15 @@ jobs:
       run: |
         docker run --privileged --rm -v /dev:/dev -v .:/data -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i /data/install.ign -o "/k4all/k4all-${{ env.version }}.iso" "/k4all/fedora-coreos.iso"
       shell: bash
+
+    - name: Check ISO directory and FIX file permissions
+      run: |
+        sudo chown -R 1001:127 ./k4all
+        #sudo chmod -R 644 ./k4all
+        ls -lan ./k4all
     
     - name: Install qemu-img
-      run: sudo apt-get update && sudo apt-get install -y qemu-utils
+      run: sudo apt-get -qq update && sudo -qq apt-get install -y qemu-utils
 
     - name: Create k4all QCOW2 image
       run: |
@@ -80,12 +86,6 @@ jobs:
         qemu-img resize ./k4all/k4all-${{ env.version }}.qcow2 60G
       shell: bash
 
-    - name: Check ISO directory and FIX file permissions
-      run: |
-        sudo chown -R 1001:127 ./k4all
-        #sudo chmod -R 644 ./k4all
-        ls -lan ./k4all
-        
     - name: Create a GitHub Release
       id: create_release
       uses: softprops/action-gh-release@v2
