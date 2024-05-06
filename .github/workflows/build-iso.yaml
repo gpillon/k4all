@@ -66,6 +66,7 @@ jobs:
     - name: Generate k4all ISO
       run: |
         docker run --privileged --rm -v /dev:/dev -v .:/data -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i /data/install.ign -o "/k4all/k4all-${{ env.version }}-k8s.iso" "/k4all/fedora-coreos.iso"
+        sudo chown -R $USER:$USER ./k4all
       shell: bash
 
     - name: Create a GitHub Release
