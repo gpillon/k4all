@@ -47,6 +47,7 @@ Key features include:
 
 - **Access Dashboard and Token**:
   - Access the system with `sudo -i` (if credentials are not shown, wait for the end of the installation process).
+  - if credentials are not show, you can connect to the k8s dashboard, at https://<your-ip>:32323/ using the token retrived by `kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath={".data.token"} | base64 -d)` (remember to `sudo -i`)
 ## Post-Installation Notes
 
 - **Sample Pod**: A sample pod will be created in the `default` namespace if the LVM setup is successful. You can safely delete this pod.
