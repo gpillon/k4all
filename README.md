@@ -73,6 +73,15 @@ To create a bootable USB device with the `k4all` ISO:
 
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
 
+## Development
+Next features:
+
+- [ ] k8s & services Updates
+- [ ] Fancy UI to manage your k4all installation
+- [ ] Applications catalog
+- [ ] Argocd (?)
+- [ ] Multi node
+
 ## Further Information
 
 **Multi-Node Cluster:** ATM, the installtion is only for a single node cluster. _Feel free to contribute!_
