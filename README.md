@@ -84,6 +84,7 @@ Next features:
 - [ ] Applications catalog
 - [ ] Argocd (?)
 - [ ] Multi node
+- [ ] ARM platform
 
 ## Further Information
 
