@@ -37,7 +37,7 @@ Key features include:
 1. Boot the ISO on the target system.
 2. The installation is fully automated and will format the entire `/dev/sda` disk.
 3. Once completed, the system will reboot into the new environment.
-4. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK).
+4. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 11yo Hardware).
 5. Follow next steps
 
 ## Default Setup
@@ -47,6 +47,7 @@ Key features include:
 
 - **Access Dashboard and Token**:
   - Access the system with `sudo -i` (if credentials are not shown, wait for the end of the installation process).
+  - if credentials are not show, you can connect to the k8s dashboard, at https://<your-ip>:32323/ using the token retrived by `kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath={".data.token"} | base64 -d)` (remember to `sudo -i`)
 ## Post-Installation Notes
 
 - **Sample Pod**: A sample pod will be created in the `default` namespace if the LVM setup is successful. You can safely delete this pod.
@@ -71,6 +72,19 @@ To create a bootable USB device with the `k4all` ISO:
 ## Debugging Failed Setup
 
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
+
+## Known issues
+ATM the VDI and the QCOW self-installing images are not booting correctly. Need to investigate on it. 
+
+## Development
+Next features:
+
+- [ ] k8s & services Updates
+- [ ] Fancy UI to manage your k4all installation
+- [ ] Applications catalog
+- [ ] Argocd (?)
+- [ ] Multi node
+- [ ] ARM platform
 
 ## Further Information
 
