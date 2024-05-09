@@ -37,7 +37,7 @@ Key features include:
 1. Boot the ISO on the target system.
 2. The installation is fully automated and will format the entire `/dev/sda` disk.
 3. Once completed, the system will reboot into the new environment.
-4. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK).
+4. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 11yo Hardware).
 5. Follow next steps
 
 ## Default Setup
@@ -73,6 +73,9 @@ To create a bootable USB device with the `k4all` ISO:
 
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
 
+## Known issues
+ATM the VDI and the QCOW self-installing images are not booting correctly. Need to investigate on it. 
+
 ## Development
 Next features:
 
@@ -81,6 +84,7 @@ Next features:
 - [ ] Applications catalog
 - [ ] Argocd (?)
 - [ ] Multi node
+- [ ] ARM platform
 
 ## Further Information
 
