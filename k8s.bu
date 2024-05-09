@@ -117,7 +117,7 @@ systemd:
       contents: |
         [Unit]
         Description=Taint Master Node as Schedulable
-        Afterfck8s-node-ready-and-schedulable.service
+        After=fck8s-node-ready-and-schedulable.service
         
         [Service]
         Type=oneshot
