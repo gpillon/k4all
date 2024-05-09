@@ -12,9 +12,6 @@ passwd:
   users:
     - name: core
       password_hash: "$6$xyz$CCw54pypmRZ5rXtbwICd253nhHKkgqAAqenBsi.shPNfjDVnJ/Sz/.p2ovQiSA7eUl61lLQkDyq6itQQTMqfX0"
-      ssh_authorized_keys:
-        - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCmrZxO11M3Tmg6IAZPdllrelpFyXIFsespjNQJcSJaBsq5f2FPyj+t+RfZk4v7T058RJToDIAoqa/2X35vHDq8TdM423t2MLwGBrz4IgwvBR7WveJY/ZUanDUBpZyKUHiFJiSm7NoItOOH5X/d5KtBdHj8daqKjVk+lhT47nCSEoAbBso+4g4POsIHikVcLZqRxPJQryxM2Lg95m05uZVRkbkxEQxXsjjM5PyX341yj59zO+5Wpaqd6WAexksAc8Grp1iKo4fHwtSRTaEeso4PnQglOK+1zuRw2M5yjXOeDlwdJCSQWrKzMHsZqsXUadQxtExgxpmopE+dLZJ11DSB giorgio@giorgio-X541UVK
-
 
 systemd:
   units:
@@ -60,6 +57,20 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
+    - name: fck8s-k8s-setup-init.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Kubernetes Cluster
+        After=fck8s-k8s-setup.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-k8s-init.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
     - name: fck8s-helm-setup.service
       enabled: true
       contents: |
@@ -78,7 +89,7 @@ systemd:
       contents: |
         [Unit]
         Description=Wait for a node ready and schedulable
-        After=fck8s-k8s-setup.service
+        After=fck8s-k8s-setup-init.service
         
         [Service]
         Type=oneshot
@@ -106,7 +117,7 @@ systemd:
       contents: |
         [Unit]
         Description=Taint Master Node as Schedulable
-        After=fck8s-k8s-setup.service
+        Afterfck8s-node-ready-and-schedulable.service
         
         [Service]
         Type=oneshot

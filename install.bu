@@ -5,10 +5,6 @@ passwd:
     - name: core
       password_hash: >-
         $6$xyz$CCw54pypmRZ5rXtbwICd253nhHKkgqAAqenBsi.shPNfjDVnJ/Sz/.p2ovQiSA7eUl61lLQkDyq6itQQTMqfX0
-      ssh_authorized_keys:
-        - >-
-          ssh-rsa
-          AAAAB3NzaC1yc2EAAAADAQABAAABAQCmrZxO11M3Tmg6IAZPdllrelpFyXIFsespjNQJcSJaBsq5f2FPyj+t+RfZk4v7T058RJToDIAoqa/2X35vHDq8TdM423t2MLwGBrz4IgwvBR7WveJY/ZUanDUBpZyKUHiFJiSm7NoItOOH5X/d5KtBdHj8daqKjVk+lhT47nCSEoAbBso+4g4POsIHikVcLZqRxPJQryxM2Lg95m05uZVRkbkxEQxXsjjM5PyX341yj59zO+5Wpaqd6WAexksAc8Grp1iKo4fHwtSRTaEeso4PnQglOK+1zuRw2M5yjXOeDlwdJCSQWrKzMHsZqsXUadQxtExgxpmopE+dLZJ11DSB
 storage:
   trees:
     - local: install-scripts
