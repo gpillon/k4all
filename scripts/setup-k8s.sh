@@ -21,6 +21,10 @@ else
   echo "No pending changes."
 fi
 
+# Enable and start kubelet service
+systemctl enable --now crio
+systemctl enable --now kubelet
+
 # Crea il file di stato per indicare che l'installazione è stata completata
 touch /var/lib/k8s-setup.done
 
