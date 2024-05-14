@@ -44,7 +44,7 @@ systemd:
       contents: |
         [Unit]
         Description=Cleanup aux partition
-        After=clean-aux-partition.service
+        After=unmount-lvm.service
         
         [Service]
         RemainAfterExit=yes
@@ -58,6 +58,8 @@ systemd:
       contents: |
         [Unit]
         Description=Install Fedora CoreOS
+        Requires=clean-aux-partition.service
+        After=clean-aux-partition.service
         
         [Service]
         RemainAfterExit=yes
@@ -71,6 +73,7 @@ systemd:
       contents: |
         [Unit]
         Description=Reboor CoreOS
+        Requires=coreos-install.service
         After=coreos-install.service
         
         [Service]

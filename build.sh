@@ -48,13 +48,19 @@ $CONTAINER_TOOL run --privileged --rm \
   -o "/fcos/fcos39-k8s.iso" \
   "/fcos/fedora-coreos-39.20240407.3.0-live.x86_64.iso"
 
-#$CONTAINER_TOOL run --privileged --rm \
-#  -v "$FCOS_PATH":/fcos/ \
-#  quay.io/coreos/coreos-installer:release \
-#  iso kargs modify \
-#  -a dm_mod.blacklist=1 \
-#  -a rd.driver.blacklist=dm_mod \
-#  /fcos/fcos39-k8s.iso 
+$CONTAINER_TOOL run --privileged --rm \
+ -v "$FCOS_PATH":/fcos/ \
+ quay.io/coreos/coreos-installer:release \
+ iso kargs modify \
+ -a coreos.liveiso.fromram \
+ /fcos/fcos39-k8s.iso 
+
+ #-a dm_mod.blacklist=1 \
+ #-a rd.driver.blacklist=dm_mod \
+  
+
+ 
+
 
 
 echo "ISO generated successfully!"

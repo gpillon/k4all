@@ -15,21 +15,6 @@ passwd:
 
 systemd:
   units:
-    - name: fck8s-set-hostname.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Set Hostname
-        After=network.target
-        Requires=network.target
-        
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/set-hostname.sh
-        RemainAfterExit=yes
-        
-        [Install]
-        WantedBy=multi-user.target
     - name: fck8s-lvm-setup.service
       enabled: true
       contents: |
@@ -43,11 +28,27 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
+    - name: fck8s-set-hostname.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set Hostname
+        Requires=network-online.target
+        After=network-online.target
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/set-hostname.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
     - name: fck8s-k8s-setup.service
       enabled: true
       contents: |
         [Unit]
         Description=Set up Kubernetes
+        Requires=fck8s-set-hostname.service
         After=fck8s-set-hostname.service
         
         [Service]
@@ -57,12 +58,29 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
+    - name: fck8s-k8s-setup-init.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Kubernetes Cluster
+        Requires=fck8s-k8s-setup.service
+        After=fck8s-k8s-setup.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-k8s-init.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
     - name: fck8s-helm-setup.service
       enabled: true
       contents: |
         [Unit]
         Description=Set up Helm
-         
+        Requires=network-online.target
+        After=network-online.target
+        
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-helm.sh
@@ -75,25 +93,12 @@ systemd:
       contents: |
         [Unit]
         Description=Wait for a node ready and schedulable
-        After=fck8s-k8s-setup.service
+        Requires=fck8s-k8s-setup-init.service
+        After=fck8s-k8s-setup-init.service
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/node-ready-and-schedulable.sh
-        RemainAfterExit=yes
-        
-        [Install]
-        WantedBy=multi-user.target
-    - name: fck8s-metric-server-setup.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Install Metric Server
-        After=fck8s-node-ready-and-schedulable.service
-        
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/setup-metrics.sh
         RemainAfterExit=yes
         
         [Install]
@@ -103,11 +108,27 @@ systemd:
       contents: |
         [Unit]
         Description=Taint Master Node as Schedulable
-        After=fck8s-k8s-setup.service
+        Requires=fck8s-k8s-setup-init.service
+        After=fck8s-k8s-setup-init.service
         
         [Service]
         Type=oneshot
         ExecStart=setup-taint-master-scheduleable.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-metric-server-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install Metric Server
+        Requires=fck8s-node-ready-and-schedulable.service
+        After=fck8s-node-ready-and-schedulable.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-metrics.sh
         RemainAfterExit=yes
         
         [Install]
@@ -117,8 +138,9 @@ systemd:
       contents: |
         [Unit]
         Description=Install Dashboard
-        After=fck8s-node-ready-and-schedulable.service
-        After=fck8s-helm-setup.service
+        Requires=fck8s-node-ready-and-schedulable.service
+        Requires=fck8s-helm-setup.service
+        After=fck8s-node-ready-and-schedulable.service fck8s-helm-setup.service
         
         [Service]
         Type=oneshot
@@ -132,6 +154,7 @@ systemd:
       contents: |
         [Unit]
         Description=Install Dashboard
+        Requires=fck8s-dashboard-setup.service
         After=fck8s-dashboard-setup.service
         
         [Service]
@@ -146,9 +169,10 @@ systemd:
       contents: |
         [Unit]
         Description=Set up topolvm
-        After=fck8s-node-ready-and-schedulable.service
-        After=fck8s-lvm-setup.service
-        After=fck8s-helm-setup.service
+        Requires=fck8s-node-ready-and-schedulable.service
+        Requires=fck8s-lvm-setup.service
+        Requires=fck8s-helm-setup.service
+        After=fck8s-node-ready-and-schedulable.service fck8s-lvm-setup.service fck8s-helm-setup.service
         
         [Service]
         Type=oneshot
@@ -162,8 +186,9 @@ systemd:
       contents: |
         [Unit]
         Description=Set up Calico
-        After=fck8s-node-ready-and-schedulable.service
-        After=fck8s-helm-setup.service
+        Requires=fck8s-node-ready-and-schedulable.service
+        Requires=fck8s-helm-setup.service
+        After=fck8s-node-ready-and-schedulable.service fck8s-helm-setup.service
         
         [Service]
         Type=oneshot
@@ -177,6 +202,7 @@ systemd:
       contents: |
         [Unit]
         Description=Wait default service account creation
+        Requires=fck8s-node-ready-and-schedulable.service
         After=fck8s-node-ready-and-schedulable.service
         
         [Service]
@@ -191,6 +217,7 @@ systemd:
       contents: |
         [Unit]
         Description=Install Custom Manifests
+        Requires=fck8s-wait-default-service-account.service
         After=fck8s-wait-default-service-account.service
          
         [Service]
@@ -205,6 +232,7 @@ systemd:
       contents: |
         [Unit]
         Description=Update Kubernetes Ingress Routes for the Dashboard
+        Requires=fck8s-ingress-setup.service
         After=fck8s-ingress-setup.service
         
         [Service]
@@ -218,6 +246,8 @@ systemd:
       contents: |
         [Unit]
         Description=Timer to periodically update Kubernetes Ingress for the Dashboard
+        Requires=fck8s-node-ready-and-schedulable
+        After=fck8s-node-ready-and-schedulable
         
         [Timer]
         OnCalendar=*:0/10
@@ -276,3 +306,11 @@ storage:
       mode: 0420
       contents:
         local: yaml/dashboard-ingress-routes.yaml
+    - path: /etc/ssh/sshd_config.d/20-enable-passwords.conf
+      mode: 0644
+      contents:
+        inline: |
+          # Fedora CoreOS disables SSH password login by default.
+          # Enable it.
+          # This file must sort before 40-disable-passwords.conf.
+          PasswordAuthentication yes
