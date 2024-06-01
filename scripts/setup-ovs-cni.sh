@@ -44,8 +44,8 @@ retry_command() {
 # retry_command "curl -L $URL -o $DESTINATION_DIR/ovs" 10 5
 # chmod +x "$DESTINATION_DIR/ovs"
 
-retry_command "kubectl --kubeconfig=/root/.kube/config apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml" 10 20
-retry_command "kubectl --kubeconfig=/root/.kube/config apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/ovs-cni/master/examples/ovs-cni.yml" 10 20
+retry_command "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml" 10 20
+retry_command "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/ovs-cni/master/examples/ovs-cni.yml" 10 20
 
 # Crea il file di stato per indicare che l'installazione è stata completata
 touch /var/lib/ovs-cni-setup.done

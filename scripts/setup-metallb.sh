@@ -11,14 +11,14 @@ fi
 METALLB_VERSION="v0.14.5"
 HOME=/root/
 
-kubectl --kubeconfig=/root/.kube/config get configmap kube-proxy -n kube-system -o yaml | \
+kubectl --kubeconfig=/etc/kubernetes/admin.conf get configmap kube-proxy -n kube-system -o yaml | \
 sed -e "s/strictARP: false/strictARP: true/" | \
-kubectl --kubeconfig=/root/.kube/config apply -f - -n kube-system
+kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - -n kube-system
 
 metal_lb_manifest_url="https://raw.githubusercontent.com/metallb/metallb/$METALLB_VERSION/config/manifests/metallb-native.yaml"
 
 while true; do
-  if kubectl --kubeconfig=/root/.kube/config apply -f $metal_lb_manifest_url; then
+  if kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f $metal_lb_manifest_url; then
     break
   else
     echo "Failed to apply Metal LB Install configuration. Retrying in 10 seconds..."
@@ -27,12 +27,15 @@ while true; do
 done
 
 while true; do
-  if kubectl --kubeconfig=/root/.kube/config apply -f /usr/local/share/metal-lb.yaml; then
+  if kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /usr/local/share/metal-lb.yaml; then
     break
   else
     echo "Failed to apply Metal LB L2Advertisement. Retrying in 10 seconds..."
     sleep 10
   fi
 done
+
+# https://metallb.universe.tf/troubleshooting/#metallb-is-not-advertising-my-service-from-my-control-plane-nodes-or-from-my-single-node-cluster
+kubectl --kubeconfig=/etc/kubernetes/admin.conf patch daemonset speaker -n metallb-system --type=json -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--ignore-exclude-lb"}]'
 
 touch /var/lib/metal-lb-setup.done

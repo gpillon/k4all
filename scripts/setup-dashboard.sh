@@ -11,12 +11,12 @@ fi
 HOME=/root/
 
 # Add kubernetes-dashboard repository
-helm --kubeconfig=/root/.kube/config repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
+helm --kubeconfig=/etc/kubernetes/admin.conf repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
 # Deploy a Helm Release named "kubernetes-dashboard" using the kubernetes-dashboard chart
-helm --kubeconfig=/root/.kube/config upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --create-namespace --namespace kubernetes-dashboard
+helm --kubeconfig=/etc/kubernetes/admin.conf upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --create-namespace --namespace kubernetes-dashboard
 # Create Dashboard Users
-kubectl --kubeconfig=/root/.kube/config apply -f /usr/local/share/dashboard-users.yaml
-kubectl --kubeconfig=/root/.kube/config patch service kubernetes-dashboard-kong-proxy -n kubernetes-dashboard --type='json' -p='[{"op":"replace","path":"/spec/type","value":"NodePort"},{"op":"add","path":"/spec/ports/0/nodePort","value":32323}]'
+kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /usr/local/share/dashboard-users.yaml
+kubectl --kubeconfig=/etc/kubernetes/admin.conf patch service kubernetes-dashboard-kong-proxy -n kubernetes-dashboard --type='json' -p='[{"op":"replace","path":"/spec/type","value":"NodePort"},{"op":"add","path":"/spec/ports/0/nodePort","value":32323}]'
 
 printf '\n
 #echo "Get the dashboard token with"

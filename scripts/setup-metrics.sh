@@ -7,8 +7,8 @@ if [ -f "/var/lib/setup-metrics.done" ]; then
   exit 0
 fi
 
-kubectl --kubeconfig=/root/.kube/config apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-kubectl --kubeconfig=/root/.kube/config patch deployment metrics-server -n kube-system --type='json' -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl --kubeconfig=/etc/kubernetes/admin.conf patch deployment metrics-server -n kube-system --type='json' -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
 
 # Crea il file di stato per indicare che l'installazione è stata completata
 touch /var/lib/setup-metrics.done

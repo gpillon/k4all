@@ -41,13 +41,13 @@ retry_command() {
 }
 
 # Deploy a network add-on
-kubectl --kubeconfig=/root/.kube/config create -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.3/manifests/tigera-operator.yaml
+kubectl --kubeconfig=/etc/kubernetes/admin.conf create -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.3/manifests/tigera-operator.yaml
 #retry_command "curl -O $calico_manifest_url" 10 5
-#kubectl --kubeconfig=/root/.kube/config create -f custom-resources.yaml
-#kubectl --kubeconfig=/root/.kube/config create -f custom-resources.yaml
+#kubectl --kubeconfig=/etc/kubernetes/admin.conf create -f custom-resources.yaml
+#kubectl --kubeconfig=/etc/kubernetes/admin.conf create -f custom-resources.yaml
 
 while true; do
-  if kubectl --kubeconfig=/root/.kube/config apply -f /usr/local/share/calico-resources.yaml; then
+  if kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /usr/local/share/calico-resources.yaml; then
     break
   else
     echo "Failed to apply Calico configuration. Retrying in 10 seconds..."

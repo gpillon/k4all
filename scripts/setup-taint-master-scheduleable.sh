@@ -11,7 +11,7 @@ fi
 while true; do
     # Ottieni lo stato del nodo e verifica se è Ready
     while true; do
-        NODE_STATUS=$(kubectl --kubeconfig=/root/.kube/config get nodes $(hostnamectl --static) -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+        NODE_STATUS=$(kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes $(hostnamectl --static) -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
         if [ $? -eq 0 ]; then
              echo "Node is Ready"
             break
@@ -32,13 +32,13 @@ done
 
 # Esegui il taint sul nodo
 
-NODE_TAINTED=$(kubectl --kubeconfig=/root/.kube/config get nodes $(hostnamectl --static) -o jsonpath='{.spec.taints[?(@.key=="node-role.kubernetes.io/control-plane")].effect}')
+NODE_TAINTED=$(kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes $(hostnamectl --static) -o jsonpath='{.spec.taints[?(@.key=="node-role.kubernetes.io/control-plane")].effect}')
 
 if [ "$NODE_TAINTED" == "NoSchedule" ]; then
     echo "Node is tainted, removing taint..."
 
      while true; do
-        NODE_STATUS=$(kubectl --kubeconfig=/root/.kube/config taint nodes $(hostnamectl --static) node-role.kubernetes.io/control-plane:NoSchedule- 2>/dev/null)
+        NODE_STATUS=$(kubectl --kubeconfig=/etc/kubernetes/admin.conf taint nodes $(hostnamectl --static) node-role.kubernetes.io/control-plane:NoSchedule- 2>/dev/null)
         if [ $? -eq 0 ]; then
             echo "Tainted node"
             break

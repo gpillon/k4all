@@ -14,7 +14,7 @@ for manifest in "$MANIFEST_DIR"/*.{yaml,yml}; do
   # Verifica se il file esiste (per gestire il caso in cui non ci siano file corrispondenti)
   if [ -f "$manifest" ]; then
     echo "Applying $manifest..."
-    kubectl --kubeconfig=/root/.kube/config apply -f "$manifest"
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f "$manifest"
   fi
 done
 
