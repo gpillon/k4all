@@ -315,7 +315,7 @@ storage:
       partitions:
         - label: root
           number: 4
-          size_mib: 50000
+          size_mib: 35000
           resize: true
         - label: lvm
           size_mib: 0
