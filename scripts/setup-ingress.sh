@@ -8,6 +8,8 @@ if [ -f "/var/lib/setup-ingress.done" ]; then
   exit 0
 fi
 
+HOME=/root/
+
 helm upgrade --kubeconfig=/root/.kube/config --install ingress-nginx ingress-nginx \
   --repo https://kubernetes.github.io/ingress-nginx \
   --namespace ingress-nginx --create-namespace -f /usr/local/share/ingress-values.yaml

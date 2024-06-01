@@ -2,14 +2,14 @@
 set -euxo pipefail
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/helm-setup.done" ]; then
-  echo "Helm setup already done. Exiting."
+if [ -f "/var/lib/ovs-cni-setup.done" ]; then
+  echo "OVS-cni setup already done. Exiting."
   exit 0
 fi
 
 HOME=/root/
-helm_install_url="https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
-
+# URL="https://github.com/k8snetworkplumbingwg/ovs-cni/releases/download/v0.33.0/ovs"
+# DESTINATION_DIR="/opt/cni/bin"
 
 retry_command() {
   local command="$1"
@@ -40,9 +40,13 @@ retry_command() {
   fi
 }
 
-retry_command "curl -fsSL $helm_install_url | bash" 10 5
-helm completion bash > /etc/bash_completion.d/helm
+# mkdir -p /opt/cni/bin/
+# retry_command "curl -L $URL -o $DESTINATION_DIR/ovs" 10 5
+# chmod +x "$DESTINATION_DIR/ovs"
+
+retry_command "kubectl --kubeconfig=/root/.kube/config apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml" 10 20
+retry_command "kubectl --kubeconfig=/root/.kube/config apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/ovs-cni/master/examples/ovs-cni.yml" 10 20
 
 # Crea il file di stato per indicare che l'installazione è stata completata
-touch /var/lib/helm-setup.done
+touch /var/lib/ovs-cni-setup.done
 

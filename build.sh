@@ -36,7 +36,7 @@ $CONTAINER_TOOL run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:re
 $CONTAINER_TOOL run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < install.bu > install.ign
 
 # Generate the customized Fedora CoreOS ISO using CoreOS Installer in a container
-rm -rf "$FCOS_PATH/fcos39-k8s.iso" && \
+rm -rf "$FCOS_PATH/fcos40-k8s.iso" && \
 $CONTAINER_TOOL run --privileged --rm \
   -v /dev:/dev \
   -v .:/data \
@@ -45,23 +45,18 @@ $CONTAINER_TOOL run --privileged --rm \
   quay.io/coreos/coreos-installer:release \
   iso ignition embed \
   -i /data/install.ign \
-  -o "/fcos/fcos39-k8s.iso" \
-  "/fcos/fedora-coreos-39.20240407.3.0-live.x86_64.iso"
+  -o "/fcos/fcos40-k8s.iso" \
+  "/fcos/fedora-coreos-40.20240504.3.0-live.x86_64.iso"
 
 $CONTAINER_TOOL run --privileged --rm \
  -v "$FCOS_PATH":/fcos/ \
  quay.io/coreos/coreos-installer:release \
  iso kargs modify \
  -a coreos.liveiso.fromram \
- /fcos/fcos39-k8s.iso 
+ /fcos/fcos40-k8s.iso 
 
  #-a dm_mod.blacklist=1 \
  #-a rd.driver.blacklist=dm_mod \
-  
-
- 
-
-
 
 echo "ISO generated successfully!"
 

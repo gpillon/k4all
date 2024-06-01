@@ -8,6 +8,8 @@ if [ -f "/var/lib/setup-dashboard.done" ]; then
   exit 0
 fi
 
+HOME=/root/
+
 # Add kubernetes-dashboard repository
 helm --kubeconfig=/root/.kube/config repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
 # Deploy a Helm Release named "kubernetes-dashboard" using the kubernetes-dashboard chart

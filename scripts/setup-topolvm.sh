@@ -5,6 +5,7 @@ k="kubectl --kubeconfig=/root/.kube/config"
 h="helm --kubeconfig=/root/.kube/config"
 
 KUBECONFIG=/root/.kube/config
+HOME=/root/
 
 # Controlla se il file di stato esiste
 if [ -f "/var/lib/topolvm-setup.done" ]; then

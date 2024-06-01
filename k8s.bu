@@ -58,18 +58,35 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
-    - name: fck8s-k8s-setup-init.service
+    - name: fck8s-k8s-setup-ph2.service
       enabled: true
       contents: |
         [Unit]
-        Description=Set up Kubernetes Cluster
+        Description=Set up Kubernetes phase 2
         Requires=fck8s-k8s-setup.service
         After=fck8s-k8s-setup.service
         
         [Service]
         Type=oneshot
+        ExecStart=/usr/local/bin/setup-k8s-ph2.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-k8s-setup-init.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Kubernetes Cluster
+        Requires=fck8s-k8s-setup-ph2.service
+        Requires=crio.service
+        After=fck8s-k8s-setup-ph2.service crio.service
+
+        [Service]
+        Type=oneshot
         ExecStart=/usr/local/bin/setup-k8s-init.sh
         RemainAfterExit=yes
+        Restart=on-failure
         
         [Install]
         WantedBy=multi-user.target
@@ -110,7 +127,8 @@ systemd:
         Description=Taint Master Node as Schedulable
         Requires=fck8s-k8s-setup-init.service
         After=fck8s-k8s-setup-init.service
-        
+        PartOf=fck8s-k8s-setup-init.service
+
         [Service]
         Type=oneshot
         ExecStart=setup-taint-master-scheduleable.sh
@@ -146,6 +164,7 @@ systemd:
         Type=oneshot
         ExecStart=/usr/local/bin/setup-dashboard.sh
         RemainAfterExit=yes
+        WorkingDirectory=/root/
         
         [Install]
         WantedBy=multi-user.target
@@ -161,6 +180,7 @@ systemd:
         Type=oneshot
         ExecStart=/usr/local/bin/setup-ingress.sh
         RemainAfterExit=yes
+        WorkingDirectory=/root/
         
         [Install]
         WantedBy=multi-user.target
@@ -178,6 +198,7 @@ systemd:
         Type=oneshot
         ExecStart=/usr/local/bin/setup-topolvm.sh
         RemainAfterExit=yes
+        WorkingDirectory=/root/
         
         [Install]
         WantedBy=multi-user.target
@@ -194,6 +215,7 @@ systemd:
         Type=oneshot
         ExecStart=/usr/local/bin/setup-calico.sh
         RemainAfterExit=yes
+        WorkingDirectory=/root/
         
         [Install]
         WantedBy=multi-user.target
@@ -208,6 +230,36 @@ systemd:
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/wait-default-service-account.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-setup-ovs-cni.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Setup ovs cni
+        Requires=fck8s-node-ready-and-schedulable.service
+        After=fck8s-node-ready-and-schedulable.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-ovs-cni.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-setup-metallb.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Setup MetalLB
+        Requires=fck8s-node-ready-and-schedulable.service
+        After=fck8s-node-ready-and-schedulable.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-metallb.sh
         RemainAfterExit=yes
         
         [Install]
@@ -238,7 +290,8 @@ systemd:
         [Service]
         ExecStart=/usr/local/bin/update-routes.sh
         Type=oneshot
-        
+        WorkingDirectory=/root/
+
         [Install]
         WantedBy=multi-user.target
     - name: fck8s-update-routes.timer
@@ -246,8 +299,9 @@ systemd:
       contents: |
         [Unit]
         Description=Timer to periodically update Kubernetes Ingress for the Dashboard
-        Requires=fck8s-node-ready-and-schedulable
-        After=fck8s-node-ready-and-schedulable
+        Requires=fck8s-node-ready-and-schedulable.service
+        Requires=fck8s-ingress-setup.service
+        After=fck8s-node-ready-and-schedulable.service fck8s-ingress-setup.service
         
         [Timer]
         OnCalendar=*:0/10
@@ -298,6 +352,10 @@ storage:
       mode: 0420
       contents:
         local: yaml/ingress-values.yaml
+    - path: /usr/local/share/metal-lb.yaml
+      mode: 0420
+      contents:
+        local: yaml/metal-lb.yaml
     - path: /usr/local/share/dashboard-users.yaml
       mode: 0420
       contents:
@@ -306,6 +364,10 @@ storage:
       mode: 0420
       contents:
         local: yaml/dashboard-ingress-routes.yaml
+    - path: /usr/local/share/calico-resources.yaml
+      mode: 0420
+      contents:
+        local: yaml/calico-resources.yaml
     - path: /etc/ssh/sshd_config.d/20-enable-passwords.conf
       mode: 0644
       contents:
@@ -314,3 +376,15 @@ storage:
           # Enable it.
           # This file must sort before 40-disable-passwords.conf.
           PasswordAuthentication yes
+    - path: /root/.config/delete-me
+      mode: 0420
+      contents:
+        local: data/delete-me
+    - path: /etc/zincati/config.d/10-update-periodic.toml
+      mode: 0644
+      user:
+        name: zincati
+      group:
+        name: zincati
+      contents:
+        local: data/10-update-periodic.toml

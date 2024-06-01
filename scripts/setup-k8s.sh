@@ -7,24 +7,28 @@ if [ -f "/var/lib/k8s-setup.done" ]; then
   exit 0
 fi
 
-# Install Kubernetes packages using rpm-ostree
-rpm-ostree install --idempotent kubeadm kubectl kubelet crio
-
-
-output=$(rpm-ostree status)
-
-# Check for pending deployments; look for '●' indicating non-active but ready deployments
-if grep -q '●' <<< "$output"; then
-  echo "Pending changes detected. Applying changes live..."
-  rpm-ostree apply-live
-else
-  echo "No pending changes."
+# Check if the reboot marker exists. If it does, finalize setup and exit.
+if [ -f "/var/lib/k8s-setup.reboot" ]; then
+  echo "Finalizing setup after reboot."
+  rm -f /var/lib/k8s-setup.reboot
+  touch /var/lib/k8s-setup.done
+  echo "Setup completed successfully."
+  exit 0
 fi
 
-# Enable and start kubelet service
-systemctl enable --now crio
-systemctl enable --now kubelet
+# Install Kubernetes packages using rpm-ostree
+rpm-ostree install --idempotent kubeadm kubectl kubelet crio openvswitch NetworkManager-ovs
 
-# Crea il file di stato per indicare che l'installazione è stata completata
+# output=$(rpm-ostree status)
+
+# # Check for pending deployments; look for '●' indicating non-active but ready deployments
+# if grep -q '●' <<< "$output"; then
+#   echo "Pending changes detected. Applying changes live..."
+#   rpm-ostree apply-live
+# else
+#   echo "No pending changes."
+# fi
+
 touch /var/lib/k8s-setup.done
-
+systemctl reboot
+while true; do sleep 1000; done
