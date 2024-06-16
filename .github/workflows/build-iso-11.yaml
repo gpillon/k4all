@@ -65,11 +65,9 @@ jobs:
       - name: Create k4all QCOW2 / VDI image
         run: >
           IFS=' ' read -ra ROLE_ARRAY <<< "${{ env.ROLES }}"
-          for role in "${ROLE_ARRAY[@]}"; do          
+          for role in "${ROLE_ARRAY[@]}"; do
             qemu-img convert -O qcow2 ./k4all/k4all-$role-${{ env.version }}.iso ./k4all/k4all-$role-${{ env.version }}.qcow2
-
             qemu-img resize ./k4all/k4all-$role-${{ env.version }}.qcow2 60G
-
             qemu-img convert -O vdi ./k4all/k4all-$role-${{ env.version }}.qcow2 ./k4all/k4all-$role-${{ env.version }}.vdi
           done
         shell: bash
