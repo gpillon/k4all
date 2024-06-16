@@ -2,77 +2,13 @@
 variant: fcos
 version: 1.5.0
 
-kernel_arguments:
-  should_exist:
-    - mitigations=off
-  should_not_exist:
-    - mitigations=auto,nosmt
-    
-passwd:
-  users:
-    - name: core
-      password_hash: "$6$xyz$CCw54pypmRZ5rXtbwICd253nhHKkgqAAqenBsi.shPNfjDVnJ/Sz/.p2ovQiSA7eUl61lLQkDyq6itQQTMqfX0"
+ignition:
+   config: 
+     merge: 
+        - local: ./k8s-base.ign
 
 systemd:
   units:
-    - name: fck8s-lvm-setup.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Setup LVM
-        
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/setup-lvm.sh
-        RemainAfterExit=yes
-        
-        [Install]
-        WantedBy=multi-user.target
-    - name: fck8s-set-hostname.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Set Hostname
-        Requires=network-online.target
-        After=network-online.target
-        
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/set-hostname.sh
-        RemainAfterExit=yes
-        
-        [Install]
-        WantedBy=multi-user.target
-    - name: fck8s-k8s-setup.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Set up Kubernetes
-        Requires=fck8s-set-hostname.service
-        After=fck8s-set-hostname.service
-        
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/setup-k8s.sh
-        RemainAfterExit=yes
-        
-        [Install]
-        WantedBy=multi-user.target
-    - name: fck8s-k8s-setup-init.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Set up Kubernetes Cluster
-        Requires=fck8s-k8s-setup.service
-        After=fck8s-k8s-setup.service
-        
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/setup-k8s-init.sh
-        RemainAfterExit=yes
-        
-        [Install]
-        WantedBy=multi-user.target
     - name: fck8s-helm-setup.service
       enabled: true
       contents: |
@@ -110,7 +46,8 @@ systemd:
         Description=Taint Master Node as Schedulable
         Requires=fck8s-k8s-setup-init.service
         After=fck8s-k8s-setup-init.service
-        
+        PartOf=fck8s-k8s-setup-init.service
+
         [Service]
         Type=oneshot
         ExecStart=setup-taint-master-scheduleable.sh
@@ -146,6 +83,7 @@ systemd:
         Type=oneshot
         ExecStart=/usr/local/bin/setup-dashboard.sh
         RemainAfterExit=yes
+        WorkingDirectory=/root/
         
         [Install]
         WantedBy=multi-user.target
@@ -161,6 +99,7 @@ systemd:
         Type=oneshot
         ExecStart=/usr/local/bin/setup-ingress.sh
         RemainAfterExit=yes
+        WorkingDirectory=/root/
         
         [Install]
         WantedBy=multi-user.target
@@ -178,6 +117,7 @@ systemd:
         Type=oneshot
         ExecStart=/usr/local/bin/setup-topolvm.sh
         RemainAfterExit=yes
+        WorkingDirectory=/root/
         
         [Install]
         WantedBy=multi-user.target
@@ -194,6 +134,7 @@ systemd:
         Type=oneshot
         ExecStart=/usr/local/bin/setup-calico.sh
         RemainAfterExit=yes
+        WorkingDirectory=/root/
         
         [Install]
         WantedBy=multi-user.target
@@ -208,6 +149,36 @@ systemd:
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/wait-default-service-account.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-setup-ovs-cni.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Setup ovs cni
+        Requires=fck8s-node-ready-and-schedulable.service
+        After=fck8s-node-ready-and-schedulable.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-ovs-cni.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-setup-metallb.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Setup MetalLB
+        Requires=fck8s-node-ready-and-schedulable.service
+        After=fck8s-node-ready-and-schedulable.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-metallb.sh
         RemainAfterExit=yes
         
         [Install]
@@ -238,7 +209,8 @@ systemd:
         [Service]
         ExecStart=/usr/local/bin/update-routes.sh
         Type=oneshot
-        
+        WorkingDirectory=/root/
+
         [Install]
         WantedBy=multi-user.target
     - name: fck8s-update-routes.timer
@@ -246,8 +218,9 @@ systemd:
       contents: |
         [Unit]
         Description=Timer to periodically update Kubernetes Ingress for the Dashboard
-        Requires=fck8s-node-ready-and-schedulable
-        After=fck8s-node-ready-and-schedulable
+        Requires=fck8s-node-ready-and-schedulable.service
+        Requires=fck8s-ingress-setup.service
+        After=fck8s-node-ready-and-schedulable.service fck8s-ingress-setup.service
         
         [Timer]
         OnCalendar=*:0/10
@@ -255,37 +228,11 @@ systemd:
         [Install]
         WantedBy=multi-user.target
 storage:
-  disks:
-    - device: /dev/sda
-      wipe_table: false
-      partitions:
-        - label: root
-          number: 4
-          size_mib: 50000
-          resize: true
-        - label: lvm
-          size_mib: 0
-          wipe_partition_entry: true
-  trees:
-    - local: manifests
-      path: /usr/local/share/mainifests/
-    - local: scripts
-      path: /usr/local/bin/
-  #filesystems:
-  #  - device: /dev/disk/by-label/lvm
-  #    format: none 
-  #    path: /data/
-      
   files:
     - path: "/etc/k8s-config.yaml"
       mode: 420
       contents:
         local: yaml/k8s-config.yaml
-    - path: "/etc/sysctl.d/k8s.conf"
-      mode: 420
-      contents:
-        inline: |
-         net.ipv4.ip_forward = 1
     - path: "/etc/yum.repos.d/kubernetes.repo"
       mode: 420
       contents:
@@ -298,6 +245,10 @@ storage:
       mode: 0420
       contents:
         local: yaml/ingress-values.yaml
+    - path: /usr/local/share/metal-lb.yaml
+      mode: 0420
+      contents:
+        local: yaml/metal-lb.yaml
     - path: /usr/local/share/dashboard-users.yaml
       mode: 0420
       contents:
@@ -306,11 +257,24 @@ storage:
       mode: 0420
       contents:
         local: yaml/dashboard-ingress-routes.yaml
-    - path: /etc/ssh/sshd_config.d/20-enable-passwords.conf
-      mode: 0644
+    - path: /usr/local/share/calico-resources.yaml
+      mode: 0420
       contents:
-        inline: |
-          # Fedora CoreOS disables SSH password login by default.
-          # Enable it.
-          # This file must sort before 40-disable-passwords.conf.
-          PasswordAuthentication yes
+        local: yaml/calico-resources.yaml
+
+    - path: "/usr/local/bin/setup-k8s-init.sh"
+      mode: 764
+      contents:
+        local: overrides/bootstrap/setup-k8s-init.sh
+    - path: "/usr/local/bin/generate_join.sh"
+      mode: 764
+      contents:
+        local: overrides/bootstrap/generate_join.sh
+    - path: "/usr/local/bin/generate-kubelet-config.sh"
+      mode: 764
+      contents:
+        local: overrides/bootstrap/generate-kubelet-config.sh
+    - path: "/usr/local/bin/enable-cluster.sh"
+      mode: 764
+      contents:
+        local: overrides/bootstrap/enable-cluster.sh

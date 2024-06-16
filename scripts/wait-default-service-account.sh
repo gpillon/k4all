@@ -11,7 +11,7 @@ fi
 # Check for the default service account
 while true; do
   # Check if the default service account exists in the default namespace
-  if kubectl --kubeconfig=/root/.kube/config get serviceaccount default --namespace default &> /dev/null; then
+  if kubectl --kubeconfig=/etc/kubernetes/admin.conf get serviceaccount default --namespace default &> /dev/null; then
     echo "Default service account is present in the default namespace."
     break
   fi

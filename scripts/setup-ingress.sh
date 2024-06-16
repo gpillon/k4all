@@ -8,12 +8,14 @@ if [ -f "/var/lib/setup-ingress.done" ]; then
   exit 0
 fi
 
-helm upgrade --kubeconfig=/root/.kube/config --install ingress-nginx ingress-nginx \
+HOME=/root/
+
+helm upgrade --kubeconfig=/etc/kubernetes/admin.conf --install ingress-nginx ingress-nginx \
   --repo https://kubernetes.github.io/ingress-nginx \
   --namespace ingress-nginx --create-namespace -f /usr/local/share/ingress-values.yaml
 
 while true; do
-  if kubectl --kubeconfig=/root/.kube/config apply -f /usr/local/share/dashboard-ingress-routes.yaml; then
+  if kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /usr/local/share/dashboard-ingress-routes.yaml; then
     break
   else
     echo "Failed to apply Ingress routes configuration. Retrying in 10 seconds..."

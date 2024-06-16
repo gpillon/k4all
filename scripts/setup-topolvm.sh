@@ -1,10 +1,11 @@
 #!/bin/bash
 set -euxo pipefail
 
-k="kubectl --kubeconfig=/root/.kube/config"
-h="helm --kubeconfig=/root/.kube/config"
+k="kubectl --kubeconfig=/etc/kubernetes/admin.conf"
+h="helm --kubeconfig=/etc/kubernetes/admin.conf"
 
 KUBECONFIG=/root/.kube/config
+HOME=/root/
 
 # Controlla se il file di stato esiste
 if [ -f "/var/lib/topolvm-setup.done" ]; then

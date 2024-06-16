@@ -3,8 +3,16 @@
 # Enable strict mode and pipefail for robust error handling
 set -euo pipefail
 
+
+if [ -f "/var/lib/hostname-setup.done" ]; then
+  echo "Hostname setup already done. Exiting."
+  exit 0
+fi
+
+
+
 # Define the static hostname part
-STATIC_HOSTNAME="kube-control-01"
+STATIC_HOSTNAME="kube-control-$(openssl rand -base64 64 | tr -dc 'a-z0-9' | head -c 5)"
 
 # Function to retrieve the domain from DHCP using systemd-resolved
 function get_domain() {
@@ -26,8 +34,6 @@ function get_domain() {
         sleep $sleep_interval
         retry_count=$((retry_count + 1))
     done
-
-    echo ""
 }
 
 # Attempt to retrieve the domain part from DHCP
@@ -45,3 +51,4 @@ fi
 hostnamectl set-hostname "$FULL_HOSTNAME"
 
 echo "Hostname set to $FULL_HOSTNAME"
+touch /var/lib/hostname-setup.done

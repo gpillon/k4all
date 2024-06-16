@@ -20,7 +20,7 @@ has_domain() {
 patch_ingress() {
     local host=$1
 
-    kubectl --kubeconfig=/root/.kube/config patch ingress kubernetes-dashboard -n kubernetes-dashboard --type=json -p="[
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf patch ingress kubernetes-dashboard -n kubernetes-dashboard --type=json -p="[
       {
         \"op\": \"replace\",
         \"path\": \"/spec/rules/$2/host\",

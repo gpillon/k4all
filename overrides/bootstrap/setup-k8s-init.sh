@@ -7,6 +7,8 @@ if [ -f "/var/lib/k8s-setup-init.done" ]; then
   exit 0
 fi
 
+kubeadm reset --force
+
 # Initialize Kubernetes cluster
 kubeadm init --config /etc/k8s-config.yaml
 
@@ -14,6 +16,11 @@ kubeadm init --config /etc/k8s-config.yaml
 mkdir -p /root/.kube
 cp /etc/kubernetes/admin.conf /root/.kube/config
 chown $(id -u):$(id -g) /root/.kube/config
+
+# Set up kubeconfig for the core user
+mkdir -p /home/core/.kube
+cp /etc/kubernetes/admin.conf /home/core/.kube/config
+chown core:core /home/core/.kube/config
 
 kubectl completion bash > /root/.kube/completion.bash.inc
 printf "
