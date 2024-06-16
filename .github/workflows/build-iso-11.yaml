@@ -48,10 +48,10 @@ jobs:
       - name: Generate ISOs for Multiple Roles
         run: |
           docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-base.bu" > "k8s-base.ign"
-          docker run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < install.bu > install.ign
           IFS=' ' read -ra ROLE_ARRAY <<< "${{ env.ROLES }}"
           for role in "${ROLE_ARRAY[@]}"; do
             docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-$role.bu" > "k8s.ign"
+            docker run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < install.bu > install.ign
             docker run --privileged --rm -v /dev:/dev -v "$(pwd):/data" -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i "/data/install.ign" -o "/k4all/k4all-$role-${{ env.version }}.iso" "/k4all/fedora-coreos.iso"
             docker run --privileged --rm -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso kargs modify -a coreos.liveiso.fromram "/k4all/k4all-$role-${{ env.version }}.iso"
           done
