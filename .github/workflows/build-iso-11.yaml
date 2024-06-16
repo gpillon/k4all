@@ -63,7 +63,7 @@ jobs:
       - name: Install qemu-img
         run: sudo apt-get -qq update && sudo apt-get -qq install -y qemu-utils
       - name: Create k4all QCOW2 / VDI image
-        run: >
+        run: |
           IFS=' ' read -ra ROLE_ARRAY <<< "${{ env.ROLES }}"
           for role in "${ROLE_ARRAY[@]}"; do
             qemu-img convert -O qcow2 ./k4all/k4all-$role-${{ env.version }}.iso ./k4all/k4all-$role-${{ env.version }}.qcow2
