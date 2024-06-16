@@ -2,94 +2,13 @@
 variant: fcos
 version: 1.5.0
 
-kernel_arguments:
-  should_exist:
-    - mitigations=off
-  should_not_exist:
-    - mitigations=auto,nosmt
-    
-passwd:
-  users:
-    - name: core
-      password_hash: "$6$xyz$CCw54pypmRZ5rXtbwICd253nhHKkgqAAqenBsi.shPNfjDVnJ/Sz/.p2ovQiSA7eUl61lLQkDyq6itQQTMqfX0"
+ignition:
+   config: 
+     merge: 
+        - local: ./k8s-base.ign
 
 systemd:
   units:
-    - name: fck8s-lvm-setup.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Setup LVM
-        
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/setup-lvm.sh
-        RemainAfterExit=yes
-        
-        [Install]
-        WantedBy=multi-user.target
-    - name: fck8s-set-hostname.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Set Hostname
-        Requires=network-online.target
-        After=network-online.target
-        
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/set-hostname.sh
-        RemainAfterExit=yes
-        
-        [Install]
-        WantedBy=multi-user.target
-    - name: fck8s-k8s-setup.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Set up Kubernetes
-        Requires=fck8s-set-hostname.service
-        After=fck8s-set-hostname.service
-        
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/setup-k8s.sh
-        RemainAfterExit=yes
-        
-        [Install]
-        WantedBy=multi-user.target
-    - name: fck8s-k8s-setup-ph2.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Set up Kubernetes phase 2
-        Requires=fck8s-k8s-setup.service
-        After=fck8s-k8s-setup.service
-        
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/setup-k8s-ph2.sh
-        RemainAfterExit=yes
-        
-        [Install]
-        WantedBy=multi-user.target
-    - name: fck8s-k8s-setup-init.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Set up Kubernetes Cluster
-        Requires=fck8s-k8s-setup-ph2.service
-        Requires=crio.service
-        After=fck8s-k8s-setup-ph2.service crio.service
-
-        [Service]
-        Type=oneshot
-        ExecStart=/usr/local/bin/setup-k8s-init.sh
-        RemainAfterExit=yes
-        Restart=on-failure
-        
-        [Install]
-        WantedBy=multi-user.target
     - name: fck8s-helm-setup.service
       enabled: true
       contents: |
@@ -309,37 +228,11 @@ systemd:
         [Install]
         WantedBy=multi-user.target
 storage:
-  disks:
-    - device: /dev/sda
-      wipe_table: false
-      partitions:
-        - label: root
-          number: 4
-          size_mib: 35000
-          resize: true
-        - label: lvm
-          size_mib: 0
-          wipe_partition_entry: true
-  trees:
-    - local: manifests
-      path: /usr/local/share/mainifests/
-    - local: scripts
-      path: /usr/local/bin/
-  #filesystems:
-  #  - device: /dev/disk/by-label/lvm
-  #    format: none 
-  #    path: /data/
-      
   files:
     - path: "/etc/k8s-config.yaml"
       mode: 420
       contents:
         local: yaml/k8s-config.yaml
-    - path: "/etc/sysctl.d/k8s.conf"
-      mode: 420
-      contents:
-        inline: |
-         net.ipv4.ip_forward = 1
     - path: "/etc/yum.repos.d/kubernetes.repo"
       mode: 420
       contents:
@@ -368,23 +261,20 @@ storage:
       mode: 0420
       contents:
         local: yaml/calico-resources.yaml
-    - path: /etc/ssh/sshd_config.d/20-enable-passwords.conf
-      mode: 0644
+
+    - path: "/usr/local/bin/setup-k8s-init.sh"
+      mode: 764
       contents:
-        inline: |
-          # Fedora CoreOS disables SSH password login by default.
-          # Enable it.
-          # This file must sort before 40-disable-passwords.conf.
-          PasswordAuthentication yes
-    - path: /root/.config/delete-me
-      mode: 0420
+        local: overrides/bootstrap/setup-k8s-init.sh
+    - path: "/usr/local/bin/generate_join.sh"
+      mode: 764
       contents:
-        local: data/delete-me
-    - path: /etc/zincati/config.d/10-update-periodic.toml
-      mode: 0644
-      user:
-        name: zincati
-      group:
-        name: zincati
+        local: overrides/bootstrap/generate_join.sh
+    - path: "/usr/local/bin/generate-kubelet-config.sh"
+      mode: 764
       contents:
-        local: data/10-update-periodic.toml
+        local: overrides/bootstrap/generate-kubelet-config.sh
+    - path: "/usr/local/bin/enable-cluster.sh"
+      mode: 764
+      contents:
+        local: overrides/bootstrap/enable-cluster.sh

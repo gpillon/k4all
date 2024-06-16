@@ -29,34 +29,44 @@ FCOS_PATH="${1:-./}"
 # Create the output directory if it doesn't exist
 mkdir -p "$FCOS_PATH"
 
-# Generate the Ignition file for Kubernetes using Butane in a container
-$CONTAINER_TOOL run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < k8s.bu > k8s.ign
-
 # Generate the Ignition file for the installation using Butane in a container
-$CONTAINER_TOOL run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < install.bu > install.ign
+$CONTAINER_TOOL run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-base.bu" > "k8s-base.ign"
 
-# Generate the customized Fedora CoreOS ISO using CoreOS Installer in a container
-rm -rf "$FCOS_PATH/fcos40-k8s.iso" && \
-$CONTAINER_TOOL run --privileged --rm \
-  -v /dev:/dev \
-  -v .:/data \
-  -w /data \
-  -v "$FCOS_PATH":/fcos/ \
-  quay.io/coreos/coreos-installer:release \
-  iso ignition embed \
-  -i /data/install.ign \
-  -o "/fcos/fcos40-k8s.iso" \
-  "/fcos/fedora-coreos-40.20240504.3.0-live.x86_64.iso"
+roles=("bootstrap" "control") # Add other elements as needed
 
-$CONTAINER_TOOL run --privileged --rm \
- -v "$FCOS_PATH":/fcos/ \
- quay.io/coreos/coreos-installer:release \
- iso kargs modify \
- -a coreos.liveiso.fromram \
- /fcos/fcos40-k8s.iso 
+for role in "${roles[@]}"; do
+    # Generate the Ignition file for each role
+    echo "Generating Ignition file for $role..."
+    $CONTAINER_TOOL run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-$role.bu" > "k8s.ign"
+    $CONTAINER_TOOL run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < install.bu > install.ign
 
- #-a dm_mod.blacklist=1 \
- #-a rd.driver.blacklist=dm_mod \
+    # Remove old ISO if it exists
+    rm -rf "$FCOS_PATH/fcos40-k8s-$role.iso"
 
-echo "ISO generated successfully!"
+    # Generate the customized Fedora CoreOS ISO
+    echo "Creating customized ISO for $role..."
+    $CONTAINER_TOOL run --privileged --rm \
+      -v /dev:/dev \
+      -v "$(pwd):/data" \
+      -w /data \
+      -v "$FCOS_PATH:/fcos/" \
+      quay.io/coreos/coreos-installer:release \
+      iso ignition embed \
+      -i "/data/install.ign" \
+      -o "/fcos/fcos40-k8s-$role.iso" \
+      "/fcos/fedora-coreos-40.20240504.3.0-live.x86_64.iso"
 
+    # Modify kernel arguments for the ISO
+    echo "Modifying kernel arguments for $role ISO..."
+    $CONTAINER_TOOL run --privileged --rm \
+     -v "$FCOS_PATH:/fcos/" \
+     quay.io/coreos/coreos-installer:release \
+     iso kargs modify \
+     -a coreos.liveiso.fromram \
+     "/fcos/fcos40-k8s-$role.iso"
+
+     mv ./k8s.ign k8s-$role.ign
+     mv ./install.ign install-$role.ign
+done
+
+echo "All processes completed."

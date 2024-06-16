@@ -17,7 +17,7 @@ if [ -f "/var/lib/k8s-setup.reboot" ]; then
 fi
 
 # Install Kubernetes packages using rpm-ostree
-rpm-ostree install --idempotent kubeadm kubectl kubelet crio openvswitch NetworkManager-ovs
+rpm-ostree install --idempotent kubeadm kubectl kubelet crio openvswitch NetworkManager-ovs yq
 
 # output=$(rpm-ostree status)
 
