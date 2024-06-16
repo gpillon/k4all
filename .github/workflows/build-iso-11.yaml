@@ -53,7 +53,7 @@ jobs:
           IFS=' ' read -ra ROLE_ARRAY <<< "${{ env.ROLES }}"
           for role in "${ROLE_ARRAY[@]}"; do
             docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-$role.bu" > "k8s-$role.ign"
-            docker run --privileged --rm -v /dev:/dev -v "$(pwd):/data" -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i "/data/k8s-$role.ign" -o "/k4all/k4all-$role-${{ env.version }}.iso" "/k4all/fedora-coreos.iso"
+            docker run --privileged --rm -v /dev:/dev -v "$(pwd):/data" -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i "/data/install.ign" -o "/k4all/k4all-$role-${{ env.version }}.iso" "/k4all/fedora-coreos.iso"
             docker run --privileged --rm -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso kargs modify -a coreos.liveiso.fromram "/k4all/k4all-$role-${{ env.version }}.iso"
           done
       - name: Check ISO directory and Fix file permissions
