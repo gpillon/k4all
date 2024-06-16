@@ -49,6 +49,7 @@ jobs:
           chmod +x ./scripts/*
       - name: Generate ISOs for Multiple Roles
         run: |
+          docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-base.bu" > "k8s-base.ign"
           IFS=' ' read -ra ROLE_ARRAY <<< "${{ env.ROLES }}"
           for role in "${ROLE_ARRAY[@]}"; do
             docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-$role.bu" > "k8s-$role.ign"
