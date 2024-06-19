@@ -2,9 +2,10 @@
 
 set -euxo pipefail
 
+disk_name=$(/usr/local/bin/disk-helper.sh)
 
 # Specify the disk to clean
-DISK="/dev/sda"
+DISK=/dev/$disk_name
 
 # Remove all logical volumes on the disk
 for lv in $(lvs --noheadings -o lv_path | grep "$DISK"); do

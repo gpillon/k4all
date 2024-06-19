@@ -4,7 +4,7 @@ The `k4all` ISO provides a pre-configured Fedora CoreOS environment tailored for
 
 ## Overview
 
-**Warning: The installation process is fully unattended and will format the entire /dev/sda device. Ensure that your data is backed up before proceeding.**
+**Warning: The installation process is fully unattended and will format the entire `/dev/sda|vda|mmcblk device`. Ensure that your data is backed up before proceeding.**
 
 Key features include:
 - **Metrics Server**: Enables resource usage metrics collection for Kubernetes.
@@ -35,7 +35,7 @@ Key features include:
 
 0. Prepare a good Coffee (Expresso or American, depending on the hardware).
 1. Boot the ISO on the target system.
-2. The installation is fully automated and will format the entire `/dev/sda` disk.
+2. The installation is fully automated and will format the entire `dev/sda|vda|mmcblk` disk.
 3. Once completed, the system will reboot into the new environment.
 4. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 11yo Hardware).
 5. Follow next steps

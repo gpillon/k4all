@@ -23,7 +23,10 @@ storage:
       mode: 420
       contents:
         local: k8s.ign
-
+    - path: /usr/local/bin/disk-helper.sh
+      mode: 0755
+      contents:
+        local: scripts/disk-helper.sh
 systemd:
   units:
     - name: unmount-lvm.service
