@@ -43,8 +43,8 @@ jobs:
         shell: bash
       - name: Make scripts executable
         run: |
-          chmod +x ./install-scripts/*
-          chmod +x ./scripts/*
+          chmod -R +x ./install-scripts/*
+          chmod -R +x ./scripts/*
       - name: Generate ISOs for Multiple Roles
         run: |
           docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-base.bu" > "k8s-base.ign"

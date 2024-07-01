@@ -18,8 +18,8 @@ else
   exit 1
 fi
 
-chmod +x ./install-scripts/*
-chmod +x ./scripts/*
+chmod -R +x ./install-scripts/*
+chmod -R +x ./scripts/*
 
 echo "Using $CONTAINER_TOOL as the container tool."
 

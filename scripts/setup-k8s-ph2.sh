@@ -2,12 +2,11 @@
 set -euxo pipefail
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/k8s-setup-ph2.done" ]; then
+if [ -f "/var/lib/setup-ph2.done" ]; then
   echo "Kubernetes setup phase 2 already done. Exiting."
   exit 0
 fi
 
-touch /var/lib/k8s-setup.done
 
 NET_DEV=$(ip route show default | awk '/default/ {print $5}')
 #NM_NAME=$(nmcli con show | grep -w "${NET_DEV}" | awk '{print $1}')
@@ -41,6 +40,8 @@ nmcli con modify ovs-bridge-int ipv4.method manual ipv4.address "${IP_ADDR}" ipv
 nmcli con up ovs-port-eth-int
 nmcli con up ovs-bridge-int
 
-touch /var/lib/k8s-setup-ph2.done
+rm -f /etc/NetworkManager/system-connections/${NET_DEV}.nmconnection
+
+touch /var/lib/setup-ph2.done
 systemctl reboot
 while true; do sleep 1000; done

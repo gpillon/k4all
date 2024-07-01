@@ -27,6 +27,51 @@ storage:
       mode: 0755
       contents:
         local: scripts/disk-helper.sh
+    - path: /usr/local/share/default-cluster-config.json
+      mode: 0664
+      contents:
+        local: data/default-cluster-config.json
+    - path: /etc/systemd/system/getty@tty1.service.d/autologin.conf
+      mode: 0644
+      contents:
+        inline: |
+          [Service]
+          ExecStart=
+          ExecStart=-/sbin/agetty -o '-p -f -- \\u' --noclear --autologin core %I $TERM
+    - path: /home/core/.bash_profile
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          # .bash_profile
+
+          # Get the aliases and functions
+          if [ -f ~/.bashrc ]; then
+              . ~/.bashrc
+          fi
+
+          if [ -z "$SSH_TTY" ] && [ -n "$PS1" ]; then
+            if [ ! -f /tmp/k4all-config.yaml ]; then
+              /usr/local/bin/k4all-config.sh
+            fi
+          fi
+          echo ""
+          echo "To follow the installation process, type \"journalctl -xf\" (as I'm doing now), and just wait for the installer to finish, and reboot the system"
+          echo "If it takes too long, interrupt with Control-c and try to \"sudo -i\" to view the failed services."
+          journalctl -xf
+
+      user:
+        id: 1000
+      group:
+        id: 1000
+    - path: /etc/ssh/sshd_config.d/20-enable-passwords.conf
+      mode: 0644
+      contents:
+        inline: |
+          # Fedora CoreOS disables SSH password login by default.
+          # Enable it.
+          # This file must sort before 40-disable-passwords.conf.
+          PasswordAuthentication yes
 systemd:
   units:
     - name: unmount-lvm.service

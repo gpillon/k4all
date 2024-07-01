@@ -1,0 +1,56 @@
+// This file is used to configure the device.
+// The device will read this file and apply the settings during boot.
+{
+  "networking": {
+    "ipconfig": "dhcp"
+    // Uncomment the following lines to configure a static IP address
+    
+    // "ipconfig": "static",
+
+    // Required for static IP configuration
+    // "ipaddr": "192.168.0.100",
+
+    // Required for static IP configuration
+    // "gateway": "192.168.0.1",
+
+    // Required for static IP configuration
+    // "subnet_mask": "255.255.255.0",
+
+    // comma separated list of DNS servers
+    // "dns": "1.1.1.1,8.8.8.8",
+
+    // Optional, comma separated list of search domains; leave empty to use the default, but don't remove the line!
+    // "dns_search": "" 
+  }
+}
+
+// not used now; but ideas for future
+// {
+//"wifi": {
+//    "ssid": "your-ssid",
+//    "password": "your-password"
+//  }
+
+//other boostrap / control configuration
+// "node": {
+//    "name": "node1",
+//    "role": "master" | "worker",
+//    "ha": {
+//        "type": "none" | "keepalived" | "extenalLoadBalancer",
+//        "apihostname": "api.yourdomain.com",
+//        "apiport": 443,
+//        "ingress": {
+//            "hostname": "*.k8s.yourdomain.com",
+//            "port": 443
+//        },
+//        "keepalived": {
+//            "vrid": 1,
+//            "priority": 100,
+//            "interface": "eth0",
+//            "virtual_ip": "
+//        },
+//        "externalLoadBalancer": {
+//            "ip": "
+//        }
+//    }
+// }

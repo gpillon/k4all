@@ -103,6 +103,23 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
+    - name: fck8s-certmanager-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up CertManager
+        Requires=fck8s-node-ready-and-schedulable.service
+        Requires=fck8s-helm-setup.service
+        After=fck8s-node-ready-and-schedulable.service fck8s-helm-setup.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-certmanager.sh
+        RemainAfterExit=yes
+        WorkingDirectory=/root/
+        
+        [Install]
+        WantedBy=multi-user.target
     - name: fck8s-topolvm-setup.service
       enabled: true
       contents: |
@@ -111,7 +128,8 @@ systemd:
         Requires=fck8s-node-ready-and-schedulable.service
         Requires=fck8s-lvm-setup.service
         Requires=fck8s-helm-setup.service
-        After=fck8s-node-ready-and-schedulable.service fck8s-lvm-setup.service fck8s-helm-setup.service
+        Requires=fck8s-certmanager-setup.service
+        After=fck8s-node-ready-and-schedulable.service fck8s-lvm-setup.service fck8s-helm-setup.service fck8s-certmanager-setup.service
         
         [Service]
         Type=oneshot
@@ -246,35 +264,38 @@ storage:
       contents:
         local: yaml/ingress-values.yaml
     - path: /usr/local/share/metal-lb.yaml
-      mode: 0420
+      mode: 420
       contents:
         local: yaml/metal-lb.yaml
     - path: /usr/local/share/dashboard-users.yaml
-      mode: 0420
+      mode: 420
       contents:
         local: yaml/dashboard-users.yaml
     - path: /usr/local/share/dashboard-ingress-routes.yaml
-      mode: 0420
+      mode: 420
       contents:
         local: yaml/dashboard-ingress-routes.yaml
     - path: /usr/local/share/calico-resources.yaml
-      mode: 0420
+      mode: 420
       contents:
         local: yaml/calico-resources.yaml
-
     - path: "/usr/local/bin/setup-k8s-init.sh"
-      mode: 764
+      mode: 0755
       contents:
         local: overrides/bootstrap/setup-k8s-init.sh
-    - path: "/usr/local/bin/generate_join.sh"
-      mode: 764
+    - path: "/usr/local/bin/generate_control_join.sh"
+      mode: 0755
       contents:
-        local: overrides/bootstrap/generate_join.sh
+        local: overrides/bootstrap/generate_control_join.sh
+    - path: "/usr/local/bin/generate_worker_join.sh"
+      mode: 0755
+      contents:
+        local: overrides/bootstrap/generate_worker_join.sh
     - path: "/usr/local/bin/generate-kubelet-config.sh"
-      mode: 764
+      mode: 0755
       contents:
         local: overrides/bootstrap/generate-kubelet-config.sh
     - path: "/usr/local/bin/enable-cluster.sh"
-      mode: 764
+      mode: 0755
       contents:
         local: overrides/bootstrap/enable-cluster.sh

@@ -49,7 +49,7 @@ systemd:
         [Unit]
         Description=Set up Kubernetes
         Requires=fck8s-set-hostname.service
-        After=fck8s-set-hostname.service
+        After=fck8s-set-hostname.service 
         
         [Service]
         Type=oneshot
@@ -62,9 +62,9 @@ systemd:
       enabled: true
       contents: |
         [Unit]
-        Description=Set up Kubernetes phase 2
+        Description=Set up Kubernetes
         Requires=fck8s-k8s-setup.service
-        After=fck8s-k8s-setup.service
+        After=fck8s-k8s-setup.service       
         
         [Service]
         Type=oneshot
@@ -124,7 +124,7 @@ storage:
       contents:
         local: repo/kubernetes.repo
     - path: /etc/ssh/sshd_config.d/20-enable-passwords.conf
-      mode: 0644
+      mode: 0600
       contents:
         inline: |
           # Fedora CoreOS disables SSH password login by default.
@@ -132,7 +132,7 @@ storage:
           # This file must sort before 40-disable-passwords.conf.
           PasswordAuthentication yes
     - path: /root/.config/delete-me
-      mode: 0420
+      mode: 420
       contents:
         local: data/delete-me
     - path: /etc/zincati/config.d/10-update-periodic.toml
