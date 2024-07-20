@@ -38,7 +38,7 @@ jobs:
       - name: Download Fedora CoreOS ISO
         run: |
           mkdir -p ./k4all
-          COREOS_URL="https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/40.20240504.3.0/x86_64/fedora-coreos-40.20240504.3.0-live.x86_64.iso"
+          COREOS_URL="https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/40.20240701.3.0/x86_64/fedora-coreos-40.20240701.3.0-live.x86_64.iso"
           wget -q -O ./k4all/fedora-coreos.iso "$COREOS_URL"
         shell: bash
       - name: Make scripts executable

@@ -3,6 +3,8 @@
 # Exit on error, undefined variable, or pipe failure
 set -euxo pipefail
 
+FCOS_IMAGE=fedora-coreos-40.20240701.3.0-live.x86_64.iso
+
 # Function to check if a command exists
 command_exists() {
   command -v "$1" &> /dev/null
@@ -54,7 +56,7 @@ for role in "${roles[@]}"; do
       iso ignition embed \
       -i "/data/install.ign" \
       -o "/fcos/fcos40-k8s-$role.iso" \
-      "/fcos/fedora-coreos-40.20240504.3.0-live.x86_64.iso"
+      "/fcos/$FCOS_IMAGE"
 
     # Modify kernel arguments for the ISO
     echo "Modifying kernel arguments for $role ISO..."
