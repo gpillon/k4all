@@ -34,7 +34,7 @@ mkdir -p "$FCOS_PATH"
 # Generate the Ignition file for the installation using Butane in a container
 $CONTAINER_TOOL run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-base.bu" > "k8s-base.ign"
 
-roles=("bootstrap" "control") # Add other elements as needed
+roles=("bootstrap" "control" "worker") # Add other elements as needed
 
 for role in "${roles[@]}"; do
     # Generate the Ignition file for each role

@@ -119,6 +119,7 @@ storage:
       contents:
         inline: |
          net.ipv4.ip_forward = 1
+         net.ipv4.ip_nonlocal_bind = 1
     - path: "/etc/yum.repos.d/kubernetes.repo"
       mode: 420
       contents:

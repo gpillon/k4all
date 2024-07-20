@@ -11,13 +11,12 @@ storage:
     - path: "/etc/k8s-config.yaml"
       mode: 420
       contents:
-        local: yaml/k8s-config-control.yaml
-        
+        local: yaml/k8s-config-worker.yaml 
     - path: "/usr/local/bin/setup-k8s-init.sh"
-      mode: 764
+      mode: 0755
       contents:
-        local: overrides/control/setup-k8s-init.sh
+        local: overrides/worker/setup-k8s-init.sh
     - path: "/usr/local/bin/join_cluster.sh"
-      mode: 764
+      mode: 0755
       contents:
-        local: overrides/control/join_cluster.sh
+        local: overrides/worker/join_cluster.sh
