@@ -21,3 +21,13 @@ is_valid_ip() {
     return 1
   fi
 }
+
+# Function to check that the number is an integer
+is_integer() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+is_json_integer() {
+  # Use jq to check if the value is an integer and print "true" or "false"
+  jq -r '.disk.root.size_mib | type == "number"' "$1"
+}

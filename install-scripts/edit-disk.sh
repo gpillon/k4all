@@ -2,11 +2,11 @@
 
 set -euxo pipefail
 
-disk_name=$(/usr/local/bin/disk-helper.sh)
-
-# Path to the ignition file
+CONFIG_FILE="/tmp/k4all-config.json"
 IGNITION_FILE="/usr/local/bin/k8s.ign"
-# New disk name to insert into the JSON structure
+
+# New disk size to insert into the JSON structure from the CONFIG_FILE
+NEW_DISK_SIZE=$(jq '.disk.root.size_mib' $CONFIG_FILE)
 
 # Temporary files for processing
 TMP_BASE64_DECODED="/tmp/k8s_decoded.gz"
@@ -23,8 +23,8 @@ echo $BASE64_CONTENT | base64 -d > $TMP_BASE64_DECODED
 # Decompress to get the JSON content
 gzip -d -c $TMP_BASE64_DECODED > $TMP_JSON
 
-# Use jq to modify the JSON content automatically
-jq --arg newDisk "/dev/$disk_name" '.storage.disks[0].device = $newDisk' $TMP_JSON > $TMP_JSON_MODIFIED
+# Use jq to modify the JSON content automatically, updating the size of the partition labeled "root"
+jq --arg newSize "$NEW_DISK_SIZE" '(.storage.disks[0].partitions[] | select(.label == "root") | .sizeMiB) |= $newSize' $TMP_JSON > $TMP_JSON_MODIFIED
 
 # Recompress the edited JSON and re-encode it to base64
 gzip -c $TMP_JSON_MODIFIED | base64 -w 0 > $TMP_BASE64_DECODED

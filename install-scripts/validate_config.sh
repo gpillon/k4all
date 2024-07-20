@@ -21,6 +21,11 @@ validate_json() {
     return 1
   fi
 
+  # Validate disk section
+  if ! validate_disk; then
+    return 1
+  fi
+
   echo "JSON configuration file is valid."
   return 0
 }

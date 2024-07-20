@@ -21,6 +21,14 @@
 
     // Optional, comma separated list of search domains; leave empty to use the default, but don't remove the line!
     // "dns_search": "" 
+  },
+  //disk configuration
+  "disk": {
+    // root disk configuration
+    "root": {
+      //root disk size in MiB; minimum 12000 MiB; for just a few pods, 20000 MiB is recommended at least; recommended 50000 MiB for most use cases, 120000 MiB for about 50-80 deployments
+      "size_mib": 50000
+    }
   }
 }
 
