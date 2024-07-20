@@ -56,9 +56,9 @@ storage:
             fi
           fi
           echo ""
-          echo "To follow the installation process, type \"journalctl -xf\" (as I'm doing now), and just wait for the installer to finish, and reboot the system"
+          echo "To follow the installation process, type \"journalctl -f\" (as I'm doing now), and just wait for the installer to finish, and reboot the system"
           echo "If it takes too long, interrupt with Control-c and try to \"sudo -i\" to view the failed services."
-          journalctl -xf
+          journalctl -f
 
       user:
         id: 1000
