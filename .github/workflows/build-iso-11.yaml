@@ -80,7 +80,7 @@ jobs:
         shell: bash
 
       - name: Create a GitHub Release
-        id: create_release
+        id: create_release_bootstrap
         uses: softprops/action-gh-release@v2
         with:
           tag_name: '${{ env.version }}'
@@ -91,9 +91,31 @@ jobs:
             ./k4all/k4all-bootstrap-${{ env.version }}.iso
             ./k4all/k4all-bootstrap-${{ env.version }}.qcow2
             ./k4all/k4all-bootstrap-${{ env.version }}.vdi
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+      - name: Create a GitHub Release
+        id: create_release_control
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: '${{ env.version }}'
+          name: 'Release ${{ env.version }}'
+          draft: '${{ env.draft }}'
+          prerelease: '${{ env.prerelease }}'
+          files: |
             ./k4all/k4all-control-${{ env.version }}.iso
             ./k4all/k4all-control-${{ env.version }}.qcow2
             ./k4all/k4all-control-${{ env.version }}.vdi
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+      - name: Create a GitHub Release
+        id: create_release_worker
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: '${{ env.version }}'
+          name: 'Release ${{ env.version }}'
+          draft: '${{ env.draft }}'
+          prerelease: '${{ env.prerelease }}'
+          files: |
             ./k4all/k4all-worker-${{ env.version }}.iso
             ./k4all/k4all-worker-${{ env.version }}.qcow2
             ./k4all/k4all-worker-${{ env.version }}.vdi
