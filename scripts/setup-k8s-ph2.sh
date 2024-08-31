@@ -2,15 +2,15 @@
 set -euxo pipefail
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/k8s-setup-ph2.done" ]; then
+if [ -f "/var/lib/setup-ph2.done" ]; then
   echo "Kubernetes setup phase 2 already done. Exiting."
   exit 0
 fi
 
-touch /var/lib/k8s-setup.done
 
 NET_DEV=$(ip route show default | awk '/default/ {print $5}')
 #NM_NAME=$(nmcli con show | grep -w "${NET_DEV}" | awk '{print $1}')
+MAC_ADDR=$(ip link show "${NET_DEV}" | awk '/ether/ {print $2}')
 
 # Retrieve IP, Gateway, DNS, and Domain information from the original network device
 IP_ADDR=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}")
@@ -32,6 +32,7 @@ nmcli con add type ethernet conn.interface "${NET_DEV}" master ovs-port-eth con-
 
 #nmcli con modify ovs-bridge-int ipv4.method auto ipv6.method disabled
 
+nmcli con modify ovs-bridge 802-3-ethernet.cloned-mac-address "${MAC_ADDR}"
 nmcli con modify ovs-bridge-int ipv4.method manual ipv4.address "${IP_ADDR}" ipv4.gateway "${GATEWAY}" ipv4.dns "${DNS}" ipv4.dns-search "${SEARCH}" ipv6.method ignore
 
 #nmcli con modify ovs-bridge-int 802-3-ethernet.mtu 9000
@@ -41,6 +42,8 @@ nmcli con modify ovs-bridge-int ipv4.method manual ipv4.address "${IP_ADDR}" ipv
 nmcli con up ovs-port-eth-int
 nmcli con up ovs-bridge-int
 
-touch /var/lib/k8s-setup-ph2.done
+rm -f /etc/NetworkManager/system-connections/${NET_DEV}.nmconnection
+
+touch /var/lib/setup-ph2.done
 systemctl reboot
 while true; do sleep 1000; done

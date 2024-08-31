@@ -10,6 +10,8 @@ generate-kubelet-config.sh
 if [ $? -eq 0 ]; then
     echo "At least one IP is available. Proceeding with LoadBalancer Service and ConfigMap update..."
 
+    source /usr/local/bin/control-plane-utils
+
     # Check if the service already exists
     if ! kubectl get svc kube-api-server-lb -n kube-system > /dev/null 2>&1; then
         echo "Service kube-api-server-lb does not exist. Creating service..."
@@ -62,26 +64,12 @@ EOF
 
     echo "ConfigMap kubeadm-config updated with Load Balancer IP and Port"
 
-    CURRENT_IP=$(ip addr show ovs-bridge | grep -Po 'inet \K[\d.]+')
-    CONFIG_FILE="/etc/k8s-config.yaml"
+    # Ensure the ClusterConfiguration and apiServer.certSANs exists
+    yq e -i "select(.kind == \"ClusterConfiguration\").apiServer.certSANs |= . // []" $CONFIG_FILE
 
-    # Function to add an IP to certSANs if it does not already exist
-function add_ip_if_not_exists {
-    local ip=$1
-    # Check if IP already exists in the certSANs array
-    output=$(yq e "select(.kind == \"ClusterConfiguration\").apiServer.certSANs | contains ([\"$ip\"]) " $CONFIG_FILE)
-    if [ "$output" == "false" ]; then
-        # Add the IP if it does not exist
-        yq e -i "select(.kind == \"ClusterConfiguration\").apiServer.certSANs += [\"$ip\"]" $CONFIG_FILE
-    fi
-}
-
-# Ensure the ClusterConfiguration and apiServer.certSANs exists
-yq e -i "select(.kind == \"ClusterConfiguration\").apiServer.certSANs |= . // []" $CONFIG_FILE
-
-# Add the current and new LB IP to certSANs if they do not exist
-add_ip_if_not_exists "$CURRENT_IP"
-add_ip_if_not_exists "$LB_IP"
+    # Add the current and new LB IP to certSANs if they do not exist
+    add_ip_if_not_exists "$CURRENT_IP"
+    add_ip_if_not_exists "$LB_IP"
 
     echo "Updated k8s-config.yaml with the current IP ($CURRENT_IP) and new LB_IP ($LB_IP) in certSANs."
 

@@ -1,8 +1,14 @@
 #!/bin/bash
 
+source /usr/local/bin/control-plane-utils
+
 # Function to get the current IP address
 get_ip() {
-    hostname -I | awk '{print $1}'
+    if jq -e '.node.ha.type' "$CONFIG_FILE" | grep -q "keepalived"; then
+        jq -r '.node.ha.apiControlEndpoint' $CONFIG_FILE
+    else
+        hostname -I | awk '{print $1}'
+    fi
 }
 
 # Function to get the current FQDN

@@ -1,0 +1,21 @@
+#!/bin/bash
+
+CONFIG_FILE="/etc/k4all-config.json"
+CURRENT_IP=$(ip addr show ovs-bridge | grep -v secondary | grep -Po 'inet \K[\d.]+')
+K8S_CONFIG_FILE="/etc/k8s-config.yaml"
+
+# Function to add an IP to certSANs if it does not already exist
+function add_ip_if_not_exists {
+    local ip=$1
+    # Check if IP already exists in the certSANs array
+    output=$(yq e "select(.kind == \"ClusterConfiguration\").apiServer.certSANs | contains ([\"$ip\"]) " $K8S_CONFIG_FILE)
+    if [ "$output" == "false" ]; then
+        # Add the IP if it does not exist
+        yq e -i "select(.kind == \"ClusterConfiguration\").apiServer.certSANs += [\"$ip\"]" $K8S_CONFIG_FILE
+    fi
+}
+
+function set_control_plane_endpoint() {
+     local ip=$1
+     yq e -i "select(.kind == \"ClusterConfiguration\").controlPlaneEndpoint = \"$1\"" $K8S_CONFIG_FILE
+}

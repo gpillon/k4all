@@ -7,26 +7,17 @@ if [ -f "/var/lib/k8s-setup-init.done" ]; then
   exit 0
 fi
 
+source /usr/local/bin/k4all-utils
+
 kubeadm reset --force
 
 # Initialize Kubernetes cluster
 kubeadm init --config /etc/k8s-config.yaml
 
-# Set up kubeconfig for the root user
-mkdir -p /root/.kube
-cp /etc/kubernetes/admin.conf /root/.kube/config
-chown $(id -u):$(id -g) /root/.kube/config
-
-# Set up kubeconfig for the core user
-mkdir -p /home/core/.kube
-cp /etc/kubernetes/admin.conf /home/core/.kube/config
-chown core:core /home/core/.kube/config
-
-kubectl completion bash > /root/.kube/completion.bash.inc
-printf "
-# kubectl shell completion
-source '/root/.kube/completion.bash.inc'
-" >> /root/.bash_profile
+setup_kubeconfig_for_user "root" "/root"
+setup_kubeconfig_for_user "core" "/home/core"
+finalize_k8s_setup_for_user "root" "/root"
+finalize_k8s_setup_for_user "core" "/home/core" 
 
 # Crea il file di stato per indicare che l'installazione è stata completata
 touch /var/lib/k8s-setup-init.done

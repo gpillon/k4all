@@ -7,18 +7,33 @@ if [ -f "/var/lib/lvm-setup.done" ]; then
   exit 0
 fi
 
-# Check if PV already exists
-if ! pvdisplay /dev/sda5 &> /dev/null; then
-  echo "Creating physical volume on /dev/sda5..."
-  pvcreate /dev/sda5
+disk_name=$(/usr/local/bin/disk-helper.sh)
+
+# Check the partition naming convention dynamically
+if ls /dev/${disk_name}* 2>/dev/null | grep -q "${disk_name}p"; then
+  partition_suffix="p"
+elif ls /dev/${disk_name}* 2>/dev/null | grep -q "${disk_name}[0-9]"; then
+  partition_suffix=""
 else
-  echo "Physical volume on /dev/sda5 already exists."
+  echo "No partitions detected, using default naming convention"
+  partition_suffix=""
+fi
+
+partition_name="${disk_name}${partition_suffix}5"
+echo "The fifth partition is named: ${partition_name}"
+
+# Check if PV already exists
+if ! pvdisplay /dev/${partition_name} &> /dev/null; then
+  echo "Creating physical volume on /dev/${partition_name}..."
+  pvcreate /dev/${partition_name}
+else
+  echo "Physical volume on /dev/${partition_name} already exists."
 fi
 
 # Check if VG already exists
 if ! vgdisplay vg_data &> /dev/null; then
   echo "Creating volume group vg_data..."
-  vgcreate vg_data /dev/sda5
+  vgcreate vg_data /dev/${partition_name}
 else
   echo "Volume group vg_data already exists."
 fi

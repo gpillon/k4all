@@ -43,17 +43,17 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
-    - name: fck8s-k8s-setup.service
+    - name: fck8s-k8s-setup-ph1.service
       enabled: true
       contents: |
         [Unit]
         Description=Set up Kubernetes
         Requires=fck8s-set-hostname.service
-        After=fck8s-set-hostname.service
+        After=fck8s-set-hostname.service 
         
         [Service]
         Type=oneshot
-        ExecStart=/usr/local/bin/setup-k8s.sh
+        ExecStart=/usr/local/bin/setup-k8s-ph1.sh
         RemainAfterExit=yes
         
         [Install]
@@ -62,13 +62,28 @@ systemd:
       enabled: true
       contents: |
         [Unit]
-        Description=Set up Kubernetes phase 2
-        Requires=fck8s-k8s-setup.service
-        After=fck8s-k8s-setup.service
+        Description=Set up Kubernetes
+        Requires=fck8s-k8s-setup-ph1.service
+        After=fck8s-k8s-setup-ph1.service       
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-k8s-ph2.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-k8s-setup-ph3.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Kubernetes
+        Requires=fck8s-k8s-setup-ph2.service
+        After=fck8s-k8s-setup-ph2.service       
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-k8s-ph3.sh
         RemainAfterExit=yes
         
         [Install]
@@ -78,9 +93,9 @@ systemd:
       contents: |
         [Unit]
         Description=Set up Kubernetes Cluster
-        Requires=fck8s-k8s-setup-ph2.service
+        Requires=fck8s-k8s-setup-ph3.service
         Requires=crio.service
-        After=fck8s-k8s-setup-ph2.service crio.service
+        After=fck8s-k8s-setup-ph3.service crio.service
 
         [Service]
         Type=oneshot
@@ -98,7 +113,7 @@ storage:
       partitions:
         - label: root
           number: 4
-          size_mib: 20000
+          size_mib: 50000
           resize: true
         - label: lvm
           size_mib: 0
@@ -119,12 +134,13 @@ storage:
       contents:
         inline: |
          net.ipv4.ip_forward = 1
+         net.ipv4.ip_nonlocal_bind = 1
     - path: "/etc/yum.repos.d/kubernetes.repo"
       mode: 420
       contents:
         local: repo/kubernetes.repo
     - path: /etc/ssh/sshd_config.d/20-enable-passwords.conf
-      mode: 0644
+      mode: 0600
       contents:
         inline: |
           # Fedora CoreOS disables SSH password login by default.
@@ -132,7 +148,7 @@ storage:
           # This file must sort before 40-disable-passwords.conf.
           PasswordAuthentication yes
     - path: /root/.config/delete-me
-      mode: 0420
+      mode: 420
       contents:
         local: data/delete-me
     - path: /etc/zincati/config.d/10-update-periodic.toml

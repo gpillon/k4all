@@ -1,0 +1,30 @@
+# k8s.bu
+variant: fcos
+version: 1.5.0
+
+ignition:
+   config: 
+     merge: 
+        - local: ./k8s-base.ign
+storage:      
+  files:
+    - path: "/etc/node-type"
+      mode: 420
+      contents:
+        local: overrides/worker/node-type
+    - path: "/etc/k8s-config.yaml"
+      mode: 420
+      contents:
+        local: yaml/k8s-config-worker.yaml 
+    - path: "/usr/local/bin/setup-k8s-init.sh"
+      mode: 0755
+      contents:
+        local: overrides/worker/setup-k8s-init.sh
+    - path: "/usr/local/bin/join_cluster.sh"
+      mode: 0755
+      contents:
+        local: overrides/worker/join_cluster.sh
+    - path: "/usr/local/bin/setup-k8s-ph3.sh"
+      mode: 0755
+      contents:
+        local: overrides/worker/setup-k8s-ph3.sh

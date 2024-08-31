@@ -10,13 +10,16 @@ jobs:
   build-iso:
     runs-on: ubuntu-latest
     env:
-      ROLES: "bootstrap control"  # Defining roles as a space-separated string
+      ROLES: "bootstrap control worker"  # Defining roles as a space-separated string
+      COREOS_URL: "https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/40.20240701.3.0/x86_64/fedora-coreos-40.20240701.3.0-live.x86_64.iso"
 
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
+
       - name: Set up Docker
         uses: docker/setup-buildx-action@v3
+
       - name: Extract branch or tag version
         id: version
         run: |
@@ -35,45 +38,49 @@ jobs:
             echo "prerelease=false" >> $GITHUB_ENV
           fi
           echo "version=$VERSION" >> $GITHUB_ENV
+
       - name: Download Fedora CoreOS ISO
-        run: >
+        run: |
           mkdir -p ./k4all
-
-          COREOS_URL="https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/40.20240504.3.0/x86_64/fedora-coreos-40.20240504.3.0-live.x86_64.iso"
-
-          wget -q -O ./k4all/fedora-coreos.iso "$COREOS_URL"
+          wget -q -O ./k4all/fedora-coreos.iso "${{ env.COREOS_URL }}"
         shell: bash
+
       - name: Make scripts executable
         run: |
-          chmod +x ./install-scripts/*
-          chmod +x ./scripts/*
+          chmod -R +x ./install-scripts/*
+          chmod -R +x ./scripts/*
+
       - name: Generate ISOs for Multiple Roles
         run: |
+          docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-base.bu" > "k8s-base.ign"
           IFS=' ' read -ra ROLE_ARRAY <<< "${{ env.ROLES }}"
           for role in "${ROLE_ARRAY[@]}"; do
-            docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-$role.bu" > "k8s-$role.ign"
-            docker run --privileged --rm -v /dev:/dev -v "$(pwd):/data" -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i "/data/k8s-$role.ign" -o "/k4all/k4all-$role-${{ env.version }}.iso" "/k4all/fedora-coreos.iso"
+            docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-$role.bu" > "k8s.ign"
+            docker run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < install.bu > install.ign
+            docker run --privileged --rm -v /dev:/dev -v "$(pwd):/data" -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i "/data/install.ign" -o "/k4all/k4all-$role-${{ env.version }}.iso" "/k4all/fedora-coreos.iso"
             docker run --privileged --rm -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso kargs modify -a coreos.liveiso.fromram "/k4all/k4all-$role-${{ env.version }}.iso"
           done
+
       - name: Check ISO directory and Fix file permissions
         run: |
           sudo chown -R 1001:127 ./k4all
           ls -lan ./k4all
+
       - name: Install qemu-img
         run: sudo apt-get -qq update && sudo apt-get -qq install -y qemu-utils
+
       - name: Create k4all QCOW2 / VDI image
-        run: >
+        run: |
           IFS=' ' read -ra ROLE_ARRAY <<< "${{ env.ROLES }}"
-          for role in "${ROLE_ARRAY[@]}"; do          
+          for role in "${ROLE_ARRAY[@]}"; do
             qemu-img convert -O qcow2 ./k4all/k4all-$role-${{ env.version }}.iso ./k4all/k4all-$role-${{ env.version }}.qcow2
-
             qemu-img resize ./k4all/k4all-$role-${{ env.version }}.qcow2 60G
-
             qemu-img convert -O vdi ./k4all/k4all-$role-${{ env.version }}.qcow2 ./k4all/k4all-$role-${{ env.version }}.vdi
           done
         shell: bash
+
       - name: Create a GitHub Release
-        id: create_release
+        id: create_release_bootstrap
         uses: softprops/action-gh-release@v2
         with:
           tag_name: '${{ env.version }}'
@@ -84,8 +91,33 @@ jobs:
             ./k4all/k4all-bootstrap-${{ env.version }}.iso
             ./k4all/k4all-bootstrap-${{ env.version }}.qcow2
             ./k4all/k4all-bootstrap-${{ env.version }}.vdi
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+      - name: Create a GitHub Release
+        id: create_release_control
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: '${{ env.version }}'
+          name: 'Release ${{ env.version }}'
+          draft: '${{ env.draft }}'
+          prerelease: '${{ env.prerelease }}'
+          files: |
             ./k4all/k4all-control-${{ env.version }}.iso
             ./k4all/k4all-control-${{ env.version }}.qcow2
             ./k4all/k4all-control-${{ env.version }}.vdi
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+      - name: Create a GitHub Release
+        id: create_release_worker
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: '${{ env.version }}'
+          name: 'Release ${{ env.version }}'
+          draft: '${{ env.draft }}'
+          prerelease: '${{ env.prerelease }}'
+          files: |
+            ./k4all/k4all-worker-${{ env.version }}.iso
+            ./k4all/k4all-worker-${{ env.version }}.qcow2
+            ./k4all/k4all-worker-${{ env.version }}.vdi
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'

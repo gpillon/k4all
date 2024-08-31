@@ -3,6 +3,8 @@
 # Exit on error, undefined variable, or pipe failure
 set -euxo pipefail
 
+FCOS_IMAGE=fedora-coreos-40.20240701.3.0-live.x86_64.iso
+
 # Function to check if a command exists
 command_exists() {
   command -v "$1" &> /dev/null
@@ -18,8 +20,8 @@ else
   exit 1
 fi
 
-chmod +x ./install-scripts/*
-chmod +x ./scripts/*
+chmod -R +x ./install-scripts/*
+chmod -R +x ./scripts/*
 
 echo "Using $CONTAINER_TOOL as the container tool."
 
@@ -32,7 +34,7 @@ mkdir -p "$FCOS_PATH"
 # Generate the Ignition file for the installation using Butane in a container
 $CONTAINER_TOOL run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-base.bu" > "k8s-base.ign"
 
-roles=("bootstrap" "control") # Add other elements as needed
+roles=("bootstrap" "control" "worker") # Add other elements as needed
 
 for role in "${roles[@]}"; do
     # Generate the Ignition file for each role
@@ -54,7 +56,7 @@ for role in "${roles[@]}"; do
       iso ignition embed \
       -i "/data/install.ign" \
       -o "/fcos/fcos40-k8s-$role.iso" \
-      "/fcos/fedora-coreos-40.20240504.3.0-live.x86_64.iso"
+      "/fcos/$FCOS_IMAGE"
 
     # Modify kernel arguments for the ISO
     echo "Modifying kernel arguments for $role ISO..."

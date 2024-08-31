@@ -12,7 +12,5 @@ source /usr/local/bin/k4all-utils
 finalize_k8s_setup_for_user "root" "/root"
 finalize_k8s_setup_for_user "core" "/home/core"
 
-
-# Crea il file di stato per indicare che l'installazione è stata completata
 touch /var/lib/k8s-setup-init.done
 

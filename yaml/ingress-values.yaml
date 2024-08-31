@@ -3,4 +3,10 @@ controller:
   hostNetwork: true
   ingressClassResource:
     enabled: true
-  replicaCount: 1
+#  replicaCount: 1
+  kind: DaemonSet
+  nodeSelector:
+    kubernetes.io/os: linux
+    node-role.kubernetes.io/control-plane: ""
+#  sysctls:
+#   "net.core.somaxconn": "8192"
