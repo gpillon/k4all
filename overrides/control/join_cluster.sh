@@ -8,16 +8,15 @@ if [ "$#" -ne 1 ]; then
     exit 1
 fi
 
+source /usr/local/bin/k4all-utils
 # Use the join command provided as the argument
-JOIN_COMMAND="$1"
+JOIN_COMMAND=$(echo "$1" | base64 -d)
 
 # Run the join command
 sudo bash -c "$JOIN_COMMAND"
 
-# Optionally, configure kubeconfig for convenience
-mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
+setup_kubeconfig_for_user "root" "/root"
+setup_kubeconfig_for_user "core" "/home/core"
 
 # Verify join
 echo "Node has joined the cluster as a control plane node. Verifying..."

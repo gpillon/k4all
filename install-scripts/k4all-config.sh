@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define the path to the JSON configuration file and the default JSON file
-TIMEOUT=15
+TIMEOUT=10
 CONFIG_FILE="/tmp/k4all-config.json"
 DEFAULT_CONFIG_FILE="/usr/local/share/default-cluster-config.json"
 VALIDATOR_SCRIPT="/usr/local/bin/validate_config.sh"

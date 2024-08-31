@@ -28,6 +28,13 @@ is_integer() {
 }
 
 is_json_integer() {
+  local field=$1
   # Use jq to check if the value is an integer and print "true" or "false"
-  jq -r '.disk.root.size_mib | type == "number"' "$1"
+jq -r "$1 | type == \"number\"" "$2"
+}
+
+is_json_string() {
+  local field=$1
+  # Use jq to check if the value is an string and print "true" or "false"
+jq -r "$1 | type == \"string\"" "$2"
 }

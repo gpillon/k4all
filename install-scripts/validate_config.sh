@@ -26,6 +26,11 @@ validate_json() {
     return 1
   fi
 
+  # Validate node section
+  if ! validate_node; then
+    return 1
+  fi
+
   echo "JSON configuration file is valid."
   return 0
 }

@@ -247,6 +247,10 @@ systemd:
         WantedBy=multi-user.target
 storage:
   files:
+    - path: "/etc/node-type"
+      mode: 420
+      contents:
+        local: overrides/bootstrap/node-type
     - path: "/etc/k8s-config.yaml"
       mode: 420
       contents:
@@ -283,14 +287,14 @@ storage:
       mode: 0755
       contents:
         local: overrides/bootstrap/setup-k8s-init.sh
-    - path: "/usr/local/bin/generate_control_join.sh"
+    - path: "/usr/local/bin/setup-k8s-ph3.sh"
       mode: 0755
       contents:
-        local: overrides/bootstrap/generate_control_join.sh
-    - path: "/usr/local/bin/generate_worker_join.sh"
+        local: overrides/bootstrap-control/setup-k8s-ph3.sh
+    - path: "/usr/local/bin/generate_join.sh"
       mode: 0755
       contents:
-        local: overrides/bootstrap/generate_worker_join.sh
+        local: overrides/bootstrap-control/generate_join.sh
     - path: "/usr/local/bin/generate-kubelet-config.sh"
       mode: 0755
       contents:
@@ -299,3 +303,7 @@ storage:
       mode: 0755
       contents:
         local: overrides/bootstrap/enable-cluster.sh
+    - path: "/usr/local/bin/control-plane-utils"
+      mode: 0755
+      contents:
+        local: overrides/bootstrap-control/control-plane-utils

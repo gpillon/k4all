@@ -16,7 +16,10 @@ fi
 $h repo add topolvm https://topolvm.github.io/topolvm
 $h repo update
 
-$k create namespace topolvm-system
+$k kubectl apply -f <(echo 'apiVersion: v1
+kind: Namespace
+metadata:
+  name: topolvm-system')
 
 $k label namespace topolvm-system topolvm.io/webhook=ignore
 $k label namespace kube-system topolvm.io/webhook=ignore

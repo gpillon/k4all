@@ -21,7 +21,7 @@ validate_disk() {
   fi
 
   # Check for disk.root.size_mib is an integer
-  if [ "$(is_json_integer "$CONFIG_FILE")" != "true" ]; then
+  if [ "$(is_json_integer '.disk.root.size_mib' "$CONFIG_FILE")" != "true" ]; then
     echo "Invalid 'disk.root.size_mib' value. Must be an integer."
     return 1
   fi

@@ -10,6 +10,7 @@ fi
 
 NET_DEV=$(ip route show default | awk '/default/ {print $5}')
 #NM_NAME=$(nmcli con show | grep -w "${NET_DEV}" | awk '{print $1}')
+MAC_ADDR=$(ip link show "${NET_DEV}" | awk '/ether/ {print $2}')
 
 # Retrieve IP, Gateway, DNS, and Domain information from the original network device
 IP_ADDR=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}")
@@ -31,6 +32,7 @@ nmcli con add type ethernet conn.interface "${NET_DEV}" master ovs-port-eth con-
 
 #nmcli con modify ovs-bridge-int ipv4.method auto ipv6.method disabled
 
+nmcli con modify ovs-bridge 802-3-ethernet.cloned-mac-address "${MAC_ADDR}"
 nmcli con modify ovs-bridge-int ipv4.method manual ipv4.address "${IP_ADDR}" ipv4.gateway "${GATEWAY}" ipv4.dns "${DNS}" ipv4.dns-search "${SEARCH}" ipv6.method ignore
 
 #nmcli con modify ovs-bridge-int 802-3-ethernet.mtu 9000

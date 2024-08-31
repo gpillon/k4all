@@ -1,5 +1,5 @@
 // This file is used to configure the device.
-// The device will read this file and apply the settings during boot.
+// The device will read this fle and apply the settings during boot.
 {
   "networking": {
     "ipconfig": "dhcp"
@@ -28,6 +28,27 @@
     "root": {
       //root disk size in MiB; minimum 12000 MiB; for just a few pods, 20000 MiB is recommended at least; recommended 50000 MiB for most use cases, 120000 MiB for about 50-80 deployments
       "size_mib": 50000
+    }
+
+    // da qui, devo creare il volumegrup per le immagini dei container
+    // un'idea è quella di fare una percentuale es 20% alle immagini e restante ai pod, ma con un limite di 100GB
+
+  },
+
+  "node": {
+    "ha": {
+      //interface: the network interface to use for the virtual IP; use auto to automatically select the interface with the default route"
+      "interface": "auto",
+
+      // "type": "none" | "keepalived"
+      "type": "none"
+      //"type": "keepalived",
+
+      // Control plane endpoint for the API server, ignored in "none" mode
+      // "apiControlEndpoint": "192.168.0.200",
+      
+      //  Control plane endpoint subnet size for the API server, ignored in "none" mode
+      // "apiControlEndpointSubnetSize": 24
     }
   }
 }
@@ -58,7 +79,7 @@
 //            "virtual_ip": "
 //        },
 //        "externalLoadBalancer": {
-//            "ip": "
+//            "ip": ""
 //        }
 //    }
 // }

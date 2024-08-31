@@ -43,7 +43,7 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
-    - name: fck8s-k8s-setup.service
+    - name: fck8s-k8s-setup-ph1.service
       enabled: true
       contents: |
         [Unit]
@@ -53,7 +53,7 @@ systemd:
         
         [Service]
         Type=oneshot
-        ExecStart=/usr/local/bin/setup-k8s.sh
+        ExecStart=/usr/local/bin/setup-k8s-ph1.sh
         RemainAfterExit=yes
         
         [Install]
@@ -63,12 +63,27 @@ systemd:
       contents: |
         [Unit]
         Description=Set up Kubernetes
-        Requires=fck8s-k8s-setup.service
-        After=fck8s-k8s-setup.service       
+        Requires=fck8s-k8s-setup-ph1.service
+        After=fck8s-k8s-setup-ph1.service       
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-k8s-ph2.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-k8s-setup-ph3.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Kubernetes
+        Requires=fck8s-k8s-setup-ph2.service
+        After=fck8s-k8s-setup-ph2.service       
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-k8s-ph3.sh
         RemainAfterExit=yes
         
         [Install]
@@ -78,9 +93,9 @@ systemd:
       contents: |
         [Unit]
         Description=Set up Kubernetes Cluster
-        Requires=fck8s-k8s-setup-ph2.service
+        Requires=fck8s-k8s-setup-ph3.service
         Requires=crio.service
-        After=fck8s-k8s-setup-ph2.service crio.service
+        After=fck8s-k8s-setup-ph3.service crio.service
 
         [Service]
         Type=oneshot
@@ -98,7 +113,7 @@ storage:
       partitions:
         - label: root
           number: 4
-          size_mib: 20000
+          size_mib: 50000
           resize: true
         - label: lvm
           size_mib: 0
