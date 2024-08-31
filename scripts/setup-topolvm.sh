@@ -16,7 +16,7 @@ fi
 $h repo add topolvm https://topolvm.github.io/topolvm
 $h repo update
 
-$k kubectl apply -f <(echo 'apiVersion: v1
+$k apply -f <(echo 'apiVersion: v1
 kind: Namespace
 metadata:
   name: topolvm-system')
