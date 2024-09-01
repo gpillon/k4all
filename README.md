@@ -75,7 +75,7 @@ To create a bootable USB device with the `k4all` ISO:
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
 
 ## Known issues
-FIXED ~~ATM the VDI and the QCOW self-installing images are not booting correctly. Need to investigate on it. ~~
+FIXED ~~ATM the VDI and the QCOW self-installing images are not booting correctly. Need to investigate on it.~~
 
 ## Development
 Next features:
