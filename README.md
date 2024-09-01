@@ -8,10 +8,9 @@ The `k4all` ISO provides a pre-configured Fedora CoreOS environment tailored for
 
 Key features include:
 - **Metrics Server**: Enables resource usage metrics collection for Kubernetes.
-- **Calico**: Provides a robust networking solution.
+- **Calico + Multus**: Provides a robust networking solution.
 - **TOPOLVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
 - **NGINX Ingress Controller**: Manages external access to services in the cluster.
-- **Multus**: Advanced network configurations. 
 
 ## Why k4all?
 - 1st time, it's ok.
