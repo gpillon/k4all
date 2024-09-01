@@ -11,6 +11,7 @@ Key features include:
 - **Calico**: Provides a robust networking solution.
 - **LVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
 - **NGINX Ingress Controller**: Manages external access to services in the cluster.
+- **Multus**: Advanced network configurations. 
 
 ## Why k4all?
 - 1st time, it's ok.
