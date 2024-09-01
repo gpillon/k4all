@@ -96,7 +96,7 @@ I added the script to add more nodes, (on the boostrap node you can run `generat
 
 ## Thanks! 
 Many thanks to:
- - [Manustars(https://github.com/manustars) For all the betatesting!
+ - [Manustar](https://github.com/manustars) For all the betatesting!
 
 ## Looking for an enterprise solution? 
 Let's take a look to [Openshift Single Node](https://docs.openshift.com/container-platform/latest/installing/installing_sno/install-sno-installing-sno.html)
