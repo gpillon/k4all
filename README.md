@@ -33,7 +33,7 @@ Key features include:
 
 ### Using the ISO
 
-0. Prepare a good Coffee (Expresso or American, depending on the hardware).
+0. Prepare a good Coffee (Espresso or American, depending on the hardware).
 1. Boot the ISO on the target system.
 2. The installation is fully automated and will format the entire `dev/sda|vda|mmcblk` disk.
 3. Once completed, the system will reboot into the new environment.
