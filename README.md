@@ -1,6 +1,6 @@
 # k4all ISO
 
-The `k4all` ISO provides a pre-configured Fedora CoreOS environment tailored for Kubernetes home servers and virtual machines. This ISO includes also essential tools and services for k8s, Calico networking, the metrics server, Logical Volume Manager (LVM), and NGINX as an Ingress controller.
+The `k4all` ISO provides a pre-configured Fedora CoreOS environment tailored for Kubernetes home servers and virtual machines. This ISO includes also essential tools and services for k8s, Calico networking, the metrics server, Logical Volume Manager (LVM), and NGINX as an Ingress controller. There is also a small [Wiki](https://github.com/gpillon/k4all/wiki) with some common useful stuff.
 
 ## Overview
 
@@ -9,8 +9,9 @@ The `k4all` ISO provides a pre-configured Fedora CoreOS environment tailored for
 Key features include:
 - **Metrics Server**: Enables resource usage metrics collection for Kubernetes.
 - **Calico**: Provides a robust networking solution.
-- **LVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
+- **TOPOLVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
 - **NGINX Ingress Controller**: Manages external access to services in the cluster.
+- **Multus**: Advanced network configurations. 
 
 ## Why k4all?
 - 1st time, it's ok.
@@ -24,21 +25,23 @@ Key features include:
 - Coffee, Sugar, Milk (not required).
 
 ## Installation
+First version you want to install is the boostrap image: i'ts a single node, with schedulable master. Later, you can add other control nodes or worker nodes. 
+
+### Using the ISO
+
+0. Prepare a good Coffee (Espresso or American, depending on the hardware).
+1. Boot the ISO on the target system.
+2. If you want to customize the installation, just press 1 or 2 doring installation to modify the JSON. Discovered disk and ethernet cards will be shown in the config. 
+3. The installation is fully automated and will format the entire `dev/sda|vda|mmcblk` disk.
+4. Once completed, the system will reboot into the new environment.
+5. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 2013's Hardware).
+6. Follow next steps
 
 ### Building the ISO
 
 1. Ensure all dependencies (Podman, Docker) are installed.
 2. Run the build script or the GitHub workflow to generate the `k4all` ISO.
 3. The process will embed the required configurations and scripts into the Fedora CoreOS image.
-
-### Using the ISO
-
-0. Prepare a good Coffee (Expresso or American, depending on the hardware).
-1. Boot the ISO on the target system.
-2. The installation is fully automated and will format the entire `dev/sda|vda|mmcblk` disk.
-3. Once completed, the system will reboot into the new environment.
-4. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 11yo Hardware).
-5. Follow next steps
 
 ## Default Setup
 
@@ -74,7 +77,7 @@ To create a bootable USB device with the `k4all` ISO:
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
 
 ## Known issues
-ATM the VDI and the QCOW self-installing images are not booting correctly. Need to investigate on it. 
+FIXED ~~ATM the VDI and the QCOW self-installing images are not booting correctly. Need to investigate on it.~~
 
 ## Development
 Next features:
@@ -88,7 +91,8 @@ Next features:
 
 ## Further Information
 
-**Multi-Node Cluster:** ATM, the installtion is only for a single node cluster. _Feel free to contribute!_
+**Multi-Node Cluster:** ATM, the installtion is tested for a single node cluster. _Feel free to contribute!_
+I added the script to add more nodes, (on the boostrap node you can run `generate_join.sh` script, to get a base64 code, to use in combination with `join_cluster.sh` script. It was not heavily tested, but ATM it looks working... 
 
 ## Looking for an enterprise solution? 
 Let's take a look to [Openshift Single Node](https://docs.openshift.com/container-platform/latest/installing/installing_sno/install-sno-installing-sno.html)
