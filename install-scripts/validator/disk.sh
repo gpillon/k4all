@@ -14,6 +14,12 @@ validate_disk() {
     return 1
   fi
 
+  # Check for disk.root.disk section
+  if ! check_json_value '.disk.root.disk'; then
+    echo "Missing 'disk.root.disk' section."
+    return 1
+  fi
+
   # Check for disk.root.size_mib section
   if ! check_json_value '.disk.root.size_mib'; then
     echo "Missing 'disk.root.size_mib' section."

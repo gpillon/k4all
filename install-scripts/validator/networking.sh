@@ -14,6 +14,12 @@ validate_networking() {
     return 1
   fi
 
+  # Check for networking.net_dev section
+  if ! check_json_value '.networking.net_dev'; then
+    echo "Missing 'networking.net_dev' section."
+    return 1
+  fi
+
   # Check if networking.ipconfig has either 'dhcp' or 'static' values
   IP_CONFIG=$(jq -r '.networking.ipconfig' "$CONFIG_FILE")
   if [[ "$IP_CONFIG" != "dhcp" && "$IP_CONFIG" != "static" ]]; then

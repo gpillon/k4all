@@ -7,8 +7,9 @@ if [ -f "/var/lib/setup-ph2.done" ]; then
   exit 0
 fi
 
+source /usr/local/bin/k4all-utils
 
-NET_DEV=$(ip route show default | awk '/default/ {print $5}')
+NET_DEV=$(get_network_device)
 #NM_NAME=$(nmcli con show | grep -w "${NET_DEV}" | awk '{print $1}')
 MAC_ADDR=$(ip link show "${NET_DEV}" | awk '/ether/ {print $2}')
 
