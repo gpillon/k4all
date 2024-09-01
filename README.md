@@ -93,6 +93,11 @@ Next features:
 **Multi-Node Cluster:** ATM, the installtion is tested for a single node cluster. _Feel free to contribute!_
 I added the script to add more nodes, (on the boostrap node you can run `generate_join.sh` script, to get a base64 code, to use in combination with `join_cluster.sh` script. It was not heavily tested, but ATM it looks working... 
 
+
+## Thanks! 
+Many thanks to:
+ - [Manustars(https://github.com/manustars) For all the betatesting!
+
 ## Looking for an enterprise solution? 
 Let's take a look to [Openshift Single Node](https://docs.openshift.com/container-platform/latest/installing/installing_sno/install-sno-installing-sno.html)
 
