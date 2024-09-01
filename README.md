@@ -24,6 +24,7 @@ Key features include:
 - Coffee, Sugar, Milk (not required).
 
 ## Installation
+First version you want to install is the boostrap image: i'ts a single node, with schedulable master. Later, you can add other control nodes or worker nodes. 
 
 ### Building the ISO
 
