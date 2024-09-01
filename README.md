@@ -34,7 +34,7 @@ First version you want to install is the boostrap image: i'ts a single node, wit
 2. If you want to customize the installation, just press 1 or 2 doring installation to modify the JSON. Discovered disk and ethernet cards will be shown in the config. 
 3. The installation is fully automated and will format the entire `dev/sda|vda|mmcblk` disk.
 4. Once completed, the system will reboot into the new environment.
-5. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 11yo Hardware).
+5. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 2013's Hardware).
 6. Follow next steps
 
 ### Building the ISO
