@@ -2,6 +2,9 @@
 // The device will read this fle and apply the settings during boot.
 {
   "networking": {
+    //eth card ( found_eth_cards)
+    "net_dev": "auto",
+
     "ipconfig": "dhcp"
     // Uncomment the following lines to configure a static IP address
     
@@ -26,6 +29,8 @@
   "disk": {
     // root disk configuration
     "root": {
+      // install disk ( found_disks)
+      "disk": "auto",
       //root disk size in MiB; minimum 12000 MiB; for just a few pods, 20000 MiB is recommended at least; recommended 50000 MiB for most use cases, 120000 MiB for about 50-80 deployments
       "size_mib": 50000
     }

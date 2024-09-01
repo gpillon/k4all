@@ -74,6 +74,19 @@ storage:
           PasswordAuthentication yes
 systemd:
   units:
+    - name: edit-default-config.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Edit config with Helpers
+        
+        [Service]
+        RemainAfterExit=yes
+        Type=oneshot
+        ExecStart=/usr/local/bin/edit_config_startup.sh
+         
+        [Install]
+        WantedBy=multi-user.target
     - name: unmount-lvm.service
       enabled: true
       contents: |

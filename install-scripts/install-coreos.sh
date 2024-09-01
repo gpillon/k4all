@@ -6,18 +6,18 @@ wait_for_config() {
   local interval=5   # Check interval in seconds
   local elapsed=0
 
-  echo "Waiting for /tmp/k4all-config.json to be created..."
+  echo "Waiting for /etc/k4all-config.json to be created..."
 
-  while [[ ! -f /tmp/k4all-config.json ]]; do
+  while [[ ! -f /etc/k4all-config.json ]]; do
     sleep $interval
     elapsed=$((elapsed + interval))
     if [[ $elapsed -ge $timeout ]]; then
-      echo "Timeout: /tmp/k4all-config.json was not created within $timeout seconds."
+      echo "Timeout: /etc/k4all-config.json was not created within $timeout seconds."
       exit 1
     fi
   done
 
-  echo "/tmp/k4all-config.json has been created."
+  echo "/etc/k4all-config.json has been created."
 }
 
 # Wait for the configuration file to be created

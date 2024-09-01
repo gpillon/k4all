@@ -2,7 +2,7 @@
 
 # Define the path to the JSON configuration file and the default JSON file
 TIMEOUT=10
-CONFIG_FILE="/tmp/k4all-config.json"
+CONFIG_FILE="/etc/k4all-config.json"
 DEFAULT_CONFIG_FILE="/usr/local/share/default-cluster-config.json"
 VALIDATOR_SCRIPT="/usr/local/bin/validate_config.sh"
 TEMP_CONFIG_FILE="/tmp/temp-k4all-config.json"
@@ -11,7 +11,7 @@ TEMP_STRIPPED_CONFIG_FILE="/tmp/temp-stripped-k4all-config.json"
 # Function to strip comments from the JSON file
 strip_comments() {
   echo "Removing comments from the JSON configuration file and saving to $1..."
-  sed '/^\s*\/\//d' "$TEMP_CONFIG_FILE" > "$1"
+  sudo sh -c 'sed "/^\s*\/\//d" '"$TEMP_CONFIG_FILE"' > '"$1"''
 }
 
 # Function to validate the JSON file using the stripped version

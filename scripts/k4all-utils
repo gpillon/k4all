@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Path to the JSON configuration file
+config_file="/etc/k4all-config.json"
+
 # Function to set up kubeconfig for a specified user
 function setup_kubeconfig_for_user() {
   local user_name=$1
@@ -28,4 +31,25 @@ finalize_k8s_setup_for_user() {
   if ! grep -qF "$source_string" "${user_home}/.bash_profile"; then
     printf "\n# kubectl shell completion\n$source_string\n" >> "${user_home}/.bash_profile"
   fi
+}
+
+function get_network_device() {
+    # Check if the configuration file exists
+    if [ ! -f "$config_file" ]; then
+        # Configuration file does not exist, use the default network interface
+        ip route show default | awk '/default/ {print $5; exit}'  # Exit after the first match
+        return
+    fi
+
+    # Extract the net_dev value from the JSON configuration file
+    local net_dev=$(jq -r '.networking."net_dev"' "$config_file")
+    
+    # Check if the net_dev is set to auto
+    if [ "$net_dev" = "auto" ]; then
+        # Find the default network interface used for the first default route
+        net_dev=$(ip route show default | awk '/default/ {print $5; exit}')  # Exit after the first match
+    fi
+
+    # Output the result
+    echo $net_dev
 }

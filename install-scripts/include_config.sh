@@ -3,7 +3,7 @@
 set -euxo pipefail
 
 # Define paths
-CONFIG_FILE="/tmp/k4all-config.json"
+CONFIG_FILE="/etc/k4all-config.json"
 IGNITION_FILE="/usr/local/bin/k8s.ign"
 TMP_JSON_MODIFIED="/tmp/k8s_modified.json"
 
