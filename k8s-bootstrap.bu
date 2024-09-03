@@ -139,18 +139,18 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
-    - name: fck8s-calico-setup.service
+    - name: fck8s-cni-setup.service
       enabled: true
       contents: |
         [Unit]
-        Description=Set up Calico
+        Description=Set up CNI
         Requires=fck8s-node-ready-and-schedulable.service
         Requires=fck8s-helm-setup.service
         After=fck8s-node-ready-and-schedulable.service fck8s-helm-setup.service
         
         [Service]
         Type=oneshot
-        ExecStart=/usr/local/bin/setup-calico.sh
+        ExecStart=/usr/local/bin/setup-cni.sh
         RemainAfterExit=yes
         WorkingDirectory=/root/
         

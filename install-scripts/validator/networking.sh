@@ -14,18 +14,32 @@ validate_networking() {
     return 1
   fi
 
-  # Check for networking.net_dev section
-  if ! check_json_value '.networking.net_dev'; then
-    echo "Missing 'networking.net_dev' section."
-    return 1
-  fi
-
   # Check if networking.ipconfig has either 'dhcp' or 'static' values
   IP_CONFIG=$(jq -r '.networking.ipconfig' "$CONFIG_FILE")
   if [[ "$IP_CONFIG" != "dhcp" && "$IP_CONFIG" != "static" ]]; then
     echo "Invalid 'networking.ipconfig' value. Must be 'dhcp' or 'static'."
     return 1
   fi
+
+  # Check for networking.cni section
+  if ! check_json_value '.networking.cni'; then
+    echo "Missing 'networking.cni' section."
+    return 1
+  fi
+
+  # Check if networking.cni has either 'calico' or 'cilium' values
+  CNI_CONFIG=$(jq -r '.networking.cni' "$CONFIG_FILE")
+  if [[ "$CNI_CONFIG" != "calico" && "$CNI_CONFIG" != "cilium" ]]; then
+    echo "Invalid 'networking.cni' value. Must be 'calico' or 'cilium'."
+    return 1
+  fi
+
+  # Check for networking.net_dev section
+  if ! check_json_value '.networking.net_dev'; then
+    echo "Missing 'networking.net_dev' section."
+    return 1
+  fi
+
 
   # If 'static', check for required fields and their validity
   if [[ "$IP_CONFIG" == "static" ]]; then

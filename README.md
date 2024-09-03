@@ -33,7 +33,7 @@ Key features include:
 
 ### Using the ISO
 
-0. Prepare a good Coffee (Expresso or American, depending on the hardware).
+0. Prepare a good Coffee (Espresso or American, depending on the hardware).
 1. Boot the ISO on the target system.
 2. The installation is fully automated and will format the entire `dev/sda|vda|mmcblk` disk.
 3. Once completed, the system will reboot into the new environment.
@@ -83,7 +83,7 @@ Next features:
 - [ ] Fancy UI to manage your k4all installation
 - [ ] Applications catalog
 - [ ] Argocd (?)
-- [ ] Multi node
+- [ ] Multi node (WIP)
 - [ ] ARM platform
 
 ## Further Information
@@ -93,4 +93,3 @@ Next features:
 ## Looking for an enterprise solution? 
 Let's take a look to [Openshift Single Node](https://docs.openshift.com/container-platform/latest/installing/installing_sno/install-sno-installing-sno.html)
 
- 

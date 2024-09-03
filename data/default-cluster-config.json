@@ -5,6 +5,9 @@
     //eth card ( found_eth_cards)
     "net_dev": "auto",
 
+    //default_cni (calico cilium)
+    "cni": "calico",
+
     "ipconfig": "dhcp"
     // Uncomment the following lines to configure a static IP address
     
