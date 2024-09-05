@@ -42,6 +42,15 @@ First version you want to install is the boostrap image: i'ts a single node, wit
 2. Run the build script or the GitHub workflow to generate the `k4all` ISO.
 3. The process will embed the required configurations and scripts into the Fedora CoreOS image.
 
+### Using the ISO
+
+0. Prepare a good Coffee (Espresso or American, depending on the hardware).
+1. Boot the ISO on the target system.
+2. The installation is fully automated and will format the entire `dev/sda|vda|mmcblk` disk.
+3. Once completed, the system will reboot into the new environment.
+4. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 11yo Hardware).
+5. Follow next steps
+
 ## Default Setup
 
 - **Default Password**: The default password is `core`. **Change it immediately upon login.**
@@ -85,7 +94,7 @@ Next features:
 - [ ] Fancy UI to manage your k4all installation
 - [ ] Applications catalog
 - [ ] Argocd (?)
-- [ ] Multi node
+- [ ] Multi node (WIP)
 - [ ] ARM platform
 
 ## Further Information
@@ -101,4 +110,3 @@ Many thanks to:
 ## Looking for an enterprise solution? 
 Let's take a look to [Openshift Single Node](https://docs.openshift.com/container-platform/latest/installing/installing_sno/install-sno-installing-sno.html)
 
- 
