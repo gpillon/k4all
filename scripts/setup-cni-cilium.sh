@@ -7,6 +7,8 @@ if [ -f "/var/lib/cilium-setup.done" ]; then
 fi
 
 CILIUM_VERSION="1.16.1"
+KUBECONFIG=/root/.kube/config
+export HOME=/root/
 
 source /usr/local/bin/k4all-utils
 
