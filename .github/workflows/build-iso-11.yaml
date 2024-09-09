@@ -59,6 +59,7 @@ jobs:
               curl -o "$FCOS_PATH$FCOS_IMAGE" "$ISO_URL"
               echo "Download completed."
           fi
+          mv $ISO_URL fedora-coreos.iso
         shell: bash
 
       - name: Make scripts executable
