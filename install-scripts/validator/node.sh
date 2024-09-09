@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Function to validate the ha section
+# Function to validate the node section
 validate_node() {
   # Check for ha section
   if ! check_json_value '.node'; then
@@ -16,7 +16,7 @@ validate_node() {
 
   # Check for ha.type section
   if ! check_json_value '.node.ha.type'; then
-    echo "Missing 'nodeha.type' section."
+    echo "Missing 'node.ha.type' section."
     return 1
   fi
 

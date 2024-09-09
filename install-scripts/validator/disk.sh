@@ -38,6 +38,19 @@ validate_disk() {
     return 1
   fi
 
+  # Check for disk.keep_lvm section
+  if ! check_json_value '.disk.keep_lvm'; then
+    echo "Missing 'disk.keep_lvm' section."
+    return 1
+  fi
+  
+  # Check if 'disk.keep_lvm has either 'true' or 'false' values
+  KEEP_LVM=$(jq -r '.disk.keep_lvm' "$CONFIG_FILE")
+  if [[ "$KEEP_LVM" != "true" && "$KEEP_LVM" != "false" ]]; then
+    echo "Invalid 'disk.keep_lvm' value. Must be 'true' or 'false'."
+    return 1
+  fi
+
   echo "disk section is valid."
   return 0
 }

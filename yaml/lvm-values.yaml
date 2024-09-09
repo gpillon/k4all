@@ -17,3 +17,4 @@ storageClasses:
     storageClass: 
       fsType: xfs
       isDefaultClass: true
+      allowVolumeExpansion: true

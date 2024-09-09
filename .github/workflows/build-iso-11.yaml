@@ -12,6 +12,7 @@ jobs:
     env:
       ROLES: "bootstrap control worker"  # Defining roles as a space-separated string
       COREOS_URL: "https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/40.20240701.3.0/x86_64/fedora-coreos-40.20240701.3.0-live.x86_64.iso"
+      ARCH: "x86_64"
 
     steps:
       - name: Check out the repository
@@ -41,8 +42,23 @@ jobs:
 
       - name: Download Fedora CoreOS ISO
         run: |
-          mkdir -p ./k4all
-          wget -q -O ./k4all/fedora-coreos.iso "${{ env.COREOS_URL }}"
+          FCOS_PATH="./k4all"
+          ARCH=${{ env.ARCH }}
+          
+          mkdir -p $FCOS_PATH
+
+          COREOS_JSON=https://builds.coreos.fedoraproject.org/streams/stable.json
+          ISO_URL=$(curl $COREOS_JSON | jq -r ".architectures.$ARCH.artifacts.metal.formats.iso.disk.location")
+          FCOS_IMAGE=$(basename "$ISO_URL")
+
+          # Check if the file exists
+          if [ -f "$FCOS_PATH$FCOS_IMAGE" ]; then
+              echo "The file $FCOS_IMAGE already exists."
+          else
+              echo "The file $FCOS_IMAGE does not exist. Downloading..."
+              curl -o "$FCOS_PATH$FCOS_IMAGE" "$ISO_URL"
+              echo "Download completed."
+          fi
         shell: bash
 
       - name: Make scripts executable

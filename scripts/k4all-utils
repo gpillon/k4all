@@ -2,6 +2,7 @@
 
 # Path to the JSON configuration file
 K4ALL_CONFIG_FILE="/etc/k4all-config.json"
+KUBECONFIG=/etc/kubernetes/admin.conf
 
 retry_command() {
   local command="$1"
@@ -70,10 +71,10 @@ function get_network_device() {
         return
     fi
 
-    # Extract the net_dev value from the JSON configuration file
-    local net_dev=$(jq -r '.networking."net_dev"' "$K4ALL_CONFIG_FILE")
+    # Extract the iface.dev value from the JSON configuration file
+    local net_dev=$(jq -r '.networking.iface.dev' "$K4ALL_CONFIG_FILE")
     
-    # Check if the net_dev is set to auto
+    # Check if the iface.dev is set to auto
     if [ "$net_dev" = "auto" ]; then
         # Find the default network interface used for the first default route
         net_dev=$(ip route show default | awk '/default/ {print $5; exit}')  # Exit after the first match
@@ -81,4 +82,42 @@ function get_network_device() {
 
     # Output the result
     echo $net_dev
+}
+
+# Function to get the current IP address
+get_ip() {
+    if jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "keepalived"; then
+        jq -r '.node.ha.apiControlEndpoint' $K4ALL_CONFIG_FILE
+    else
+        hostname -I | awk '{print $1}'
+    fi
+}
+
+# Function to get the current FQDN
+get_fqdn() {
+    hostname -f
+}
+
+# Function to check if the FQDN contains a domain part
+has_domain() {
+    local fqdn=$1
+    [[ "$fqdn" =~ \. ]]
+}
+
+# Function to patch the ingress with a given host
+patch_ingress() {
+    local host=$1
+    local route_number=$2
+    local route_host_prefix=$3
+    local ingress_name=$4
+    local ingress_namespace=$5
+
+
+    kubectl --kubeconfig=$KUBECONFIG patch ingress $ingress_name -n $ingress_namespace --type=json -p="[
+      {
+        \"op\": \"replace\",
+        \"path\": \"/spec/rules/$route_number/host\",
+        \"value\": \"$route_host_prefix.$host\"
+      }
+    ]"
 }

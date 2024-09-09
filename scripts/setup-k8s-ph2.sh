@@ -9,8 +9,45 @@ fi
 
 source /usr/local/bin/k4all-utils
 
+# Function to enable and start systemd services
+enable_service_if_not_running() {
+  local service_name=$1
+  if ! systemctl is-enabled --quiet "$service_name"; then
+    systemctl enable --now "$service_name"
+  fi
+}
+
+# Function to check if an nmcli connection exists, and add it if it doesn't
+add_nmcli_connection_if_not_exists() {
+  local con_name=$1
+  shift
+  if ! nmcli con show "$con_name" >/dev/null 2>&1; then
+    nmcli con add "$@"
+  fi
+}
+
+# Function to modify nmcli connection settings only if different
+modify_nmcli_connection_if_needed() {
+  local con_name=$1
+  local key=$2
+  local new_value=$3
+  local current_value
+  current_value=$(nmcli -g "$key" con show "$con_name")
+  if [ "$current_value" != "$new_value" ]; then
+    nmcli con modify "$con_name" "$key" "$new_value"
+  fi
+}
+
+# Function to add a firewall rule if it doesn't already exist
+add_firewalld_rule_if_not_exists() {
+  local port_protocol=$1
+  if ! firewall-cmd --query-port="$port_protocol" >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-port="$port_protocol"
+  fi
+}
+
+
 NET_DEV=$(get_network_device)
-#NM_NAME=$(nmcli con show | grep -w "${NET_DEV}" | awk '{print $1}')
 MAC_ADDR=$(ip link show "${NET_DEV}" | awk '/ether/ {print $2}')
 
 # Retrieve IP, Gateway, DNS, and Domain information from the original network device
@@ -19,32 +56,111 @@ GATEWAY=$(nmcli -g IP4.GATEWAY dev show "${NET_DEV}")
 DNS=$(nmcli -t -f IP4.DNS dev show "${NET_DEV}" | awk -F":" '{print $2}' | paste -sd "," -)
 SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
 
-# Enable and start kubelet service
-systemctl enable --now crio
-systemctl enable --now kubelet
-systemctl enable --now openvswitch
+# Enable and start kubelet, crio, and openvswitch services
+enable_service_if_not_running crio
+enable_service_if_not_running kubelet
+enable_service_if_not_running openvswitch
 
-nmcli con add type ovs-bridge conn.interface ovs-bridge con-name ovs-bridge
-nmcli con add type ovs-port conn.interface port-ovs-bridge master ovs-bridge con-name ovs-bridge-port
-nmcli con add type ovs-interface slave-type ovs-port conn.interface ovs-bridge master ovs-bridge-port con-name ovs-bridge-int
+# Check if networking.firewalld.enabled is true in $K4ALL_CONFIG_FILE
+if jq -e '.networking.firewalld.enabled == "true"' "$K4ALL_CONFIG_FILE" >/dev/null; then
+  enable_service_if_not_running firewalld
+fi
 
-nmcli con add type ovs-port conn.interface ovs-port-eth master ovs-bridge con-name ovs-port-eth
-nmcli con add type ethernet conn.interface "${NET_DEV}" master ovs-port-eth con-name ovs-port-eth-int
+# Add ovs-bridge, ovs-bridge-port, ovs-bridge-int, ovs-port-eth, and ovs-port-eth-int if not exists
+add_nmcli_connection_if_not_exists ovs-bridge type ovs-bridge conn.interface ovs-bridge con-name ovs-bridge
+add_nmcli_connection_if_not_exists ovs-bridge-port type ovs-port conn.interface port-ovs-bridge master ovs-bridge con-name ovs-bridge-port
+add_nmcli_connection_if_not_exists ovs-bridge-int type ovs-interface slave-type ovs-port conn.interface ovs-bridge master ovs-bridge-port con-name ovs-bridge-int
+add_nmcli_connection_if_not_exists ovs-port-eth type ovs-port conn.interface ovs-port-eth master ovs-bridge con-name ovs-port-eth
+add_nmcli_connection_if_not_exists ovs-port-eth-int type ethernet conn.interface "${NET_DEV}" master ovs-port-eth con-name ovs-port-eth-int
 
-#nmcli con modify ovs-bridge-int ipv4.method auto ipv6.method disabled
+# Modify ovs-bridge and ovs-bridge-int settings only if needed
+modify_nmcli_connection_if_needed ovs-bridge 802-3-ethernet.cloned-mac-address "${MAC_ADDR}"
+modify_nmcli_connection_if_needed ovs-bridge-int ipv4.addresses "${IP_ADDR}"
+modify_nmcli_connection_if_needed ovs-bridge-int ipv4.gateway "${GATEWAY}"
+modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns "${DNS}"
+modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns-search "${SEARCH}"
 
-nmcli con modify ovs-bridge 802-3-ethernet.cloned-mac-address "${MAC_ADDR}"
-nmcli con modify ovs-bridge-int ipv4.method manual ipv4.address "${IP_ADDR}" ipv4.gateway "${GATEWAY}" ipv4.dns "${DNS}" ipv4.dns-search "${SEARCH}" ipv6.method ignore
-
-#nmcli con modify ovs-bridge-int 802-3-ethernet.mtu 9000
-#nmcli con modify ovs-port-eth-int 802-3-ethernet.mtu 9000
-
-#nmcli con down "${NM_NAME}"
+# Bring up the ovs-port-eth-int and ovs-bridge-int connections
 nmcli con up ovs-port-eth-int
 nmcli con up ovs-bridge-int
 
-rm -f /etc/NetworkManager/system-connections/${NET_DEV}.nmconnection
+# Remove the old NetworkManager connection if it exists
+if [ -f "/etc/NetworkManager/system-connections/${NET_DEV}.nmconnection" ]; then
+  rm -f "/etc/NetworkManager/system-connections/${NET_DEV}.nmconnection"
+fi
 
+# Check if firewalld is enabled
+if systemctl is-enabled --quiet firewalld; then
+  echo "Firewalld is enabled. Configuring it for Kubernetes..."
+
+  # Add common firewall rules for Kubernetes
+
+  # Allow Management Ports
+  add_firewalld_rule_if_not_exists 22/tcp  # ssh
+  
+  # Allow Ingress Ports
+  add_firewalld_rule_if_not_exists 80/tcp  # ssh
+  add_firewalld_rule_if_not_exists 443/tcp  # ssh
+
+  # Allow DNS Ports
+  add_firewalld_rule_if_not_exists 53/udp    # DNS (UDP)
+  add_firewalld_rule_if_not_exists 53/tcp    # DNS (TCP)
+
+  # Allow necessary Kubernetes ports
+  add_firewalld_rule_if_not_exists 6443/tcp   # Kubernetes API server
+  add_firewalld_rule_if_not_exists 2379-2380/tcp # etcd server client API
+  add_firewalld_rule_if_not_exists 10250/tcp  # Kubelet API
+  add_firewalld_rule_if_not_exists 10251/tcp  # kube-scheduler
+  add_firewalld_rule_if_not_exists 10252/tcp  # kube-controller-manager
+  add_firewalld_rule_if_not_exists 10255/tcp  # Read-only Kubelet API (deprecated)
+  add_firewalld_rule_if_not_exists 30000-32767/tcp  # NodePort Services
+
+  # Check the CNI type from the configuration file and apply appropriate firewall rules
+  CNI_TYPE=$(jq -r '.networking.cni' "$K4ALL_CONFIG_FILE")
+  case "$CNI_TYPE" in
+    "calico")
+      echo "Configuring firewalld for Calico..."
+      add_firewalld_rule_if_not_exists 179/tcp  # BGP for Calico
+      add_firewalld_rule_if_not_exists 4789/udp # VXLAN for Calico
+      add_firewalld_rule_if_not_exists 5473/tcp # Typha for Calico
+      add_firewalld_rule_if_not_exists 51820/udp # IPv4 Wireguard
+      add_firewalld_rule_if_not_exists 51821/udp # IPv6 Wireguard
+      ;;
+    "cilium")
+      echo "Configuring firewalld for Cilium..."
+      add_firewalld_rule_if_not_exists 4240/tcp  # Cilium health checks
+      add_firewalld_rule_if_not_exists 4244/tcp  # Hubble server
+      add_firewalld_rule_if_not_exists 4245/tcp  # Hubble Relay
+      add_firewalld_rule_if_not_exists 4250/tcp  # Mutual Authentication port
+      add_firewalld_rule_if_not_exists 4251/tcp  # Spire Agent health check port
+      add_firewalld_rule_if_not_exists 6060/tcp  # cilium-agent pprof server
+      add_firewalld_rule_if_not_exists 6061/tcp  # cilium-operator pprof server
+      add_firewalld_rule_if_not_exists 6062/tcp  # Hubble Relay pprof server
+      add_firewalld_rule_if_not_exists 9878/tcp  # cilium-envoy health listener
+      add_firewalld_rule_if_not_exists 9879/tcp  # cilium-agent health status API
+      add_firewalld_rule_if_not_exists 9890/tcp  # cilium-agent gops server
+      add_firewalld_rule_if_not_exists 9891/tcp  # operator gops server
+      add_firewalld_rule_if_not_exists 9893/tcp  # Hubble Relay gops server
+      add_firewalld_rule_if_not_exists 9901/tcp  # cilium-envoy Admin API
+      add_firewalld_rule_if_not_exists 9962/tcp  # cilium-agent Prometheus metrics
+      add_firewalld_rule_if_not_exists 9963/tcp  # cilium-operator Prometheus metrics
+      add_firewalld_rule_if_not_exists 9964/tcp  # cilium-envoy Prometheus metrics
+      add_firewalld_rule_if_not_exists 51871/udp # WireGuard encryption tunnel endpoint
+      ;;
+    "flannel")
+      echo "Configuring firewalld for Flannel..."
+      add_firewalld_rule_if_not_exists 8472/udp # VXLAN for Flannel
+      ;;
+    *)
+      echo "No specific CNI firewall rules needed for $CNI_TYPE."
+      ;;
+  esac
+
+  firewall-cmd --reload
+fi
+
+# Mark the setup phase as done
 touch /var/lib/setup-ph2.done
+
+# Reboot the system
 systemctl reboot
-while true; do sleep 1000; done

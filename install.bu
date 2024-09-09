@@ -133,7 +133,7 @@ systemd:
       enabled: true
       contents: |
         [Unit]
-        Description=Reboor CoreOS
+        Description=Reboot CoreOS
         Requires=coreos-install.service
         After=coreos-install.service
         

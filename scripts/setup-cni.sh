@@ -17,8 +17,8 @@ function install_cni() {
         return
     fi
 
-    # Extract the net_dev value from the JSON configuration file
-    local cni=$(jq -r '.networking.cni' "$K4ALL_CONFIG_FILE")
+    # Extract the networking.cni.type value from the JSON configuration file
+    local cni=$(jq -r '.networking.cni.type' "$K4ALL_CONFIG_FILE")
     local cni_to_install="calico"
 
     if [ "$cni" = "cilium" ]; then

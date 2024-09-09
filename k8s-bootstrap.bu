@@ -201,6 +201,21 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
+    - name: fck8s-setup-features.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Setup Additional Features
+        Requires=fck8s-node-ready-and-schedulable.service
+        After=fck8s-node-ready-and-schedulable.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-features.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
     - name: fck8s-custom-manifests-setup.service
       enabled: true
       contents: |
@@ -283,6 +298,14 @@ storage:
       mode: 420
       contents:
         local: yaml/calico-resources.yaml
+    - path: /usr/local/share/virt-ingress-routes.yaml
+      mode: 420
+      contents:
+        local: yaml/virt-ingress-routes.yaml
+    - path: /usr/local/share/cdi-ingress-routes.yaml
+      mode: 420
+      contents:
+        local: yaml/cdi-ingress-routes.yaml
     - path: "/usr/local/bin/setup-k8s-init.sh"
       mode: 0755
       contents:

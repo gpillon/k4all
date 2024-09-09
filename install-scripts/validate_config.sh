@@ -31,6 +31,11 @@ validate_json() {
     return 1
   fi
 
+  # Validate features section
+  if ! validate_features; then
+    return 1
+  fi
+
   echo "JSON configuration file is valid."
   return 0
 }
