@@ -33,11 +33,11 @@ subnetmask_to_prefix() {
 # Function to edit the Ignition file for static IP configuration
 edit_ignition_for_static_ip() {
   # Read configuration values from the JSON file
-  IP_ADDR=$(jq -r '.networking.ipaddr' "$CONFIG_FILE")
-  SUBNET_MASK=$(jq -r '.networking.subnet_mask' "$CONFIG_FILE")
-  GATEWAY=$(jq -r '.networking.gateway' "$CONFIG_FILE")
-  DNS=$(jq -r '.networking.dns' "$CONFIG_FILE" | tr ',' ';')
-  DNS_SEARCH=$(jq -r '.networking.dns_search' "$CONFIG_FILE" | tr ',' ';')
+  IP_ADDR=$(jq -r '.networking.iface.ipaddr' "$CONFIG_FILE")
+  SUBNET_MASK=$(jq -r '.networking.iface.subnet_mask' "$CONFIG_FILE")
+  GATEWAY=$(jq -r '.networking.iface.gateway' "$CONFIG_FILE")
+  DNS=$(jq -r '.networking.iface.dns' "$CONFIG_FILE" | tr ',' ';')
+  DNS_SEARCH=$(jq -r '.networking.iface.dns_search' "$CONFIG_FILE" | tr ',' ';')
   INTERFACE_NAME=$(get_first_interface_name)
   PREFIX=$(subnetmask_to_prefix "$SUBNET_MASK")
 
@@ -72,7 +72,7 @@ EOF
 # Main script logic
 
 # Check if the configuration is static and edit the Ignition file accordingly
-if jq -e '.networking.ipconfig' "$CONFIG_FILE" | grep -q "static"; then
+if jq -e '.networking.iface.ipconfig' "$CONFIG_FILE" | grep -q "static"; then
   edit_ignition_for_static_ip
 fi
 

@@ -1,14 +1,46 @@
 #!/bin/bash
 
 # Exit on error, undefined variable, or pipe failure
-set -euxo pipefail
+set -euo pipefail
 
-FCOS_IMAGE=fedora-coreos-40.20240701.3.0-live.x86_64.iso
+# Check if an argument is provided, otherwise default to "./fcos/"
+FCOS_PATH="${1:-./}"
+
+# Function to fetch the ISO URL and set FCOS_IMAGE
+fetch_fcos_image() {
+    # Define architecture and CoreOS stable JSON URL
+    ARCH=x86_64
+    COREOS_JSON=https://builds.coreos.fedoraproject.org/streams/stable.json
+
+    # Extract the ISO URL from the CoreOS JSON
+    echo -e "Getting Latest Fedora CoreOS image..."
+    ISO_URL=$(curl -s "$COREOS_JSON" | jq -r ".architectures.$ARCH.artifacts.metal.formats.iso.disk.location")
+
+    # Extract the image file name from the URL and set it to FCOS_IMAGE
+    FCOS_IMAGE=$(basename "$ISO_URL")
+    echo -e "Using Latest Fedora CoreOS image... $FCOS_IMAGE"
+
+    # Check if the file already exists in the specified path
+    if [ -f "$FCOS_PATH$FCOS_IMAGE" ]; then
+        echo "The file $FCOS_IMAGE already exists."
+    else
+        echo "The file $FCOS_IMAGE does not exist. Downloading..."
+        # Download the ISO image
+        curl -o "$FCOS_PATH$FCOS_IMAGE" "$ISO_URL"
+        echo "Download completed."
+    fi
+}
 
 # Function to check if a command exists
 command_exists() {
   command -v "$1" &> /dev/null
 }
+
+if [ -n "${FCOS_IMAGE:-}" ]; then
+    echo "The variable FCOS_IMAGE is already set to $FCOS_IMAGE. Skipping download."
+else 
+  fetch_fcos_image
+fi
 
 # Check for Docker or Podman availability
 if command_exists podman; then
@@ -24,9 +56,6 @@ chmod -R +x ./install-scripts/*
 chmod -R +x ./scripts/*
 
 echo "Using $CONTAINER_TOOL as the container tool."
-
-# Check if an argument is provided, otherwise default to "./fcos/"
-FCOS_PATH="${1:-./}"
 
 # Create the output directory if it doesn't exist
 mkdir -p "$FCOS_PATH"

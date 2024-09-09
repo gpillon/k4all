@@ -1,41 +1,71 @@
 // This file is used to configure the device.
 // The device will read this fle and apply the settings during boot.
 {
+  "version": "1.4.0",
   "networking": {
-    //eth card ( found_eth_cards)
-    "net_dev": "auto",
-
     //default_cni (calico cilium)
-    "cni": "calico",
+    "cni": {
+      "type": "calico"
+    },
 
-    "ipconfig": "dhcp"
-    // Uncomment the following lines to configure a static IP address
-    
-    // "ipconfig": "static",
+    //Firewalld Config
+    "firewalld": {
+      // Enabled?
+      "enabled": "false"
+    },
 
-    // Required for static IP configuration
-    // "ipaddr": "192.168.0.100",
+    "iface": {
+      //eth card ( found_eth_cards)
+      "dev": "auto",
+      
+      "ipconfig": "dhcp"
+      // Uncomment the following lines to configure a static IP address
+      
+      // "ipconfig": "static",
 
-    // Required for static IP configuration
-    // "gateway": "192.168.0.1",
+      // Required for static IP configuration
+      // "ipaddr": "192.168.0.100",
 
-    // Required for static IP configuration
-    // "subnet_mask": "255.255.255.0",
+      // Required for static IP configuration
+      // "gateway": "192.168.0.1",
 
-    // comma separated list of DNS servers
-    // "dns": "1.1.1.1,8.8.8.8",
+      // Required for static IP configuration
+      // "subnet_mask": "255.255.255.0",
 
-    // Optional, comma separated list of search domains; leave empty to use the default, but don't remove the line!
-    // "dns_search": "" 
+      // comma separated list of DNS servers
+      // "dns": "1.1.1.1,8.8.8.8",
+
+      // Optional, comma separated list of search domains; leave empty to use the default, but don't remove the line!
+      // "dns_search": "" 
+    }
   },
+
   //disk configuration
   "disk": {
     // root disk configuration
     "root": {
-      // install disk ( found_disks)
+      // install disk ( found_disks )
       "disk": "auto",
       //root disk size in MiB; minimum 12000 MiB; for just a few pods, 20000 MiB is recommended at least; recommended 50000 MiB for most use cases, 120000 MiB for about 50-80 deployments
       "size_mib": 50000
+    },
+
+    // If set to true, all lvm volumes will be NOT be cleared before installation
+    "keep_lvm" : "false"
+
+    // da qui, devo creare il volumegrup per le immagini dei container
+    // un'idea è quella di fare una percentuale es 20% alle immagini e restante ai pod, ma con un limite di 100GB
+
+  },
+
+  //features configuration
+  "features": {
+    // virt configuration
+    "virt": {
+      // Enable Virtualization.
+      "enabled": "false",
+      // Enable Emulation ("true", "false", or "auto")
+      "emulation": "auto"
     }
 
     // da qui, devo creare il volumegrup per le immagini dei container

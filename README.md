@@ -106,3 +106,5 @@ I added the script to add more nodes, (on the boostrap node you can run `generat
 ## Looking for an enterprise solution? 
 Let's take a look to [Openshift Single Node](https://docs.openshift.com/container-platform/latest/installing/installing_sno/install-sno-installing-sno.html)
 
+## References
+ - [kubevirt-manager.io](https://kubevirt-manager.io/)

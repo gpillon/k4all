@@ -1,39 +1,7 @@
 #!/bin/bash
 
 source /usr/local/bin/control-plane-utils
-
-# Function to get the current IP address
-get_ip() {
-    if jq -e '.node.ha.type' "$CONFIG_FILE" | grep -q "keepalived"; then
-        jq -r '.node.ha.apiControlEndpoint' $CONFIG_FILE
-    else
-        hostname -I | awk '{print $1}'
-    fi
-}
-
-# Function to get the current FQDN
-get_fqdn() {
-    hostname -f
-}
-
-# Function to check if the FQDN contains a domain part
-has_domain() {
-    local fqdn=$1
-    [[ "$fqdn" =~ \. ]]
-}
-
-# Function to patch the ingress with a given host
-patch_ingress() {
-    local host=$1
-
-    kubectl --kubeconfig=/etc/kubernetes/admin.conf patch ingress kubernetes-dashboard -n kubernetes-dashboard --type=json -p="[
-      {
-        \"op\": \"replace\",
-        \"path\": \"/spec/rules/$2/host\",
-        \"value\": \"dashboard.$host\"
-      }
-    ]"
-}
+source /usr/local/bin/k4all-utils
 
 # Function to update the MOTD
 update_motd() {
@@ -53,18 +21,18 @@ fqdn=$(get_fqdn)
 # Create the nip.io route
 nip_host="$ip.nip.io"
 
-# Check if the FQDN has a domain part
-if has_domain "$fqdn"; then
-    fqdn_host=$fqdn
-else
-    fqdn_host="kube-control-01.local"  # Fallback FQDN
-fi
+# # Check if the FQDN has a domain part
+# if has_domain "$fqdn"; then
+#     fqdn_host=$fqdn
+# else
+#     fqdn_host="kube-control-01.local"  # Fallback FQDN
+# fi
 
 # Patch the ingress with the FQDN route first
-patch_ingress "$fqdn_host" 1
+patch_ingress "$fqdn" 1 "dashboard" "kubernetes-dashboard" "kubernetes-dashboard"
 
 # Patch the ingress with the nip.io route
-patch_ingress "$nip_host" 0
+patch_ingress "$nip_host" 0 "dashboard" "kubernetes-dashboard" "kubernetes-dashboard"
 
 # Update the MOTD with both routes
-update_motd "$fqdn_host" "$nip_host"
+update_motd "$fqdn" "$nip_host"
