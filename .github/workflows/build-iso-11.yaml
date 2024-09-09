@@ -52,14 +52,14 @@ jobs:
           FCOS_IMAGE=$(basename "$ISO_URL")
 
           # Check if the file exists
-          if [ -f "$FCOS_PATH$FCOS_IMAGE" ]; then
+          if [ -f "$FCOS_PATH/$FCOS_IMAGE" ]; then
               echo "The file $FCOS_IMAGE already exists."
           else
               echo "The file $FCOS_IMAGE does not exist. Downloading..."
-              curl -o "$FCOS_PATH$FCOS_IMAGE" "$ISO_URL"
+              curl -o "$FCOS_PATH/$FCOS_IMAGE" "$ISO_URL"
               echo "Download completed."
           fi
-          mv $ISO_URL fedora-coreos.iso
+          mv $FCOS_PATH/$FCOS_IMAGE $FCOS_PATH/fedora-coreos.iso
         shell: bash
 
       - name: Make scripts executable
