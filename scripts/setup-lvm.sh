@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 # Check if the state file exists
-if [ -f "/var/lib/lvm-setup.done" ]; then
+if [ -f "/opt/k4all/lvm-setup.done" ]; then
   echo "LVM setup already done. Exiting."
   exit 0
 fi
@@ -39,5 +39,5 @@ else
 fi
 
 # Create the state file to indicate the setup is complete
-touch /var/lib/lvm-setup.done
+touch /opt/k4all/lvm-setup.done
 echo "LVM setup completed."

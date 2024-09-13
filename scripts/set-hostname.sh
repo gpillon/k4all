@@ -3,7 +3,7 @@
 # Enable strict mode and pipefail for robust error handling
 set -euo pipefail
 
-if [ -f "/var/lib/hostname-setup.done" ]; then
+if [ -f "/opt/k4all/hostname-setup.done" ]; then
   echo "Hostname setup already done. Exiting."
   exit 0
 fi
@@ -67,4 +67,4 @@ fi
 hostnamectl set-hostname "$FULL_HOSTNAME"
 
 echo "Hostname set to $FULL_HOSTNAME"
-touch /var/lib/hostname-setup.done
+touch /opt/k4all/hostname-setup.done

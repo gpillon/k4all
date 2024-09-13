@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euxo pipefail
 
-if [ -f "/var/lib/feature-virt-setup.done" ]; then
+if [ -f "/opt/k4all/feature-virt-setup.done" ]; then
   echo "Virt Feature setup already done. Exiting."
   exit 0
 fi
@@ -59,4 +59,4 @@ patch_ingress "$(get_ip).nip.io" 0 "cdi-uploadproxy" "cdi-uploadproxy" "cdi"
 patch_ingress "$(get_fqdn)" 1 "cdi-uploadproxy" "cdi-uploadproxy" "cdi"
 
 # Done
-touch /var/lib/feature-virt-setup.done
+touch /opt/k4all/feature-virt-setup.done

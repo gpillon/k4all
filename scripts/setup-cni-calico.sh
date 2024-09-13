@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euxo pipefail
 
-if [ -f "/var/lib/calico-setup.done" ]; then
+if [ -f "/opt/k4all/calico-setup.done" ]; then
   echo "Calico setup already done. Exiting."
   exit 0
 fi
@@ -28,4 +28,4 @@ while true; do
   fi
 done
 
-touch /var/lib/calico-setup.done
+touch /opt/k4all/calico-setup.done

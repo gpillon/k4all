@@ -26,9 +26,9 @@ validate_disk() {
     return 1
   fi
 
-  # Check for disk.root.size_mib is an integer
-  if [ "$(is_json_integer '.disk.root.size_mib' "$CONFIG_FILE")" != "true" ]; then
-    echo "Invalid 'disk.root.size_mib' value. Must be an integer."
+  # Check for disk.root.size_mib is valid
+  if ! is_valid_size '.disk.root.size_mib' "$CONFIG_FILE"; then
+    echo "Invalid 'disk.root.size_mib' value. Must be an integer or a percentage from 0% to 100%."
     return 1
   fi
 

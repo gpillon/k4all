@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/ovs-cni-setup.done" ]; then
+if [ -f "/opt/k4all/ovs-cni-setup.done" ]; then
   echo "OVS-cni setup already done. Exiting."
   exit 0
 fi
@@ -21,5 +21,5 @@ retry_command "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://
 retry_command "kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/ovs-cni/master/examples/ovs-cni.yml" 10 30
 
 # Crea il file di stato per indicare che l'installazione è stata completata
-touch /var/lib/ovs-cni-setup.done
+touch /opt/k4all/ovs-cni-setup.done
 

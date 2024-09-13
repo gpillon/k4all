@@ -3,7 +3,7 @@ set -euxo pipefail
 
 # Controlla se il file di stato esiste
 
-if [ -f "/var/lib/default-service-account.done" ]; then
+if [ -f "/opt/k4all/default-service-account.done" ]; then
   echo "Master Already Untained. Exiting."
   exit 0
 fi
@@ -21,4 +21,4 @@ while true; do
   sleep 5
 done
 
-touch /var/lib/default-service-account.done
+touch /opt/k4all/default-service-account.done

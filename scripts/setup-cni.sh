@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euxo pipefail
 
-if [ -f "/var/lib/cni-setup.done" ]; then
+if [ -f "/opt/k4all/cni-setup.done" ]; then
   echo "CNI setup already done. Exiting."
   exit 0
 fi
@@ -33,4 +33,4 @@ function install_cni() {
 
 install_cni
 
-touch /var/lib/cni-setup.done
+touch /opt/k4all/cni-setup.done
