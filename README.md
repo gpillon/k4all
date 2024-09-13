@@ -22,7 +22,7 @@ Key features include:
 
 ## Requirements:
 - 2 CPU Cores.
-- 4GB Ram (8G for running workloads).
+- 4GB Ram (2G used by K8all).
 - 20 Minutes.
 - Coffee, Sugar, Milk (not required).
 
