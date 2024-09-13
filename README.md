@@ -13,7 +13,7 @@ Key features include:
 - **TopoLVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
 - **NGINX Ingress Controller**: Manages external access to services in the cluster.
 - **Kubevirt**: run VM inside Kubernetes managed by [kubevirt-manager](https://kubevirt-manager.io/).
-- **ARGOCD**: CI/CD 
+- **ARGOCD**: CI/CD for your installation.
 
 ## Why k4all?
 - 1st time, it's ok.
@@ -38,21 +38,6 @@ First version you want to install is the boostrap image: i'ts a single node, wit
 4. Once completed, the system will reboot into the new environment.
 5. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 2013's Hardware).
 6. Follow next steps
-
-### Building the ISO
-
-1. Ensure all dependencies (Podman, Docker) are installed.
-2. Run the build script or the GitHub workflow to generate the `k4all` ISO.
-3. The process will embed the required configurations and scripts into the Fedora CoreOS image.
-
-### Using the ISO
-
-0. Prepare a good Coffee (Espresso or American, depending on the hardware).
-1. Boot the ISO on the target system.
-2. The installation is fully automated and will format the entire `dev/sda|vda|mmcblk` disk.
-3. Once completed, the system will reboot into the new environment.
-4. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 11yo Hardware).
-5. Follow next steps
 
 ## Post-Install
 - **Access Dashboard and Token**:
@@ -82,21 +67,24 @@ To create a bootable USB device with the `k4all` ISO:
 3. Use Rufus on Windows:
    - Download [Rufus](https://rufus.ie/)
    - Select the `k4all` ISO, choose your USB device, and click `Start`.
-
+   
 ## Debugging Failed Setup
 
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
 
-## Known issues
-FIXED ~~ATM the VDI and the QCOW self-installing images are not booting correctly. Need to investigate on it.~~
+## Building the ISO
+
+1. Ensure all dependencies (Podman or Docker) are installed.
+2. Run the `build.sh` script or the GitHub workflow to generate the `k4all` ISO.
+3. The process will embed the required configurations and scripts into the Fedora CoreOS image.
 
 ## Development
 Next features:
 
-- [ ] k8s & services Updates
+- [ ] k8s & services [Updates](https://github.com/gpillon/k4all/wiki/Kubernetes-updates)
 - [ ] Fancy UI to manage your k4all installation
 - [ ] Applications catalog
-- [ ] Argocd (?)
+- [ ] Argocd Based installation ([?](https://github.com/gpillon/k4all/issues/12))
 - [ ] Multi node (WIP)
 - [ ] ARM platform
 
@@ -104,7 +92,6 @@ Next features:
 
 **Multi-Node Cluster:** ATM, the installtion is tested for a single node cluster. _Feel free to contribute!_
 I added the script to add more nodes, (on the boostrap node you can run `generate_join.sh` script, to get a base64 code, to use in combination with `join_cluster.sh` script. It was not heavily tested, but ATM it looks working... 
-
 
 ## Thanks! 
 Many thanks to:
