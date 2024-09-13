@@ -10,9 +10,9 @@ Key features include:
 - **Kubernetes Dashboard**: Easily manage your kubernetes cluster.
 - **Metrics Server**: Enables resource usage metrics collection for Kubernetes.
 - **Calico / Cilium + Multus**: Provides a robust networking solution.
-- **TOPOLVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
+- **TopoLVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
 - **NGINX Ingress Controller**: Manages external access to services in the cluster.
-- **Kubevirt**: run VM inside Kubernetes managed by [kubevirt-manager](https://kubevirt-manager.io/)].
+- **Kubevirt**: run VM inside Kubernetes managed by [kubevirt-manager](https://kubevirt-manager.io/).
 - **ARGOCD**: CI/CD 
 
 ## Why k4all?
