@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/setup-taint-master-schedulable.done" ]; then
+if [ -f "/opt/k4all/setup-taint-master-schedulable.done" ]; then
   echo "Master Already Untainted. Exiting."
   exit 0
 fi
@@ -54,4 +54,4 @@ else
 fi
 
 # Crea il file di stato per indicare che l'installazione è stata completata
-touch /var/lib/setup-taint-master-schedulable.done
+touch /opt/k4all/setup-taint-master-schedulable.done

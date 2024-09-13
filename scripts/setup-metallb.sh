@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euxo pipefail
 
-if [ -f "/var/lib/metallb-setup.done" ]; then
+if [ -f "/opt/k4all/metallb-setup.done" ]; then
   echo "MetalLB setup already done. Exiting."
   exit 0
 fi
@@ -38,4 +38,4 @@ done
 # https://metallb.universe.tf/troubleshooting/#metallb-is-not-advertising-my-service-from-my-control-plane-nodes-or-from-my-single-node-cluster
 kubectl --kubeconfig=/etc/kubernetes/admin.conf patch daemonset speaker -n metallb-system --type=json -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--ignore-exclude-lb"}]'
 
-touch /var/lib/metal-lb-setup.done
+touch /opt/k4all/metal-lb-setup.done

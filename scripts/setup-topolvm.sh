@@ -8,7 +8,7 @@ KUBECONFIG=/root/.kube/config
 HOME=/root/
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/topolvm-setup.done" ]; then
+if [ -f "/opt/k4all/topolvm-setup.done" ]; then
   echo "TopoLVM setup already done. Exiting."
   exit 0
 fi
@@ -38,5 +38,5 @@ done
 echo "TopoLVM installation complete, proceeding with the rest of the script."
 
 # Crea il file di stato per indicare che l'installazione è stata completata
-touch /var/lib/topolvm-setup.done
+touch /opt/k4all/topolvm-setup.done
 

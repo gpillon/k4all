@@ -38,3 +38,22 @@ is_json_string() {
   # Use jq to check if the value is an string and print "true" or "false"
 jq -r "$1 | type == \"string\"" "$2"
 }
+
+# Function to check if a JSON value is an integer or a percentage from 0 to 100%
+is_valid_size() {
+  local json_path=$1
+  local file=$2
+
+  # Extract the value from JSON file
+  local value=$(jq -r "$json_path" "$file")
+
+  # Check if the value is an integer
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    return 0  # Success exit code
+  # Check if the value is a valid percentage within 0% to 100%
+  elif [[ "$value" =~ ^([0-9]|[1-9][0-9]|100)%$ ]]; then
+    return 0  # Success exit code
+  else
+    return 1  # Failure exit code
+  fi
+}

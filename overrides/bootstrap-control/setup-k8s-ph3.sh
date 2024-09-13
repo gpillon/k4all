@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/setup-ph3.done" ]; then
+if [ -f "/opt/k4all/setup-ph3.done" ]; then
   echo "Kubernetes setup phase 3 already done. Exiting."
   exit 0
 fi
@@ -65,4 +65,4 @@ if jq -e '.node.ha.type' "$CONFIG_FILE" | grep -q "keepalived"; then
   setup_for_keepalived
 fi
 
-touch /var/lib/setup-ph3.done
+touch /opt/k4all/setup-ph3.done

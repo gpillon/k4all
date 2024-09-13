@@ -46,16 +46,14 @@
     "root": {
       // install disk ( found_disks )
       "disk": "auto",
-      //root disk size in MiB; minimum 12000 MiB; for just a few pods, 20000 MiB is recommended at least; recommended 50000 MiB for most use cases, 120000 MiB for about 50-80 deployments
-      "size_mib": 50000
+      //root disk size in MiB or in percentage; minimum 12000 MiB; for just a few pods, 20000 MiB is recommended at least; recommended 50000 MiB for most use cases, 120000 MiB for about 50-80 deployments
+      // if a percentage, the disk will be calculated as 12Gib + % of remaning free disk space; eg 100gb with 20% will be 17. GiB for os and container images and 82.4GiB for PVCs
+      // in any case minimum root disk size will be 12GiB and 120GiB Maximum
+      "size_mib": "20%"
     },
 
     // If set to true, all lvm volumes will be NOT be cleared before installation
-    "keep_lvm" : "false"
-
-    // da qui, devo creare il volumegrup per le immagini dei container
-    // un'idea è quella di fare una percentuale es 20% alle immagini e restante ai pod, ma con un limite di 100GB
-
+    "keep_lvm" : "true"
   },
 
   //features configuration
@@ -66,11 +64,12 @@
       "enabled": "false",
       // Enable Emulation ("true", "false", or "auto")
       "emulation": "auto"
+    },
+    // argocd configuration
+    "argocd": {
+      // Enable ArgoCD.
+      "enabled": "false"
     }
-
-    // da qui, devo creare il volumegrup per le immagini dei container
-    // un'idea è quella di fare una percentuale es 20% alle immagini e restante ai pod, ma con un limite di 100GB
-
   },
 
   "node": {

@@ -261,51 +261,22 @@ systemd:
         [Install]
         WantedBy=multi-user.target
 storage:
+  trees:
+    - local: yaml
+      path: /usr/local/share/
   files:
     - path: "/etc/node-type"
       mode: 420
       contents:
-        local: overrides/bootstrap/node-type
+        inline: bootstrap
     - path: "/etc/k8s-config.yaml"
       mode: 420
       contents:
-        local: yaml/k8s-config.yaml
+        local: overrides/bootstrap/k8s-config-bootstrap.yaml
     - path: "/etc/yum.repos.d/kubernetes.repo"
       mode: 420
       contents:
         local: repo/kubernetes.repo
-    - path: /usr/local/share/lvm-values.yaml
-      mode: 0420
-      contents:
-        local: yaml/lvm-values.yaml
-    - path: /usr/local/share/ingress-values.yaml
-      mode: 0420
-      contents:
-        local: yaml/ingress-values.yaml
-    - path: /usr/local/share/metal-lb.yaml
-      mode: 420
-      contents:
-        local: yaml/metal-lb.yaml
-    - path: /usr/local/share/dashboard-users.yaml
-      mode: 420
-      contents:
-        local: yaml/dashboard-users.yaml
-    - path: /usr/local/share/dashboard-ingress-routes.yaml
-      mode: 420
-      contents:
-        local: yaml/dashboard-ingress-routes.yaml
-    - path: /usr/local/share/calico-resources.yaml
-      mode: 420
-      contents:
-        local: yaml/calico-resources.yaml
-    - path: /usr/local/share/virt-ingress-routes.yaml
-      mode: 420
-      contents:
-        local: yaml/virt-ingress-routes.yaml
-    - path: /usr/local/share/cdi-ingress-routes.yaml
-      mode: 420
-      contents:
-        local: yaml/cdi-ingress-routes.yaml
     - path: "/usr/local/bin/setup-k8s-init.sh"
       mode: 0755
       contents:

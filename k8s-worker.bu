@@ -11,11 +11,11 @@ storage:
     - path: "/etc/node-type"
       mode: 420
       contents:
-        local: overrides/worker/node-type
+        inline: worker
     - path: "/etc/k8s-config.yaml"
       mode: 420
       contents:
-        local: yaml/k8s-config-worker.yaml 
+        local: overrides/worker/k8s-config-worker.yaml 
     - path: "/usr/local/bin/setup-k8s-init.sh"
       mode: 0755
       contents:

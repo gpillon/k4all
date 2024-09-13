@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/custom-manifests-setup.done" ]; then
+if [ -f "/opt/k4all/custom-manifests-setup.done" ]; then
   echo "Custom manifests setup already done. Exiting."
   exit 0
 fi
@@ -18,4 +18,4 @@ for manifest in "$MANIFEST_DIR"/*.{yaml,yml}; do
   fi
 done
 
-touch /var/lib/custom-manifests-setup.done
+touch /opt/k4all/custom-manifests-setup.done

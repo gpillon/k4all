@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/setup-ph2.done" ]; then
+if [ -f "/opt/k4all/setup-ph2.done" ]; then
   echo "Kubernetes setup phase 2 already done. Exiting."
   exit 0
 fi
@@ -46,7 +46,6 @@ add_firewalld_rule_if_not_exists() {
   fi
 }
 
-
 NET_DEV=$(get_network_device)
 MAC_ADDR=$(ip link show "${NET_DEV}" | awk '/ether/ {print $2}')
 
@@ -86,7 +85,7 @@ nmcli con up ovs-bridge-int
 
 # Remove the old NetworkManager connection if it exists
 if [ -f "/etc/NetworkManager/system-connections/${NET_DEV}.nmconnection" ]; then
-  rm -f "/etc/NetworkManager/system-connections/${NET_DEV}.nmconnection"
+  mv -f "/etc/NetworkManager/system-connections/${NET_DEV}.nmconnection" "/etc/NetworkManager/system-connections/${NET_DEV}.nmconnection.disabled"
 fi
 
 # Check if firewalld is enabled
@@ -160,7 +159,7 @@ if systemctl is-enabled --quiet firewalld; then
 fi
 
 # Mark the setup phase as done
-touch /var/lib/setup-ph2.done
+touch /opt/k4all/setup-ph2.done
 
 # Reboot the system
 systemctl reboot

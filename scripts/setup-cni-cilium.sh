@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euxo pipefail
 
-if [ -f "/var/lib/cilium-setup.done" ]; then
+if [ -f "/opt/k4all/cilium-setup.done" ]; then
   echo "Cilium setup already done. Exiting."
   exit 0
 fi
@@ -25,4 +25,4 @@ rm cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
 cilium install --version $CILIUM_VERSION
 
 # Done
-touch /var/lib/cilium-setup.done
+touch /opt/k4all/cilium-setup.done

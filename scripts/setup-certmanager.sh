@@ -8,7 +8,7 @@ KUBECONFIG=/root/.kube/config
 HOME=/root/
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/certmanager-setup.done" ]; then
+if [ -f "/opt/k4all/certmanager-setup.done" ]; then
   echo "CertManager setup already done. Exiting."
   exit 0
 fi
@@ -26,5 +26,5 @@ $k wait --namespace cert-manager --for=condition=available --timeout=600s deploy
 $k wait --namespace cert-manager --for=condition=available --timeout=600s deployment/cert-manager-cainjector
 
 echo "Cert-manager installation complete, proceeding with the rest of the script."
-touch /var/lib/certmanager-setup.done
+touch /opt/k4all/certmanager-setup.done
 

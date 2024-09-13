@@ -121,3 +121,23 @@ patch_ingress() {
       }
     ]"
 }
+
+get_ingress_urls() {
+  # get_ingress_urls "namespace" "ingress-name"
+  local ingress_name="$1"
+  local namespace="$2"
+
+  if [[ -z "$namespace" || -z "$ingress_name" ]]; then
+    echo "Usage: get_ingress_urls <namespace> <ingress_name>" >&2
+    exit 1
+  fi
+
+  if ! kubectl get ingress "$ingress_name" -n "$namespace" &> /dev/null; then
+    echo "Ingress '$ingress_name' not found in namespace '$namespace'" >&2
+    exit 1
+  fi
+
+  kubectl get ingress "$ingress_name" -n "$namespace" -o jsonpath='{range .spec.rules[*]}{.host}{"\n"}{end}' | while read host; do
+    kubectl get ingress "$ingress_name" -n "$namespace" -o jsonpath="{range .spec.rules[?(@.host=='$host')].http.paths[*]}https://$host{.path}{'\n'}{end}"
+  done
+}

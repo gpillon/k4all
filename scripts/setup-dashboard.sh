@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 # Controlla se il file di stato esiste
-if [ -f "/var/lib/setup-dashboard.done" ]; then
+if [ -f "/opt/k4all/setup-dashboard.done" ]; then
   echo "Dashboard setup already done. Exiting."
   exit 0
 fi
@@ -48,4 +48,4 @@ echo ""
 ' >> /root/.bash_profile
 
 # Crea il file di stato per indicare che l'installazione è stata completata
-touch /var/lib/setup-dashboard.done
+touch /opt/k4all/setup-dashboard.done
