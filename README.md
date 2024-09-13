@@ -7,10 +7,13 @@ The `k4all` ISO provides a pre-configured Fedora CoreOS environment tailored for
 **Warning: The installation process is fully unattended and will format the entire `/dev/sda|vda|mmcblk device`. Ensure that your data is backed up before proceeding.**
 
 Key features include:
+- **Kubernetes Dashboard**: Easily manage your kubernetes cluster.
 - **Metrics Server**: Enables resource usage metrics collection for Kubernetes.
-- **Calico + Multus**: Provides a robust networking solution.
+- **Calico / Cilium + Multus**: Provides a robust networking solution.
 - **TOPOLVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
 - **NGINX Ingress Controller**: Manages external access to services in the cluster.
+- **Kubevirt**: run VM inside Kubernetes managed by [kubevirt-manager](https://kubevirt-manager.io/)].
+- **ARGOCD**: CI/CD 
 
 ## Why k4all?
 - 1st time, it's ok.
