@@ -54,14 +54,14 @@ First version you want to install is the boostrap image: i'ts a single node, wit
 4. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 11yo Hardware).
 5. Follow next steps
 
-## Default Setup
+## Post-Install
+- **Access Dashboard and Token**:
+  - `ssh` in your newly installed machine with `ssh core@<MACHINE IP>` (default password: core)
+  - Access the system with `sudo -i` (if credentials are not shown, wait for the end of the installation process).
+  - if credentials are not show, you can connect to the k8s dashboard, at https://\<your-ip\>:32323/ using the token retrived by `kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath={".data.token"} | base64 -d)` (remember to `sudo -i`)
 
 - **Default Password**: The default password is `core`. **Change it immediately upon login.**
   - After login, use `passwd` to set a new password for the `core` user.
-
-- **Access Dashboard and Token**:
-  - Access the system with `sudo -i` (if credentials are not shown, wait for the end of the installation process).
-  - if credentials are not show, you can connect to the k8s dashboard, at https://\<your-ip\>:32323/ using the token retrived by `kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath={".data.token"} | base64 -d)` (remember to `sudo -i`)
 ## Post-Installation Notes
 
 - **Sample Pod**: A sample pod will be created in the `default` namespace if the LVM setup is successful. You can safely delete this pod.
