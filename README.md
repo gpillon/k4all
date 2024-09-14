@@ -70,9 +70,11 @@ To create a bootable USB device with the `k4all` ISO:
    
 ## Debugging Failed Setup
 
-During installation you can run `install-status.sh` to monitor the installation status. When the installation is completed, all the services should be in `loaded     active     exited` state.
-Be Aware: during the installation phase, some failing logs are normal! 
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
+
+During installation you can run `install-status.sh` to monitor the installation status. When the installation is completed, all the services should be in `loaded     active     exited` state.
+
+Be Aware: during the installation phase, some failing logs are normal! 
 
 ## Building the ISO
 
