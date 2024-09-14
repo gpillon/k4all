@@ -46,8 +46,40 @@ add_firewalld_rule_if_not_exists() {
   fi
 }
 
+# Function to get the first available physical network interface
+get_first_physical_interface() {
+  ip link show | awk '/^[0-9]+: [^lo]/ {print $2}' | grep -v 'ovs-bridge' | sed 's/://g' | head -n 1
+}
+
+# Function to get the physical interface from the Open vSwitch bridge
+get_physical_interface_for_ovs_port() {
+  local ovs_port=$1
+  ovs-vsctl list interface "$ovs_port" 2>/dev/null | grep 'type.*system' >/dev/null && echo "$ovs_port" || echo ""
+}
+
+# Function to find the original physical interface used in the bridge
+get_original_physical_interface() {
+  for port in $(ovs-vsctl list-ports ovs-bridge); do
+    physical_interface=$(get_physical_interface_for_ovs_port "$port")
+    if [ -n "$physical_interface" ]; then
+      echo "$physical_interface"
+      return
+    fi
+  done
+  # If no physical interface is found, return the first physical interface available
+  get_first_physical_interface
+}
+
+
 NET_DEV=$(get_network_device)
-MAC_ADDR=$(ip link show "${NET_DEV}" | awk '/ether/ {print $2}')
+
+if [ "$NET_DEV" == "ovs-bridge" ]; then
+  PHYS_NET_DEV=$(get_original_physical_interface)
+else
+  PHYS_NET_DEV=$NET_DEV
+fi
+
+MAC_ADDR=$(ip link show "${PHYS_NET_DEV}" | awk '/ether/ {print $2}')
 
 # Retrieve IP, Gateway, DNS, and Domain information from the original network device
 IP_ADDR=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}")
@@ -70,7 +102,7 @@ add_nmcli_connection_if_not_exists ovs-bridge type ovs-bridge conn.interface ovs
 add_nmcli_connection_if_not_exists ovs-bridge-port type ovs-port conn.interface port-ovs-bridge master ovs-bridge con-name ovs-bridge-port
 add_nmcli_connection_if_not_exists ovs-bridge-int type ovs-interface slave-type ovs-port conn.interface ovs-bridge master ovs-bridge-port con-name ovs-bridge-int
 add_nmcli_connection_if_not_exists ovs-port-eth type ovs-port conn.interface ovs-port-eth master ovs-bridge con-name ovs-port-eth
-add_nmcli_connection_if_not_exists ovs-port-eth-int type ethernet conn.interface "${NET_DEV}" master ovs-port-eth con-name ovs-port-eth-int
+add_nmcli_connection_if_not_exists ovs-port-eth-int type ethernet conn.interface "${PHYS_NET_DEV}" master ovs-port-eth con-name ovs-port-eth-int
 
 # Modify ovs-bridge and ovs-bridge-int settings only if needed
 modify_nmcli_connection_if_needed ovs-bridge 802-3-ethernet.cloned-mac-address "${MAC_ADDR}"

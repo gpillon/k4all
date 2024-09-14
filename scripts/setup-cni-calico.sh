@@ -13,8 +13,11 @@ source /usr/local/bin/k4all-utils
 
 #calico_manifest_url="https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/custom-resources.yaml"
 
-# Deploy a network add-on
-kubectl --kubeconfig=/etc/kubernetes/admin.conf create -f https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/tigera-operator.yaml
+# Deploy the Tigera operator for Calico
+kubectl --kubeconfig=/etc/kubernetes/admin.conf create -f https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/tigera-operator.yaml || {
+  echo "Failed to create Tigera operator. Trying with replace..."
+  kubectl --kubeconfig=/etc/kubernetes/admin.conf replace -f https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/tigera-operator.yaml
+}
 #retry_command "curl -O $calico_manifest_url" 10 5
 #kubectl --kubeconfig=/etc/kubernetes/admin.conf create -f custom-resources.yaml
 #kubectl --kubeconfig=/etc/kubernetes/admin.conf create -f custom-resources.yaml
