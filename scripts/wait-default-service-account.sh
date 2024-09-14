@@ -4,7 +4,7 @@ set -euxo pipefail
 # Controlla se il file di stato esiste
 
 if [ -f "/opt/k4all/default-service-account.done" ]; then
-  echo "Master Already Untained. Exiting."
+  echo "Default Service Accound Already checked. Exiting."
   exit 0
 fi
 

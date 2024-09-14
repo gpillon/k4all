@@ -7,6 +7,11 @@ if [ -f "/opt/k4all/setup-taint-master-schedulable.done" ]; then
   exit 0
 fi
 
+source /usr/local/bin/k4all-utils
+
+#Wait for k8s nodes endpoint
+retry_command "kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes" 30 10
+
 # Aspetta che il nodo sia Ready
 while true; do
     # Ottieni lo stato del nodo e verifica se è Ready
