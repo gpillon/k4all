@@ -72,7 +72,7 @@ To create a bootable USB device with the `k4all` ISO:
 
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
 
-During installation you can run `install-status.sh` to monitor the installation status. When the installation is completed, all the services should be in `loaded     active     exited` state.
+During installation you can run `install-status.sh` to monitor the installation status. When the installation is completed, all the services should be in `loaded     active     exited` state. take a look to te pods also with `kubectl get pods -A`
 
 Be Aware: during the installation phase, some failing logs are normal! 
 
