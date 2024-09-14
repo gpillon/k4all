@@ -13,7 +13,7 @@ Key features include:
 - **TopoLVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
 - **NGINX Ingress Controller**: Manages external access to services in the cluster.
 - **Kubevirt**: run VM inside Kubernetes managed by [kubevirt-manager](https://kubevirt-manager.io/). (Optional)
-- **ARGOCD**: (OPTIONAL) CI/CD for your installation. (Optional)
+- **ARGOCD**: CI/CD for your installation. (Optional)
 
 ## Why k4all?
 - 1st time, it's ok.
