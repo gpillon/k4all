@@ -12,8 +12,8 @@ Key features include:
 - **Calico / Cilium + Multus**: Provides a robust networking solution.
 - **TopoLVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
 - **NGINX Ingress Controller**: Manages external access to services in the cluster.
-- **Kubevirt**: run VM inside Kubernetes managed by [kubevirt-manager](https://kubevirt-manager.io/).
-- **ARGOCD**: CI/CD for your installation.
+- **Kubevirt**: run VM inside Kubernetes managed by [kubevirt-manager](https://kubevirt-manager.io/). (Optional)
+- **ARGOCD**: CI/CD for your installation. (Optional)
 
 ## Why k4all?
 - 1st time, it's ok.
@@ -71,6 +71,10 @@ To create a bootable USB device with the `k4all` ISO:
 ## Debugging Failed Setup
 
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
+
+During installation you can run `install-status.sh` to monitor the installation status. When the installation is completed, all the services should be in `loaded     active     exited` state. take a look to te pods also with `kubectl get pods -A`
+
+Be Aware: during the installation phase, some failing logs are normal! 
 
 ## Building the ISO
 
