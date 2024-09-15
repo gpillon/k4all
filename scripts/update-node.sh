@@ -38,7 +38,7 @@ fi
 podman create --name $CONTAINER_NAME --replace $CONTAINER_IMAGE
 #podman cp update-container:/app/k8s-base.bu $UPDATE_TMP_DIR_K4ALL/k8s-base.bu
 #podman cp update-container:/app/k8s-$NODE_TYPE.bu $UPDATE_TMP_DIR_K4ALL/k8s-$NODE_TYPE.bu
-podman cp update-container:/app $UPDATE_TMP_DIR_K4ALL
+podman cp update-container:/src $UPDATE_TMP_DIR_K4ALL
 
 # podman rm update-container
 # podman rmi $CONTAINER_IMAGE
