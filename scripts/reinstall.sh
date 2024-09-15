@@ -18,6 +18,9 @@ show_help() {
 
 # Function to display a warning and ask for user confirmation
 ask_for_confirmation() {
+  if [[ "$yes_flag" != "true" ]]; then
+    return
+  fi
   echo "WARNING: Reinstalling the cluster could be dangerous if several modifications have been made."
   echo "This action may result in data loss or misconfiguration. Do you want to proceed? (yes/no)"
   read -r confirmation
@@ -31,10 +34,15 @@ ask_for_confirmation() {
 network_flag=false
 kubernetes_flag=false
 hostname_flag=false
+yes_flag=false
 
 # Parse command-line options
 for arg in "$@"; do
   case $arg in
+    --yes)
+      yes_flag=true
+      shift
+      ;;
     --network)
       network_flag=true
       shift

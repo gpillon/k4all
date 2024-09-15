@@ -3,7 +3,7 @@ name: Build and Push Container
 'on':
   push:
     branches:
-      - main  # Trigger on pushes to the main branch
+      - release  # Trigger on pushes to the main branch
     tags:
       - v*    # Trigger on version tags like v1.0.0
   workflow_dispatch: null  # Allows manual trigger from the GitHub UI
