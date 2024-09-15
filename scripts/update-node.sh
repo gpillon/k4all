@@ -59,7 +59,7 @@ extract_and_copy_files() {
             local src_path="$UPDATE_TMP_DIR_K4ALL_SRC/$local_src"
             if [ -f "$src_path" ]; then
                 mkdir -p "$(dirname "$path")"
-                cp "$src_path" "$path"
+                cp -p "$src_path" "$path"
                 echo "Copiato da locale: $src_path -> $path"
             else
                 echo "File locale non trovato: $src_path"
@@ -90,16 +90,13 @@ extract_services() {
 extract_and_copy_trees() {
     local file=$1
 
-    yq -o=json '[.storage.trees[]? | {"local": .local, "path": .path}]' "$file" | jq -c '.[]'
     # Estrazione e copia dei file definiti in .storage.trees
     yq -o=json '[.storage.trees[]? | {"local": .local, "path": .path}]' "$file" |
     jq -c '.[]' | while IFS= read -r entry; do
-        echo "$entry" | jq -r '.local'
-        echo "$entry" | jq -r '.path'
         local_src=$(echo "$entry" | jq -r '.local')
         local_dest=$(echo "$entry" | jq -r '.path')
-        if [ -f "$UPDATE_TMP_DIR_K4ALL/$local_src" ]; then
-            cp -r "$UPDATE_TMP_DIR_K4ALL/$local_src/*" "$local_dest"
+        if [ -d "$UPDATE_TMP_DIR_K4ALL_SRC/$local_src" ]; then
+            cp -rp "$UPDATE_TMP_DIR_K4ALL_SRC/$local_src/." "$local_dest"
             echo "Copiato: $local_src -> $local_dest"
         fi
     done
@@ -123,7 +120,7 @@ done
 echo "Nessuna differenza trovata nei file repo."
 
 # Estrai i nomi e i contenuti dei servizi e copia i file necessari
-extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu" 
+extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
 extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 
 # Estrai e copia i file
