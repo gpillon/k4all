@@ -102,6 +102,28 @@ extract_and_copy_trees() {
     done
 }
 
+# Funzione per gestire la creazione e il chmod delle directory
+handle_directories() {
+    local file=$1
+
+    # Estrazione delle informazioni delle directory
+    yq -o=json '[.storage.directories[]?]' "$file" |
+    jq -c '.[]' | while IFS= read -r directory; do
+        local path=$(echo "$directory" | jq -r '.path')
+        local user=$(echo "$directory" | jq -r '.user // empty')
+        local group=$(echo "$directory" | jq -r '.group // empty')
+        mkdir -p "$path"
+        echo "Creata directory: $path"
+        
+        # Se sono specificati user e group, applica il chown
+        if [[ -n "$user" ]] && [[ -n "$group" ]]; then
+            chown "$user":"$group" "$path"
+            echo "Applicati permessi a: $path per $user:$group"
+        fi
+    done
+}
+
+
 # Controllo delle differenze nei file repo
 REPO_SRC="$UPDATE_TMP_DIR_K4ALL_SRC/repo"
 HOST_REPO_FOLDER="/etc/yum.repos.d/"
@@ -118,6 +140,10 @@ for repo_file in "$REPO_SRC"/*; do
     fi
 done
 echo "Nessuna differenza trovata nei file repo."
+
+# Aggiungi la chiamata alla funzione handle_directories per entrambi i file Butane
+handle_directories "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
+handle_directories "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 
 # Estrai i nomi e i contenuti dei servizi e copia i file necessari
 extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
