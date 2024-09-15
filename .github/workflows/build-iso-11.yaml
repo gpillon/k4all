@@ -4,7 +4,7 @@ name: Build and Release k4all ISO
     tags:
       - '*'
     branches:
-      - release
+      - release_disabled
   workflow_dispatch: null
 jobs:
   build-iso:
