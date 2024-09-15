@@ -131,6 +131,7 @@ extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu" "$DEST_FOLDER"
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu" "$DEST_FOLDER"
 
+chmod +x /usr/local/bin/*
 #echo "Servizi estratti e salvati nella cartella $DEST_FOLDER"
 
 # Rimozione dei servizi che iniziano con 'fck8s'
