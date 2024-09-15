@@ -46,8 +46,8 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/myapp:${{ steps.get_version.outputs.version }}
+          tags: ghcr.io/${{ github.repository_owner }}/k4all:${{ steps.get_version.outputs.version }}
 
       - name: Update GitHub Deployment Status
         run: |
-          echo "Container released: ghcr.io/${{ github.repository_owner }}/myapp:${{ steps.get_version.outputs.version }}"
+          echo "Container released: ghcr.io/${{ github.repository_owner }}/k4all:${{ steps.get_version.outputs.version }}"
