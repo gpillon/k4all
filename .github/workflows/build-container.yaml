@@ -36,9 +36,9 @@ jobs:
         run: |
           VERSION=$(git describe --tags --abbrev=0 --always)
           if [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "version=$VERSION" >> $GITHUB_STATE
+            echo "version=$VERSION" >> $$GITHUB_OUTPUT
           else
-            echo "version=latest" >> $GITHUB_STATE
+            echo "version=latest" >> $$GITHUB_OUTPUT
           fi
 
       - name: Build and push Docker image
