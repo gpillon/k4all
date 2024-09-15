@@ -12,82 +12,117 @@ UPDATE_TMP_DIR_K4ALL_SRC=$UPDATE_TMP_DIR_K4ALL/src
 DEST_FOLDER="$UPDATE_TMP_DIR/extracted_services"
 CONTAINER_NAME="update-container"
 
-# Funzione cleanup per rimuovere container e immagine
+# Cleanup function to remove container and image
 cleanup() {
-    echo "Pulizia in corso..."
+    echo "Cleaning up..."
     podman rm $CONTAINER_NAME 2>/dev/null || true
     podman rmi $CONTAINER_IMAGE 2>/dev/null || true
 }
 
-# Trap per eseguire cleanup alla fine dello script
+# Trap to perform cleanup at the end of the script
 trap cleanup EXIT
 
-# Crea la cartella per salvare i servizi
+# Create folder to save services
 mkdir -p $UPDATE_TMP_DIR
 mkdir -p $UPDATE_TMP_DIR_K4ALL
 mkdir -p $DEST_FOLDER
 
 podman pull $CONTAINER_IMAGE
-# Elimina il container esistente se presente
+# Delete existing container if present
 if podman container exists $CONTAINER_NAME; then
     podman rm -f $CONTAINER_NAME
 fi
 
-# Crea il container
+# Create the container
 podman create --name $CONTAINER_NAME --replace $CONTAINER_IMAGE
-podman cp update-container:/src $UPDATE_TMP_DIR_K4ALL
+podman cp -rfp update-container:/src $UPDATE_TMP_DIR_K4ALL
 
 check_repos() {
 
-    # Controllo delle differenze nei file repo
+    # Checking for differences in repo files
     REPO_SRC="$UPDATE_TMP_DIR_K4ALL_SRC/repo"
     HOST_REPO_FOLDER="/etc/yum.repos.d/"
-    echo "Controllo delle differenze nei file repo..."
+    echo "Checking for differences in repo files..."
     for repo_file in "$REPO_SRC"/*; do
         base_repo_file=$(basename "$repo_file")
         if [ -f "$HOST_REPO_FOLDER/$base_repo_file" ]; then
             if ! diff "$repo_file" "$HOST_REPO_FOLDER/$base_repo_file" > /dev/null; then
-                echo "Differenze trovate in $base_repo_file. Esco dallo script. Probabilemnte devi aggiornare il cluster ad una versione più recente. usa il flag --force se vuoi comunque aggiornare."
+                echo "Differences found in $base_repo_file. Exiting script. You probably need to update the cluster to a newer version. Use the --force flag if you want to update anyway."
                 diff "$repo_file" "$HOST_REPO_FOLDER/$base_repo_file"
                 exit 1
             fi
         else
-            echo "File $base_repo_file non trovato in $HOST_REPO_FOLDER."
+            echo "File $base_repo_file not found in $HOST_REPO_FOLDER."
         fi
     done
-    echo "Nessuna differenza trovata nei file repo."
+    echo "No differences found in repo files."
 }
 
-# Funzione per estrarre i servizi da un file Butane, trasformarli in JSON e creare i file
+# Function to extract and copy files defined in .storage.files
+extract_and_copy_files() {
+    local file=$1
+
+    # Extraction and analysis of files defined in .storage.files
+    yq -o=json '[.storage.files[]?]' "$file" |
+    jq -c '.[]' | while IFS= read -r entry; do
+        local path=$(echo "$entry" | jq -r '.path')
+
+        # Check if the content is specified inline or as a local file
+        if echo "$entry" | jq -e '.contents.inline' > /dev/null; then
+            # Inline content
+            local contents=$(echo "$entry" | jq -r '.contents.inline')
+            mkdir -p "$(dirname "$path")"
+            echo "$contents" > "$path"
+            echo "Created from inline: $path"
+        elif echo "$entry" | jq -e '.contents.local' > /dev/null; then
+            # Local content
+            local local_src=$(echo "$entry" | jq -r '.contents.local')
+            local src_path="$UPDATE_TMP_DIR_K4ALL_SRC/$local_src"
+            if [ -f "$src_path" ]; then
+                mkdir -p "$(dirname "$path")"
+                cp -p "$src_path" "$path"
+                echo "Copied from local: $src_path -> $path"
+            else
+                echo "Local file not found: $src_path"
+            fi
+        else
+            echo "No valid content found for $path"
+        fi
+    done
+}
+
+# Function to extract services from a Butane file, transform them into JSON, and create files
 extract_services() {
     local file=$1
     local dest_folder=$2
 
-    # Usa yq per estrarre i servizi e convertirli in un array JSON
+    # Use yq to extract services and convert them to a JSON array
     yq -o=json '[(.systemd.units[] | select(.contents != null) | {"name": .name, "contents": .contents})]' "$file" |
     jq -c '.[]' | while IFS= read -r service; do
-        # Estrai il nome e il contenuto dal JSON
+        # Extract name and content from JSON
         service_name=$(echo "$service" | jq -r '.name')
         service_contents=$(echo "$service" | jq -r '.contents')
 
-        # Crea un file con il nome del servizio e inserisci il contenuto
+        # Create a file with the service name and insert content
         echo "$service_contents" > "${dest_folder}/${service_name}"
     done
 }
 
-# Funzione per estrarre i servizi e copiare file definiti in .storage.trees
+# Function to extract services and copy files defined in .storage.trees
 extract_and_copy_trees() {
     local file=$1
 
-    # Estrazione e copia dei file definiti in .storage.trees
+    # Extraction and copying of files defined in .storage.trees
     yq -o=json '[.storage.trees[]? | {"local": .local, "path": .path}]' "$file" |
     jq -c '.[]' | while IFS= read -r entry; do
         local_src=$(echo "$entry" | jq -r '.local')
         local_dest=$(echo "$entry" | jq -r '.path')
         if [ -d "$UPDATE_TMP_DIR_K4ALL_SRC/$local_src" ]; then
+
             mkdir -p $local_dest
-            cp -rf "$UPDATE_TMP_DIR_K4ALL_SRC/$local_src/." "$local_dest"
-            echo "Copiato: $local_src -> $local_dest"
+            cp -rpf "$UPDATE_TMP_DIR_K4ALL_SRC/$local_src/." "$local_dest"
+
+            echo "Copied: $local_src -> $local_dest"
         fi
     done
 }
@@ -95,86 +130,114 @@ extract_and_copy_trees() {
 extract_and_copy_files() {
     local file=$1
 
-    # Estrazione e analisi dei file definiti in .storage.files
+    # Extraction and analysis of files defined in .storage.files
     yq -o=json '[.storage.files[]?]' "$file" |
     jq -c '.[]' | while IFS= read -r entry; do
         local path=$(echo "$entry" | jq -r '.path')
 
-        # Controlla se il contenuto è specificato inline o come file locale
+        # Check if the content is specified inline or as a local file
         if echo "$entry" | jq -e '.contents.inline' > /dev/null; then
-            # Contenuto inline
+            # Inline content
             local contents=$(echo "$entry" | jq -r '.contents.inline')
             mkdir -p "$(dirname "$path")"
             echo "$contents" > "$path"
-            echo "Creato da inline: $path"
+            echo "Created from inline: $path"
         elif echo "$entry" | jq -e '.contents.local' > /dev/null; then
-            # Contenuto locale
+            # Local content
             local local_src=$(echo "$entry" | jq -r '.contents.local')
             local src_path="$UPDATE_TMP_DIR_K4ALL_SRC/$local_src"
             if [ -f "$src_path" ]; then
                 mkdir -p "$(dirname "$path")"
-                cp "$src_path" "$path"
-                echo "Copiato da locale: $src_path -> $path"
+                cp -rfp "$src_path" "$path"
+                echo "Copied from local: $src_path -> $path"
             else
-                echo "File locale non trovato: $src_path"
+                echo "Local file not found: $src_path"
             fi
         else
-            echo "Nessun contenuto valido trovato per $path"
+            echo "No valid content found for $path"
+        fi
+    done
+}
+
+# Function to handle creation and chmod of directories
+handle_directories() {
+    local file=$1
+
+    # Extraction of directory information
+    yq -o=json '[.storage.directories[]?]' "$file" |
+    jq -c '.[]' | while IFS= read -r directory; do
+        local path=$(echo "$directory" | jq -r '.path')
+        local user=$(echo "$directory" | jq -r '.user // empty')
+        local group=$(echo "$directory" | jq -r '.group // empty')
+        mkdir -p "$path"
+        echo "Created directory: $path"
+        
+        # If user and group are specified, apply chown
+        if [[ -n "$user" ]] && [[ -n "$group" ]]; then
+            chown "$user":"$group" "$path"
+            echo "Applied permissions to: $path for $user:$group"
         fi
     done
 }
 
 check_repos
 
-# Esempio di utilizzo della funzione per entrambi i file
-extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
-extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu" 
+# Add call to handle_directories function for both Butane files
+handle_directories "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
+handle_directories "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 
-# Estrai i nomi e i contenuti dei servizi da entrambi i file
+# Extract names and contents of services and copy necessary files
+extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
+extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
+
+# Extract and copy files
+extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
+extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
+
+# Extract names and contents of services from both files
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu" "$DEST_FOLDER"
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu" "$DEST_FOLDER"
-echo "Servizi estratti e salvati nella cartella $DEST_FOLDER"
 
-# Estrai i nomi e i contenuti dei servizi e copia i file necessari
-extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
-extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu" 
+chmod +x /usr/local/bin/*
+#echo "Services extracted and saved in folder $DEST_FOLDER"
 
-# Rimozione dei servizi che iniziano con 'fck8s'
-echo "Rimozione dei servizi esistenti che iniziano con 'fck8s'..."
+# Removal of services starting with 'fck8s'
+echo "Removing existing services starting with 'fck8s'..."
 for svc in /etc/systemd/system/fck8s*.service; do
     if [ -f "$svc" ]; then
         systemctl stop "$(basename "$svc")"
         systemctl disable "$(basename "$svc")"
         rm "$svc"
-        echo "Rimosso: $svc"
+        echo "Removed: $svc"
     fi
 done
+
 systemctl daemon-reload
 
-# Installazione dei nuovi servizi
-echo "Installazione dei nuovi servizi..."
+# Installation of new services
+echo "Installing new services..."
 declare -a retry_services
 for svc in "$DEST_FOLDER"/*.service; do
     if [ -f "$svc" ]; then
-        cp "$svc" /etc/systemd/system/
+        cp -fp "$svc" /etc/systemd/system/
         systemctl enable "$(basename "$svc")"
         # if ! systemctl start "$(basename "$svc")"; then
-        #     echo "Errore nell'avvio di $(basename "$svc"), verrà riprovato più tardi"
+        #     echo "Error starting $(basename "$svc"), will retry later"
         #     retry_services+=("$svc")
         # else
-        #     echo "Installato e avviato: $(basename "$svc")"
+        #     echo "Installed and started: $(basename "$svc")"
         # fi
     fi
 done
 
-# # Tentativo di risolvere i problemi di dipendenza iterativamente
-# echo "Tentativi di avvio dei servizi falliti..."
+# # Attempt to resolve dependency issues iteratively
+# echo "Attempting to start failed services..."
 # for svc in "${retry_services[@]}"; do
-#     echo "Riprova per $(basename "$svc")..."
+#     echo "Retry for $(basename "$svc")..."
 #     if systemctl start "$(basename "$svc")"; then
-#         echo "$(basename "$svc") avviato con successo."
+#         echo "$(basename "$svc") started successfully."
 #     else
-#         echo "Non è stato possibile avviare $(basename "$svc") dopo il secondo tentativo."
+#         echo "Unable to start $(basename "$svc") after the second attempt."
 #     fi
 # done
 
