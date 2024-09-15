@@ -3,19 +3,24 @@ set -euxo pipefail
 
 NODE_TYPE=$(cat /etc/node-type)
 
-URL1="https://raw.githubusercontent.com/gpillon/k4all/v1.4.0/k8s-base.bu"
-URL2="https://raw.githubusercontent.com/gpillon/k4all/v1.4.0/k8s-${NODE_TYPE}.bu"
+IMAGE_TAG=${1:-latest}
+CONTAINER_IMAGE="ghcr.io/gpillon/k4all:$IMAGE_TAG"
 
-# Verifica che le variabili d'ambiente URL1 e URL2 siano state impostate
-if [ -z "$URL1" ] || [ -z "$URL2" ]; then
-    echo "Imposta le variabili d'ambiente URL1 e URL2 prima di eseguire lo script."
-    exit 1
-fi
-
-DEST_FOLDER="./extracted_services"
+UPDATE_TMP_DIR=/tmp/update
+UPDATE_TMP_DIR_K4ALL=$UPDATE_TMP_DIR/k4all
+DEST_FOLDER="$UPDATE_TMP_DIR/extracted_services"
 
 # Crea la cartella per salvare i servizi
-mkdir -p "$DEST_FOLDER"
+mkdir -p $UPDATE_TMP_DIR
+mkdir -p $UPDATE_TMP_DIR_K4ALL
+mkdir -p $DEST_FOLDER
+
+podman pull $CONTAINER_IMAGE
+podman create --name update-container $CONTAINER_IMAGE
+podman cp update-container:k8s-base.bu $UPDATE_TMP_DIR_K4ALL/k8s-base.bu
+podman cp update-container:k8s-$NODE_TYPE.bu $UPDATE_TMP_DIR_K4ALL/k8s-$NODE_TYPE.bu
+podman rm update-container
+podman rmi $CONTAINER_IMAGE
 
 # Funzione per estrarre i servizi da un file Butane, trasformarli in JSON e creare i file
 extract_services() {
@@ -34,13 +39,9 @@ extract_services() {
     done
 }
 
-# Scarica i file Butane dai due URL
-curl -o file1.bu "$URL1"
-curl -o file2.bu "$URL2"
-
 # Estrai i nomi e i contenuti dei servizi da entrambi i file
-extract_services "file1.bu" "$DEST_FOLDER"
-extract_services "file2.bu" "$DEST_FOLDER"
+extract_services "$UPDATE_TMP_DIR_K4ALL/k8s-base.bu" "$DEST_FOLDER"
+extract_services "$UPDATE_TMP_DIR_K4ALL/k8s-$NODE_TYPE.bu" "$DEST_FOLDER"
 
 echo "Servizi estratti e salvati nella cartella $DEST_FOLDER"
 
