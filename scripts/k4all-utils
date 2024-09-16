@@ -84,6 +84,32 @@ function get_network_device() {
     echo $net_dev
 }
 
+# Function to find the original physical interface used in the bridge
+get_original_physical_interface() {
+  for port in $(ovs-vsctl list-ports ovs-bridge); do
+    physical_interface=$(get_physical_interface_for_ovs_port "$port")
+    if [ -n "$physical_interface" ]; then
+      echo "$physical_interface"
+      return
+    fi
+  done
+  # If no physical interface is found, return the first physical interface available
+  get_first_physical_interface
+}
+
+get_real_interface() {
+  local NET_DEV=$(get_network_device)
+
+  if [ "$NET_DEV" == "ovs-bridge" ]; then
+    local PHYS_NET_DEV=$(get_original_physical_interface)
+  else
+    local PHYS_NET_DEV=$NET_DEV
+  fi
+  echo $PHYS_NET_DEV
+}
+
+
+
 # Function to get the current IP address
 get_ip() {
     if jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "keepalived"; then

@@ -71,12 +71,7 @@ get_original_physical_interface() {
 }
 
 NET_DEV=$(get_network_device)
-
-if [ "$NET_DEV" == "ovs-bridge" ]; then
-  PHYS_NET_DEV=$(get_original_physical_interface)
-else
-  PHYS_NET_DEV=$NET_DEV
-fi
+PHYS_NET_DEV=$(get_real_interface)
 
 CURRENT_IP_CONFIG=$(jq -r '.networking.iface.ipconfig' "$K4ALL_CONFIG_FILE")
 

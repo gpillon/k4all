@@ -32,7 +32,7 @@ systemd:
       enabled: true
       contents: |
         [Unit]
-        Description=Set Hostname
+        Description=Set Static Ip Address
         Requires=network-online.target
         After=network-online.target
         
@@ -48,8 +48,8 @@ systemd:
       contents: |
         [Unit]
         Description=Set Hostname
-        Requires=fck8s-static-ip.service
-        After=fck8s-static-ip.service 
+        Requires=fck8s-set-static-ip.service
+        After=fck8s-set-static-ip.service 
         
         [Service]
         Type=oneshot

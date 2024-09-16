@@ -25,7 +25,7 @@ if [ "$CURRENT_IP_CONFIG" = "dhcp" ]; then
     NET_DEV=$(get_network_device)
 
     # Retrieve all IP addresses and subnet masks
-    IP_ADDRESSES=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}")
+    IP_ADDRESSES=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}" | head -n 1 | cut -d' ' -f1)
 
     # Assuming you want to work with the first IP address and subnet mask
     FIRST_IP_ADDRESS=$(echo "${IP_ADDRESSES}" | head -n 1)
