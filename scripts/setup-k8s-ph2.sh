@@ -74,7 +74,7 @@ else
   IP_CIDR=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}" | head -n 1 | cut -d'|' -f1)
   GATEWAY=$(nmcli -g IP4.GATEWAY dev show "${NET_DEV}")
   DNS=$(nmcli -t -f IP4.DNS dev show "${NET_DEV}" | awk -F":" '{print $2}' | paste -sd "," -)
-  SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
+  DNS_SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
 fi
 
 MAC_ADDR=$(ip link show "${PHYS_NET_DEV}" | awk '/ether/ {print $2}')
@@ -101,7 +101,7 @@ modify_nmcli_connection_if_needed ovs-bridge 802-3-ethernet.cloned-mac-address "
 modify_nmcli_connection_if_needed ovs-bridge-int ipv4.addresses "${IP_CIDR}"
 modify_nmcli_connection_if_needed ovs-bridge-int ipv4.gateway "${GATEWAY}"
 modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns "${DNS}"
-modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns-search "${SEARCH}"
+modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns-search "${DNS_SEARCH}"
 
 # Bring up the ovs-port-eth-int and ovs-bridge-int connections
 nmcli con up ovs-port-eth-int
