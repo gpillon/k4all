@@ -3,7 +3,7 @@ name: Build and Push Container
 'on':
   push:
     branches:
-      - main  # Trigger on pushes to the main branch
+      - release  # Trigger on pushes to the main branch
     tags:
       - v*    # Trigger on version tags like v1.0.0
   workflow_dispatch: null  # Allows manual trigger from the GitHub UI
@@ -19,26 +19,35 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version
+      - name: Create Dockerfile
+        run: |
+          echo "FROM scratch" > Dockerfile
+          echo "COPY . /src" >> Dockerfile
+          
+      - name: Extract version or set default
         id: get_version
         shell: bash
         run: |
-          VERSION=$(git describe --tags --abbrev=0)
-          echo "::set-output name=version::$VERSION"
+          VERSION=$(git describe --tags --abbrev=0 --always)
+          if [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "version=latest" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/myapp:${{ steps.get_version.outputs.version }}
+          tags: ghcr.io/${{ github.repository_owner }}/k4all:${{ steps.get_version.outputs.version }}
 
       - name: Update GitHub Deployment Status
         run: |
-          echo "Container released: ghcr.io/${{ github.repository_owner }}/myapp:${{ steps.get_version.outputs.version }}"
+          echo "Container released: ghcr.io/${{ github.repository_owner }}/k4all:${{ steps.get_version.outputs.version }}"

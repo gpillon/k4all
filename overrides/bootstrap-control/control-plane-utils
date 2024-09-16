@@ -1,21 +1,45 @@
 #!/bin/bash
 
-CONFIG_FILE="/etc/k4all-config.json"
+source /usr/local/bin/k4all-utils
+
 CURRENT_IP=$(ip addr show ovs-bridge | grep -v secondary | grep -Po 'inet \K[\d.]+')
 K8S_CONFIG_FILE="/etc/k8s-config.yaml"
 
 # Function to add an IP to certSANs if it does not already exist
-function add_ip_if_not_exists {
-    local ip=$1
-    # Check if IP already exists in the certSANs array
-    output=$(yq e "select(.kind == \"ClusterConfiguration\").apiServer.certSANs | contains ([\"$ip\"]) " $K8S_CONFIG_FILE)
-    if [ "$output" == "false" ]; then
-        # Add the IP if it does not exist
-        yq e -i "select(.kind == \"ClusterConfiguration\").apiServer.certSANs += [\"$ip\"]" $K8S_CONFIG_FILE
-    fi
+function add_ip_if_not_exists() {
+
+    # Ensure the ClusterConfiguration and apiServer.certSANs exist
+    yq e -i "select(.kind == \"ClusterConfiguration\").apiServer.certSANs |= . // []" $K8S_CONFIG_FILE
+
+    # Read each IP line by line
+    while IFS= read -r ip; do
+        # Check if IP already exists in the certSANs array
+        output=$(yq e "select(.kind == \"ClusterConfiguration\").apiServer.certSANs | contains ([\"$ip\"]) " $K8S_CONFIG_FILE)
+        if [ "$output" == "false" ]; then
+            # Add the IP if it does not exist
+            yq e -i "select(.kind == \"ClusterConfiguration\").apiServer.certSANs += [\"$ip\"]" $K8S_CONFIG_FILE
+        fi
+    done <<< "$1"   # Here, $1 should be a string of IPs separated by new lines
 }
 
+
 function set_control_plane_endpoint() {
-     local ip=$1
-     yq e -i "select(.kind == \"ClusterConfiguration\").controlPlaneEndpoint = \"$1\"" $K8S_CONFIG_FILE
+    local ip=$1
+    yq e -i "select(.kind == \"ClusterConfiguration\").controlPlaneEndpoint = \"$1\"" $K8S_CONFIG_FILE
+}
+
+function get_ha_ep_ip() {
+    haEndpoint=$(jq -r '.node.ha.apiControlEndpoint' $K4ALL_CONFIG_FILE)
+    echo $haEndpoint
+}
+
+function get_cluster_ip() {
+    HA_TYPE=$(jq -r '.node.ha.type' "$K4ALL_CONFIG_FILE")
+     if [[ "$HA_TYPE" == "keepalived" ||  "$HA_TYPE" == "kubevip" ]]; then
+        ip=$(get_ha_ep_ip)
+     else 
+        ip=$(ip addr show ovs-bridge | grep -v secondary | grep -Po 'inet \K[\d.]+' | head -n 1)
+     fi
+
+     echo $ip
 }
