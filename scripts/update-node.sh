@@ -186,7 +186,7 @@ for svc in /etc/systemd/system/fck8s*.service; do
         systemctl stop "$(basename "$svc")" &> /dev/null
         systemctl disable "$(basename "$svc")" &> /dev/null
         rm "$svc"
-        echo "Stopped, Diabled and Removed: $svc"
+        echo "Stopped, Disabled and Removed: $svc"
     fi
 done
 

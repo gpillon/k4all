@@ -8,6 +8,8 @@ if [ -f "/opt/k4all/setup-static-ip.done" ]; then
   exit 0
 fi
 
+source /usr/local/bin/k4all-utils
+
 update_json_field() {
     local path="$1"
     local value="$2"
