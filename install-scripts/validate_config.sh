@@ -1,7 +1,7 @@
 #!/bin/bash
 
 CONFIG_FILE=$1
-VALIDATOR_DIR="/usr/local/bin/validator"
+VALIDATOR_DIR="$( dirname "${BASH_SOURCE[0]}" )/validator"
 
 # Source utility and validation scripts
 for script in "$VALIDATOR_DIR"/*.sh; do
