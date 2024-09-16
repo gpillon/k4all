@@ -70,7 +70,6 @@ get_original_physical_interface() {
   get_first_physical_interface
 }
 
-
 NET_DEV=$(get_network_device)
 
 if [ "$NET_DEV" == "ovs-bridge" ]; then
@@ -79,13 +78,35 @@ else
   PHYS_NET_DEV=$NET_DEV
 fi
 
-MAC_ADDR=$(ip link show "${PHYS_NET_DEV}" | awk '/ether/ {print $2}')
+CURRENT_IP_CONFIG=$(jq -r '.networking.iface.ipconfig' "$K4ALL_CONFIG_FILE")
 
-# Retrieve IP, Gateway, DNS, and Domain information from the original network device
-IP_ADDR=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}")
-GATEWAY=$(nmcli -g IP4.GATEWAY dev show "${NET_DEV}")
-DNS=$(nmcli -t -f IP4.DNS dev show "${NET_DEV}" | awk -F":" '{print $2}' | paste -sd "," -)
-SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
+if [ "$CURRENT_IP_CONFIG" = "static" ]; then
+  # Extract values from JSON
+  IP_ADDR=$(jq -r '.networking.iface.ipaddr' "$K4ALL_CONFIG_FILE")
+  GATEWAY=$(jq -r '.networking.iface.gateway' "$K4ALL_CONFIG_FILE")
+  DNS=$(jq -r '.networking.iface.dns' "$K4ALL_CONFIG_FILE")
+  SUBNET_MASK=$(jq -r '.networking.iface.subnet_mask' "$K4ALL_CONFIG_FILE")
+  DNS_SEARCH=$(jq -r '.networking.iface.dns_search' "$K4ALL_CONFIG_FILE" | sed 's/,/ /g')  # Converts commas to spaces if needed
+  CIDR=$(mask_to_cidr $SUBNET_MASK)
+  IP_CIDR="$IP_ADDR/$CIDR"
+
+  echo "Using static IP configuration from JSON:"
+  echo "IP Address: $IP_ADDR"
+  echo "Gateway: $GATEWAY"
+  echo "DNS: $DNS"
+  echo "Subnet Mask: $SUBNET_MASK"
+  echo "Search Domains: $DNS_SEARCH"
+  echo "IP with CIDR: $IP_CIDR"
+else 
+  echo "WARNING! this should not happen...."
+  # Retrieve IP, Gateway, DNS, and Domain information from the original network device
+  IP_CIDR=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}" | head -n 1 | cut -d'|' -f1)
+  GATEWAY=$(nmcli -g IP4.GATEWAY dev show "${NET_DEV}")
+  DNS=$(nmcli -t -f IP4.DNS dev show "${NET_DEV}" | awk -F":" '{print $2}' | paste -sd "," -)
+  SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
+fi
+
+MAC_ADDR=$(ip link show "${PHYS_NET_DEV}" | awk '/ether/ {print $2}')
 
 # Enable and start kubelet, crio, and openvswitch services
 enable_service_if_not_running crio
@@ -106,7 +127,7 @@ add_nmcli_connection_if_not_exists ovs-port-eth-int type ethernet conn.interface
 
 # Modify ovs-bridge and ovs-bridge-int settings only if needed
 modify_nmcli_connection_if_needed ovs-bridge 802-3-ethernet.cloned-mac-address "${MAC_ADDR}"
-modify_nmcli_connection_if_needed ovs-bridge-int ipv4.addresses "${IP_ADDR}"
+modify_nmcli_connection_if_needed ovs-bridge-int ipv4.addresses "${IP_CIDR}"
 modify_nmcli_connection_if_needed ovs-bridge-int ipv4.gateway "${GATEWAY}"
 modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns "${DNS}"
 modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns-search "${SEARCH}"

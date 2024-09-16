@@ -141,3 +141,35 @@ get_ingress_urls() {
     kubectl get ingress "$ingress_name" -n "$namespace" -o jsonpath="{range .spec.rules[?(@.host=='$host')].http.paths[*]}https://$host{.path}{'\n'}{end}"
   done
 }
+
+cidr_to_mask() {
+  local cidr=$1
+  local mask=""
+  local full_octets=$((cidr / 8))
+  local partial_octet=$((cidr % 8))
+
+  for ((i=0; i<4; i++)); do
+    if [ $i -lt $full_octets ]; then
+      mask+=255
+    elif [ $i -eq $full_octets ]; then
+      mask+=$((256 - 2**(8-partial_octet)))
+    else
+      mask+=0
+    fi
+    if [ $i -lt 3 ]; then
+      mask+='.'
+    fi
+  done
+
+  echo $mask
+}
+
+# Function to convert subnet mask to CIDR notation
+mask_to_cidr() {
+  c=0 x=0$( printf '%o' ${1//./ } )
+  while [ $x -gt 0 ]; do
+      let c+=$((x%2)) 'x>>=1'
+  done
+
+  echo $c ; 
+}

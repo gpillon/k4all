@@ -1,5 +1,11 @@
 #!/bin/bash
-set -exuo pipefail
+set -euo pipefail
+
+# Check if the script was launched directly or with bash
+if [[ "$0" != "bash" || "$0" != "sh" ]]; then
+    echo "This script must be launched with 'bash update-node.sh' or 'bash /usr/local/bin/update-node.sh', not called directly."
+    exit 1  # Exit with error code
+fi
 
 NODE_TYPE=$(cat /etc/node-type)
 
@@ -209,4 +215,4 @@ done
 #     fi
 # done
 
-/usr/local/bin/reinstall.sh
+/usr/local/bin/reinstall.sh --yes

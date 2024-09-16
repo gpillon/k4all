@@ -26,6 +26,23 @@ Key features include:
 - 20 Minutes.
 - Coffee, Sugar, Milk (not required).
 
+## Creating a Bootable USB
+**TL;DR** use the `k4all-bootstrap` image
+
+To create a bootable USB device with the `k4all` ISO:
+
+1. **Download and Verify**: Ensure the downloaded ISO is correct and not corrupted.
+2. **Use `dd` on Linux**:
+   - Identify your USB device (`/dev/sdX`), replacing `X` with the correct letter.
+   - Run the following command as `root`:
+
+   ```bash
+   sudo dd if=k4all.iso of=/dev/sdX bs=4M status=progress oflag=sync
+   ```
+3. Use Rufus on Windows:
+   - Download [Rufus](https://rufus.ie/)
+   - Select the `k4all` ISO, choose your USB device, and click `Start`.
+
 ## Installation
 First version you want to install is the boostrap image: i'ts a single node, with schedulable master. Later, you can add other control nodes or worker nodes. 
 
@@ -51,22 +68,6 @@ First version you want to install is the boostrap image: i'ts a single node, wit
 
 - **Sample Pod**: A sample pod will be created in the `default` namespace if the LVM setup is successful. You can safely delete this pod.
 - **Dashboard**: Access the Kubernetes dashboard via the URL and token you obtain from the system.
-
-## Creating a Bootable USB
-
-To create a bootable USB device with the `k4all` ISO:
-
-1. **Download and Verify**: Ensure the downloaded ISO is correct and not corrupted.
-2. **Use `dd` on Linux**:
-   - Identify your USB device (`/dev/sdX`), replacing `X` with the correct letter.
-   - Run the following command as `root`:
-
-   ```bash
-   sudo dd if=k4all.iso of=/dev/sdX bs=4M status=progress oflag=sync
-   ```
-3. Use Rufus on Windows:
-   - Download [Rufus](https://rufus.ie/)
-   - Select the `k4all` ISO, choose your USB device, and click `Start`.
    
 ## Debugging Failed Setup
 
