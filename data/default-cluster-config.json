@@ -77,9 +77,10 @@
       //interface: the network interface to use for the virtual IP; use auto to automatically select the interface with the default route"
       "interface": "auto",
 
-      // "type": "none" | "keepalived"
+      // "type": "none" | "keepalived | kubevip"
       "type": "none"
       //"type": "keepalived",
+      //"type": "kubevip",
 
       // Control plane endpoint for the API server, ignored in "none" mode
       // "apiControlEndpoint": "192.168.0.200",

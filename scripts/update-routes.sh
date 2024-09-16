@@ -1,7 +1,6 @@
 #!/bin/bash
 
 source /usr/local/bin/control-plane-utils
-source /usr/local/bin/k4all-utils
 
 # Function to update the MOTD
 update_motd() {
@@ -15,7 +14,7 @@ update_motd() {
 }
 
 # Main logic
-ip=$(get_ip)
+ip=$(get_cluster_ip)
 fqdn=$(get_fqdn)
 
 # Create the nip.io route

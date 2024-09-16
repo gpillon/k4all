@@ -21,20 +21,20 @@ validate_node() {
   fi
 
   # Check if ha.type has either 'none' or 'keepalived' values
-  IP_CONFIG=$(jq -r '.node.ha.type' "$CONFIG_FILE")
-  if [[ "$IP_CONFIG" != "none" && "$IP_CONFIG" != "keepalived" ]]; then
-    echo "Invalid node.ha.type' value. Must be 'none' or 'keepalived'."
+  HA_TYPE=$(jq -r '.node.ha.type' "$CONFIG_FILE")
+  if [[ "$HA_TYPE" != "none" && "$HA_TYPE" != "keepalived"  && "$HA_TYPE" != "kubevip" ]]; then
+    echo "Invalid node.ha.type' value. Must be 'none', 'keepalived' or kubevip."
     return 1
   fi
 
   # If 'keeplived', check for required fields and their validity
-  if [[ "$IP_CONFIG" == "keepalived" ]]; then
+  if [[ "$HA_TYPE" == "keepalived" ||  "$HA_TYPE" == "kubevip" ]]; then
     if ! check_json_value '.node.ha.apiControlEndpoint'; then
       echo "Missing 'node.ha.apiControlEndpoint' field."
       return 1
     fi
 
-    if ! check_json_value '.node.ha.apiControlEndpointSubnetSize'; then
+    if  [[ "$HA_TYPE" == "keepalived" ]] && ! check_json_value '.node.ha.apiControlEndpointSubnetSize'; then
       echo "Missing 'nodeha.apiControlEndpointSubnetSize' field."
       return 1
     fi
@@ -52,19 +52,19 @@ validate_node() {
     fi
 
     # Check for ha.apiControlEndpointSubnetSize is an integer
-    if [ "$(is_json_integer '.node.ha.apiControlEndpointSubnetSize' "$CONFIG_FILE")" != "true" ]; then
+    if [[ "$HA_TYPE" == "keepalived" ]] && [ "$(is_json_integer '.node.ha.apiControlEndpointSubnetSize' "$CONFIG_FILE")" != "true" ]; then
       echo "Invalid 'node.ha.apiControlEndpointSubnetSize' value. Must be an integer."
       return 1
     fi
 
     # Check for ha.apiControlEndpointSubnetSize is greater than 0
-    if [[ $(jq -r '.node.ha.apiControlEndpointSubnetSize' "$CONFIG_FILE") -lt 0 ]]; then
+    if  [[ "$HA_TYPE" == "keepalived" ]] && [[ $(jq -r '.node.ha.apiControlEndpointSubnetSize' "$CONFIG_FILE") -lt 0 ]]; then
       echo "Invalid 'node.ha.apiControlEndpointSubnetSize' value. Must be greater than 0."
       return 1
     fi
 
     # Check for ha.apiControlEndpointSubnetSize is lesser than 32
-    if [[ $(jq -r '.node.ha.apiControlEndpointSubnetSize' "$CONFIG_FILE") -gt 32 ]]; then
+    if  [[ "$HA_TYPE" == "keepalived" ]] && [[ $(jq -r '.node.ha.apiControlEndpointSubnetSize' "$CONFIG_FILE") -gt 32 ]]; then
       echo "Invalid 'node.ha.apiControlEndpointSubnetSize' value. Must be lesser than 32."
       return 1
     fi
