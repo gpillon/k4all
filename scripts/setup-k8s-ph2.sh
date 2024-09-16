@@ -46,30 +46,6 @@ add_firewalld_rule_if_not_exists() {
   fi
 }
 
-# Function to get the first available physical network interface
-get_first_physical_interface() {
-  ip link show | awk '/^[0-9]+: [^lo]/ {print $2}' | grep -v 'ovs-bridge' | sed 's/://g' | head -n 1
-}
-
-# Function to get the physical interface from the Open vSwitch bridge
-get_physical_interface_for_ovs_port() {
-  local ovs_port=$1
-  ovs-vsctl list interface "$ovs_port" 2>/dev/null | grep 'type.*system' >/dev/null && echo "$ovs_port" || echo ""
-}
-
-# Function to find the original physical interface used in the bridge
-get_original_physical_interface() {
-  for port in $(ovs-vsctl list-ports ovs-bridge); do
-    physical_interface=$(get_physical_interface_for_ovs_port "$port")
-    if [ -n "$physical_interface" ]; then
-      echo "$physical_interface"
-      return
-    fi
-  done
-  # If no physical interface is found, return the first physical interface available
-  get_first_physical_interface
-}
-
 NET_DEV=$(get_network_device)
 PHYS_NET_DEV=$(get_real_interface)
 
