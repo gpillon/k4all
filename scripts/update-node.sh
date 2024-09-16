@@ -2,9 +2,10 @@
 set -euo pipefail
 
 # Check if the script was launched directly or with bash
-if [[ "$0" != "bash" || "$0" != "sh" ]]; then
-    echo "This script must be launched with 'bash update-node.sh' or 'bash /usr/local/bin/update-node.sh', not called directly."
-    exit 1  # Exit with error code
+if [[ "$0" != "/tmp/update-node.sh" ]]; then
+    cp "$0" "/tmp/update-node.sh"
+    bash "/tmp/update-node.sh"
+    exit 0
 fi
 
 NODE_TYPE=$(cat /etc/node-type)
@@ -164,25 +165,28 @@ handle_directories "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
 extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 
+chmod +x /usr/local/bin/*
+
 # Extract and copy files
 extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
 extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
+
+chmod +x /usr/local/bin/*
 
 # Extract names and contents of services from both files
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu" "$DEST_FOLDER"
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu" "$DEST_FOLDER"
 
-chmod +x /usr/local/bin/*
 #echo "Services extracted and saved in folder $DEST_FOLDER"
 
 # Removal of services starting with 'fck8s'
 echo "Removing existing services starting with 'fck8s'..."
 for svc in /etc/systemd/system/fck8s*.service; do
     if [ -f "$svc" ]; then
-        systemctl stop "$(basename "$svc")"
-        systemctl disable "$(basename "$svc")"
+        systemctl stop "$(basename "$svc")" &> /dev/null
+        systemctl disable "$(basename "$svc")" &> /dev/null
         rm "$svc"
-        echo "Removed: $svc"
+        echo "Stopped, Diabled and Removed: $svc"
     fi
 done
 

@@ -17,6 +17,8 @@ update_json_field() {
     jq "$path |= \"$value\"" "$config_file" > "$temp_file" && mv "$temp_file" "$config_file"
 }
 
+CURRENT_IP_CONFIG=$(jq -r '.networking.iface.ipconfig' "$K4ALL_CONFIG_FILE")
+
 if [ "$CURRENT_IP_CONFIG" = "dhcp" ]; then
     NET_DEV=$(get_network_device)
 
