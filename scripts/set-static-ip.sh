@@ -33,18 +33,19 @@ if [ "$CURRENT_IP_CONFIG" = "dhcp" ]; then
     # Parse the IP address and the subnet mask
     IP_ADDR=$(echo $FIRST_IP_ADDRESS | cut -d'/' -f1)
     SUBNET_CIDR=$(echo $FIRST_IP_ADDRESS | cut -d'/' -f2 | awk '{print $1}')  # Assuming CIDR notation is first if multiple fields
+    SUBNET_MASK=$(cidr_to_mask $SUBNET_CIDR)
 
     # Retrieve IP, Gateway, DNS, and Domain information from the original network device
     GATEWAY=$(nmcli -g IP4.GATEWAY dev show "${NET_DEV}")
     DNS=$(nmcli -t -f IP4.DNS dev show "${NET_DEV}" | awk -F":" '{print $2}' | paste -sd "," -)
-    SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
+    DNS_SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
 
     update_json_field '.networking.iface.ipconfig' "static" "$K4ALL_CONFIG_FILE"
     update_json_field '.networking.iface.ipaddr' "$IP_ADDR" "$K4ALL_CONFIG_FILE"
     update_json_field '.networking.iface.gateway' "$GATEWAY" "$K4ALL_CONFIG_FILE"
-    update_json_field '.networking.iface.subnet_mask' "$SUBNET_CIDR" "$K4ALL_CONFIG_FILE"
+    update_json_field '.networking.iface.subnet_mask' "$SUBNET_MASK" "$K4ALL_CONFIG_FILE"
     update_json_field '.networking.iface.dns' "$DNS" "$K4ALL_CONFIG_FILE"
-    update_json_field '.networking.iface.dns_search' "$SEARCH" "$K4ALL_CONFIG_FILE"
+    update_json_field '.networking.iface.dns_search' "$DNS_SEARCH" "$K4ALL_CONFIG_FILE"
 fi
 
 touch /opt/k4all/setup-static-ip.done

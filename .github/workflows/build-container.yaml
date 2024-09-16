@@ -9,7 +9,7 @@ name: Build and Push Container
   workflow_dispatch: null  # Allows manual trigger from the GitHub UI
 
 jobs:
-  build-and-push:
+  build-and-push-src-in-container:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
