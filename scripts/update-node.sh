@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -exuo pipefail
 
 NODE_TYPE=$(cat /etc/node-type)
 
@@ -35,7 +35,7 @@ fi
 
 # Create the container
 podman create --name $CONTAINER_NAME --replace $CONTAINER_IMAGE
-podman cp -rfp update-container:/src $UPDATE_TMP_DIR_K4ALL
+podman cp update-container:/src $UPDATE_TMP_DIR_K4ALL
 
 check_repos() {
 
@@ -56,39 +56,6 @@ check_repos() {
         fi
     done
     echo "No differences found in repo files."
-}
-
-# Function to extract and copy files defined in .storage.files
-extract_and_copy_files() {
-    local file=$1
-
-    # Extraction and analysis of files defined in .storage.files
-    yq -o=json '[.storage.files[]?]' "$file" |
-    jq -c '.[]' | while IFS= read -r entry; do
-        local path=$(echo "$entry" | jq -r '.path')
-
-        # Check if the content is specified inline or as a local file
-        if echo "$entry" | jq -e '.contents.inline' > /dev/null; then
-            # Inline content
-            local contents=$(echo "$entry" | jq -r '.contents.inline')
-            mkdir -p "$(dirname "$path")"
-            echo "$contents" > "$path"
-            echo "Created from inline: $path"
-        elif echo "$entry" | jq -e '.contents.local' > /dev/null; then
-            # Local content
-            local local_src=$(echo "$entry" | jq -r '.contents.local')
-            local src_path="$UPDATE_TMP_DIR_K4ALL_SRC/$local_src"
-            if [ -f "$src_path" ]; then
-                mkdir -p "$(dirname "$path")"
-                cp -p "$src_path" "$path"
-                echo "Copied from local: $src_path -> $path"
-            else
-                echo "Local file not found: $src_path"
-            fi
-        else
-            echo "No valid content found for $path"
-        fi
-    done
 }
 
 # Function to extract services from a Butane file, transform them into JSON, and create files
@@ -139,16 +106,16 @@ extract_and_copy_files() {
         if echo "$entry" | jq -e '.contents.inline' > /dev/null; then
             # Inline content
             local contents=$(echo "$entry" | jq -r '.contents.inline')
-            mkdir -p "$(dirname "$path")"
+            mkdir -p "$(dirname "$path")"  # Assicurati che le virgolette esterne siano corrette
             echo "$contents" > "$path"
             echo "Created from inline: $path"
         elif echo "$entry" | jq -e '.contents.local' > /dev/null; then
             # Local content
             local local_src=$(echo "$entry" | jq -r '.contents.local')
-            local src_path="$UPDATE_TMP_DIR_K4ALL_SRC/$local_src"
+            local src_path="${UPDATE_TMP_DIR_K4ALL_SRC}/${local_src}"  # Usa {} per chiarezza
             if [ -f "$src_path" ]; then
-                mkdir -p "$(dirname "$path")"
-                cp -rfp "$src_path" "$path"
+                mkdir -p "$(dirname "$path")"  # Mantieni la consistenza delle virgolette
+                cp -fp "$src_path" "$path"
                 echo "Copied from local: $src_path -> $path"
             else
                 echo "Local file not found: $src_path"
@@ -159,6 +126,7 @@ extract_and_copy_files() {
     done
 }
 
+
 # Function to handle creation and chmod of directories
 handle_directories() {
     local file=$1
@@ -167,8 +135,8 @@ handle_directories() {
     yq -o=json '[.storage.directories[]?]' "$file" |
     jq -c '.[]' | while IFS= read -r directory; do
         local path=$(echo "$directory" | jq -r '.path')
-        local user=$(echo "$directory" | jq -r '.user // empty')
-        local group=$(echo "$directory" | jq -r '.group // empty')
+        local user=$(echo "$directory" | jq -r '.user.name // .user.id // empty')
+        local group=$(echo "$directory" | jq -r '.group.name // .group.id // empty')
         mkdir -p "$path"
         echo "Created directory: $path"
         
