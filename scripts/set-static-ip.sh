@@ -14,7 +14,7 @@ update_json_field() {
     local path="$1"
     local value="$2"
     local config_file="$3"
-    local temp_file="temp.json.$$"
+    local temp_file="/tmp/temp.json.$$"
 
     jq "$path |= \"$value\"" "$config_file" > "$temp_file" && mv "$temp_file" "$config_file"
 }
