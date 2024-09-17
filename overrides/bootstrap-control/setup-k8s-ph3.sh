@@ -165,7 +165,7 @@ if ! grep -q "#### K4ALL ADVERTISE CHECK ####" /root/.bash_profile; then
   printf '\n
 #### K4ALL ADVERTISE CHECK ####
 #### pls, DO NOT REMOVE "K4ALL HELPER" tags, or you could mess up updates :) ###
-sh /usr/local/bin/check_advertise_address.sh
+sh /usr/local/bin/check-advertise-address.sh
 #### END K4ALL ADVERTISE CHECK ####
 ' >> /root/.bash_profile
 fi
