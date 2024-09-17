@@ -5,7 +5,7 @@ FILE_PATH="/etc/kubernetes/manifests/kube-apiserver.yaml"
 
 # Check if the file exists
 if [ ! -f "$FILE_PATH" ]; then
-  echo "File not found: $FILE_PATH"
+  echo "\n [ WARNING ] File not found: $FILE_PATH.\n"
   return
 fi
 
@@ -23,7 +23,7 @@ host_ips=$(hostname -I)
 
 # Check if any host IP matches the advertise address
 if [[ $host_ips =~ $advertise_address ]]; then
-  echo "\nHost IP $advertise_address is used as advertise address.\n"
+  echo -e "\n[ OK ] Host IP $advertise_address is used as Kubernetes API advertise address.\n"
 else
-  echo "No match found: Advertise address $advertise_address is not any of the host IPs."
+  echo "\n[ ERROR ] Kubernetes Advertise address $advertise_address is not any of the host IPs.\n"
 fi

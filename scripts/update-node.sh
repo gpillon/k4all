@@ -1,10 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+TMP_SCRIPT_PATH="/tmp/update-node.sh"
+TMP_UPDATED_SCRIPT_PATH="/tmp/updated-update-node.sh"
+
 # Check if the script was launched directly or with bash
-if [[ "$0" != "/tmp/update-node.sh" ]]; then
-    cp "$0" "/tmp/update-node.sh"
-    sudo bash "/tmp/update-node.sh"
+if [[ "$0" != $TMP_SCRIPT_PATH || "$0" != $TMP_UPDATED_SCRIPT_PATH ]]; then
+    cp "$0" $TMP_SCRIPT_PATH
+    sudo bash $TMP_SCRIPT_PATH
     exit 0
 fi
 
