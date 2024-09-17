@@ -119,6 +119,14 @@ get_real_interface() {
   echo $PHYS_NET_DEV
 }
 
+remove_tagged_block() {
+  local file_path="$1"
+  local start_tag="$2"
+  local end_tag="$3"
+  
+  sed -i "/#### ${start_tag} ####/,/#### ${end_tag} ####/d" "$file_path"
+}
+
 
 # Function to get the current IP address
 get_ip() {

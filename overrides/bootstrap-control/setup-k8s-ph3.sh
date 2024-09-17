@@ -159,4 +159,34 @@ if jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "kubevip"; then
   setup_for_kubevip
 fi
 
+# Check if the block already exists and delete it
+if ! grep -q "#### K4ALL ADVERTISE CHECK ####" /root/.bash_profile; then
+
+  printf '\n
+#### K4ALL ADVERTISE CHECK ####
+#### pls, DO NOT REMOVE "K4ALL HELPER" tags, or you could mess up updates :) ###
+sh /usr/local/bin/check_advertise_address.sh
+#### END K4ALL ADVERTISE CHECK ####
+' >> /root/.bash_profile
+fi
+
+# Append new block
+printf '\n
+#### K4ALL HELPER ####
+#### pls, DO NOT REMOVE "K4ALL HELPER" tags, or you could mess up updates :) ###
+
+HOST_IP=$(hostname -I | awk '"'"'{print $1}'"'"')
+echo ""
+echo "Welcome! Connect to the dashboard using those addresses: "
+if [ -f /etc/login_data ]; then
+    cat /etc/login_data
+fi
+echo " - Nodeport Fallback Route: https://$HOST_IP:32323"
+echo ""
+echo "Using this token"
+echo "$(kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath={".data.token"} | base64 -d)"
+echo ""
+#### END K4ALL HELPER ####
+' >> /root/.bash_profile
+
 touch /opt/k4all/setup-ph3.done
