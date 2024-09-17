@@ -50,6 +50,16 @@ NET_DEV=$(get_network_device)
 PHYS_NET_DEV=$(get_real_interface)
 
 CURRENT_IP_CONFIG=$(jq -r '.networking.iface.ipconfig' "$K4ALL_CONFIG_FILE")
+MAC_ADDR=$(ip link show "${PHYS_NET_DEV}" | awk '/ether/ {print $2}')
+
+enable_service_if_not_running openvswitch
+
+# Add ovs-bridge, ovs-bridge-port, ovs-bridge-int, ovs-port-eth, and ovs-port-eth-int if not exists
+add_nmcli_connection_if_not_exists ovs-bridge type ovs-bridge conn.interface ovs-bridge con-name ovs-bridge
+add_nmcli_connection_if_not_exists ovs-bridge-port type ovs-port conn.interface port-ovs-bridge master ovs-bridge con-name ovs-bridge-port
+add_nmcli_connection_if_not_exists ovs-bridge-int type ovs-interface slave-type ovs-port conn.interface ovs-bridge master ovs-bridge-port con-name ovs-bridge-int
+add_nmcli_connection_if_not_exists ovs-port-eth type ovs-port conn.interface ovs-port-eth master ovs-bridge con-name ovs-port-eth
+add_nmcli_connection_if_not_exists ovs-port-eth-int type ethernet conn.interface "${PHYS_NET_DEV}" master ovs-port-eth con-name ovs-port-eth-int
 
 if [ "$CURRENT_IP_CONFIG" = "static" ]; then
   # Extract values from JSON
@@ -68,44 +78,36 @@ if [ "$CURRENT_IP_CONFIG" = "static" ]; then
   echo "Subnet Mask: $SUBNET_MASK"
   echo "Search Domains: $DNS_SEARCH"
   echo "IP with CIDR: $IP_CIDR"
+
+  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.method manual
+  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.addresses "${IP_CIDR}"
+  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.gateway "${GATEWAY}"
+  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns "${DNS}"
+  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns-search "${DNS_SEARCH}"
+
 else 
-  echo "WARNING! this should not happen...."
+  # echo "WARNING! this should not happen...."
   # Retrieve IP, Gateway, DNS, and Domain information from the original network device
-  IP_CIDR=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}" | head -n 1 | cut -d'|' -f1)
-  GATEWAY=$(nmcli -g IP4.GATEWAY dev show "${NET_DEV}")
-  DNS=$(nmcli -t -f IP4.DNS dev show "${NET_DEV}" | awk -F":" '{print $2}' | paste -sd "," -)
-  DNS_SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
+  # IP_CIDR=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}" | head -n 1 | cut -d'|' -f1)
+  # GATEWAY=$(nmcli -g IP4.GATEWAY dev show "${NET_DEV}")
+  # DNS=$(nmcli -t -f IP4.DNS dev show "${NET_DEV}" | awk -F":" '{print $2}' | paste -sd "," -)
+  # DNS_SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
+
+  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.method auto
 fi
 
-MAC_ADDR=$(ip link show "${PHYS_NET_DEV}" | awk '/ether/ {print $2}')
+# Bring up the ovs-port-eth-int and ovs-bridge-int connections
+nmcli con up ovs-port-eth-int
+nmcli con up ovs-bridge-int
 
 # Enable and start kubelet, crio, and openvswitch services
 enable_service_if_not_running crio
 enable_service_if_not_running kubelet
-enable_service_if_not_running openvswitch
 
 # Check if networking.firewalld.enabled is true in $K4ALL_CONFIG_FILE
 if jq -e '.networking.firewalld.enabled == "true"' "$K4ALL_CONFIG_FILE" >/dev/null; then
   enable_service_if_not_running firewalld
 fi
-
-# Add ovs-bridge, ovs-bridge-port, ovs-bridge-int, ovs-port-eth, and ovs-port-eth-int if not exists
-add_nmcli_connection_if_not_exists ovs-bridge type ovs-bridge conn.interface ovs-bridge con-name ovs-bridge
-add_nmcli_connection_if_not_exists ovs-bridge-port type ovs-port conn.interface port-ovs-bridge master ovs-bridge con-name ovs-bridge-port
-add_nmcli_connection_if_not_exists ovs-bridge-int type ovs-interface slave-type ovs-port conn.interface ovs-bridge master ovs-bridge-port con-name ovs-bridge-int
-add_nmcli_connection_if_not_exists ovs-port-eth type ovs-port conn.interface ovs-port-eth master ovs-bridge con-name ovs-port-eth
-add_nmcli_connection_if_not_exists ovs-port-eth-int type ethernet conn.interface "${PHYS_NET_DEV}" master ovs-port-eth con-name ovs-port-eth-int
-
-# Modify ovs-bridge and ovs-bridge-int settings only if needed
-modify_nmcli_connection_if_needed ovs-bridge 802-3-ethernet.cloned-mac-address "${MAC_ADDR}"
-modify_nmcli_connection_if_needed ovs-bridge-int ipv4.addresses "${IP_CIDR}"
-modify_nmcli_connection_if_needed ovs-bridge-int ipv4.gateway "${GATEWAY}"
-modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns "${DNS}"
-modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns-search "${DNS_SEARCH}"
-
-# Bring up the ovs-port-eth-int and ovs-bridge-int connections
-nmcli con up ovs-port-eth-int
-nmcli con up ovs-bridge-int
 
 # Remove the old NetworkManager connection if it exists
 if [ -f "/etc/NetworkManager/system-connections/${NET_DEV}.nmconnection" ]; then
