@@ -36,3 +36,7 @@ storage:
       mode: 0755
       contents:
         local: overrides/bootstrap-control/generate_join.sh
+    - path: "/usr/local/bin/check-advertise-address.sh"
+      mode: 0755
+      contents:
+        local: overrides/bootstrap-control/check-advertise-address.sh

@@ -28,13 +28,28 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
+    - name: fck8s-set-static-ip.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set Static Ip Address
+        Requires=network-online.target
+        After=network-online.target
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/set-static-ip.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
     - name: fck8s-set-hostname.service
       enabled: true
       contents: |
         [Unit]
         Description=Set Hostname
-        Requires=network-online.target
-        After=network-online.target
+        Requires=fck8s-set-static-ip.service
+        After=fck8s-set-static-ip.service 
         
         [Service]
         Type=oneshot

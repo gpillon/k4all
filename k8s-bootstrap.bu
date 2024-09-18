@@ -297,6 +297,10 @@ storage:
       mode: 0755
       contents:
         local: overrides/bootstrap/enable-cluster.sh
+    - path: "/usr/local/bin/check-advertise-address.sh"
+      mode: 0755
+      contents:
+        local: overrides/bootstrap-control/check-advertise-address.sh
     - path: "/usr/local/bin/control-plane-utils"
       mode: 0755
       contents:

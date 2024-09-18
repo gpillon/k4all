@@ -8,6 +8,7 @@ if [ -f "/opt/k4all/setup-dashboard.done" ]; then
 fi
 
 HOME=/root/
+source /usr/local/bin/k4all-utils
 
 # Add kubernetes-dashboard repository
 helm --kubeconfig=/etc/kubernetes/admin.conf repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
@@ -17,15 +18,10 @@ helm --kubeconfig=/etc/kubernetes/admin.conf upgrade --install kubernetes-dashbo
 kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /usr/local/share/dashboard-users.yaml
 kubectl --kubeconfig=/etc/kubernetes/admin.conf patch service kubernetes-dashboard-kong-proxy -n kubernetes-dashboard --type='json' -p='[{"op":"replace","path":"/spec/type","value":"NodePort"},{"op":"add","path":"/spec/ports/0/nodePort","value":32323}]'
 
-# Function to delete existing block in .bash_profile
-remove_existing_dashboard_block() {
-  sed -i '/#### K4ALL HELPER ####/,/#### END K4ALL HELPER ####/d' /root/.bash_profile
-}
-
 # Check if the block already exists and delete it
 if grep -q "#### K4ALL HELPER ####" /root/.bash_profile; then
   echo "Existing dashboard block found. Deleting it."
-  remove_existing_dashboard_block
+  remove_tagged_block "/root/.bash_profile" "K4ALL HELPER" "END K4ALL HELPER"
 fi
 
 # Append new block

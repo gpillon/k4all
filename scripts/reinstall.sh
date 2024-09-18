@@ -8,9 +8,11 @@ show_help() {
   echo "This script resets the Kubernetes setup by removing specific done files and rebooting the system."
   echo
   echo "Options:"
-  echo "  --network       Delete the /opt/k4all/setup-ph2.done file (related to network configuration)."
-  echo "  --kubernetes    Delete the /opt/k4all/k8s-setup-init.done file (related to Kubernetes initialization)."
-  echo "  --hostname      Delete the /opt/k4all/setup-hostname.done file (related to Hostname)."
+  echo "  --network       Delete the files related to network configuration."
+  echo "  --kubernetes    Delete the files related to Kubernetes initialization."
+  echo "  --hostname      Delete the files related to Hostname."
+  echo "  --no-base       Skip Base Reinstallation."  
+  echo "  --yes           Dont ask confirmation."
   echo "  --help          Show this help message and exit."
   echo
   echo "WARNING: Reinstalling the cluster could be dangerous if several modifications have been made."
@@ -46,6 +48,7 @@ network_flag=false
 kubernetes_flag=false
 hostname_flag=false
 yes_flag=false
+base=true
 
 # Parse command-line options
 for arg in "$@"; do
@@ -66,6 +69,10 @@ for arg in "$@"; do
       hostname_flag=true
       shift
       ;;
+    --no-base)
+      base=false
+      shift
+      ;;
     --help)
       show_help
       exit 0
@@ -82,11 +89,13 @@ done
 ask_for_confirmation
 
 # Delete all other *.done files except the ones specifically handled by flags
-for file in /opt/k4all/*.done; do
-  if [[ "$file" != "/opt/k4all/setup-ph3.done"  && "$file" != "/opt/k4all/setup-ph2.done" && "$file" != "/opt/k4all/k8s-setup-init.done"  && "$file" != "/opt/k4all/setup-hostname.done" && "$file" != "/opt/k4all/setup-ph3-reset-kube.done" ]]; then
-    delete_file "$file"
-  fi
-done
+if [ "$base" = true ]; then
+  for file in /opt/k4all/*.done; do
+    if [[ "$file" != "/opt/k4all/setup-ph3.done"  && "$file" != "/opt/k4all/setup-ph2.done" && "$file" != "/opt/k4all/k8s-setup-init.done"  && "$file" != "/opt/k4all/setup-hostname.done" && "$file" != "/opt/k4all/setup-ph3-reset-kube.done" ]]; then
+      delete_file "$file"
+    fi
+  done
+fi
 
 # Delete specific files based on flags
 if [ "$network_flag" = true ]; then

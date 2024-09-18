@@ -84,6 +84,50 @@ function get_network_device() {
     echo $net_dev
 }
 
+# Function to get the first available physical network interface
+get_first_physical_interface() {
+  ip link show | awk '/^[0-9]+: [^lo]/ {print $2}' | grep -v 'ovs-bridge' | sed 's/://g' | head -n 1
+}
+
+# Function to get the physical interface from the Open vSwitch bridge
+get_physical_interface_for_ovs_port() {
+  local ovs_port=$1
+  ovs-vsctl list interface "$ovs_port" 2>/dev/null | grep 'type.*system' >/dev/null && echo "$ovs_port" || echo ""
+}
+
+# Function to find the original physical interface used in the bridge
+get_original_physical_interface() {
+  for port in $(ovs-vsctl list-ports ovs-bridge); do
+    local physical_interface=$(get_physical_interface_for_ovs_port "$port")
+    if [ -n "$physical_interface" ]; then
+      echo "$physical_interface"
+      return
+    fi
+  done
+  # If no physical interface is found, return the first physical interface available
+  get_first_physical_interface
+}
+
+get_real_interface() {
+  local NET_DEV=$(get_network_device)
+
+  if [ "$NET_DEV" == "ovs-bridge" ]; then
+    local PHYS_NET_DEV=$(get_original_physical_interface)
+  else
+    local PHYS_NET_DEV=$NET_DEV
+  fi
+  echo $PHYS_NET_DEV
+}
+
+remove_tagged_block() {
+  local file_path="$1"
+  local start_tag="$2"
+  local end_tag="$3"
+  
+  sed -i "/#### ${start_tag} ####/,/#### ${end_tag} ####/d" "$file_path"
+}
+
+
 # Function to get the current IP address
 get_ip() {
     if jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "keepalived"; then
@@ -140,4 +184,36 @@ get_ingress_urls() {
   kubectl get ingress "$ingress_name" -n "$namespace" -o jsonpath='{range .spec.rules[*]}{.host}{"\n"}{end}' | while read host; do
     kubectl get ingress "$ingress_name" -n "$namespace" -o jsonpath="{range .spec.rules[?(@.host=='$host')].http.paths[*]}https://$host{.path}{'\n'}{end}"
   done
+}
+
+cidr_to_mask() {
+  local cidr=$1
+  local mask=""
+  local full_octets=$((cidr / 8))
+  local partial_octet=$((cidr % 8))
+
+  for ((i=0; i<4; i++)); do
+    if [ $i -lt $full_octets ]; then
+      mask+=255
+    elif [ $i -eq $full_octets ]; then
+      mask+=$((256 - 2**(8-partial_octet)))
+    else
+      mask+=0
+    fi
+    if [ $i -lt 3 ]; then
+      mask+='.'
+    fi
+  done
+
+  echo $mask
+}
+
+# Function to convert subnet mask to CIDR notation
+mask_to_cidr() {
+  c=0 x=0$( printf '%o' ${1//./ } )
+  while [ $x -gt 0 ]; do
+      let c+=$((x%2)) 'x>>=1'
+  done
+
+  echo $c ; 
 }
