@@ -5,13 +5,11 @@ TMP_SCRIPT_PATH="/tmp/update-node.sh"
 TMP_UPDATED_SCRIPT_PATH="/tmp/updated-update-node.sh"
 
 # Check if the script was launched directly or with bash
-if [[ "$0" != $TMP_SCRIPT_PATH || "$0" != $TMP_UPDATED_SCRIPT_PATH ]]; then
+if [[ "$0" != $TMP_SCRIPT_PATH && "$0" != $TMP_UPDATED_SCRIPT_PATH ]]; then
     cp "$0" $TMP_SCRIPT_PATH
     sudo bash $TMP_SCRIPT_PATH
     exit 0
 fi
-
-NODE_TYPE=$(cat /etc/node-type)
 
 IMAGE_TAG=${1:-latest}
 CONTAINER_IMAGE="ghcr.io/gpillon/k4all:$IMAGE_TAG"
@@ -21,6 +19,34 @@ UPDATE_TMP_DIR_K4ALL=$UPDATE_TMP_DIR/k4all
 UPDATE_TMP_DIR_K4ALL_SRC=$UPDATE_TMP_DIR_K4ALL/src
 DEST_FOLDER="$UPDATE_TMP_DIR/extracted_services"
 CONTAINER_NAME="update-container"
+
+function set_or_get_node_type() {
+    local node_type_file="/etc/node-type"
+    local node_types=("worker" "bootstrap" "control-plane")
+
+    
+    # Check if the node-type file exists
+    if [ ! -f "$node_type_file" ]; then
+        echo "$node_type_file not found. Please select the node type from the following options:"
+        
+        # Prompt the user to select a valid option
+        select NODE_TYPE in "${node_types[@]}"; do
+            if [[ " ${node_types[@]} " =~ " ${NODE_TYPE} " ]]; then
+                echo "You selected: $NODE_TYPE"
+                # Write the selected value to the file
+                echo "$NODE_TYPE" > "$node_type_file"
+                break
+            else
+                echo "Invalid option \" \", please try again."
+            fi
+        done
+    else
+        # If file exists, read and return the value
+        NODE_TYPE=$(cat "$node_type_file")
+        echo "NODE_TYPE is set to: $NODE_TYPE"
+    fi
+}
+
 
 version_le() {
     # Return 0 (true) if $1 < $2, else return 1 (false)
@@ -86,9 +112,9 @@ check_repos() {
     for repo_file in "$REPO_SRC"/*; do
         base_repo_file=$(basename "$repo_file")
         if [ -f "$HOST_REPO_FOLDER/$base_repo_file" ]; then
-            if ! diff "$repo_file" "$HOST_REPO_FOLDER/$base_repo_file" > /dev/null; then
+            if ! diff -Z "$repo_file" "$HOST_REPO_FOLDER/$base_repo_file" > /dev/null; then
                 echo "Differences found in $base_repo_file. Exiting script. You probably need to update the cluster to a newer version. Use the --force flag if you want to update anyway."
-                diff "$repo_file" "$HOST_REPO_FOLDER/$base_repo_file"
+                diff -Z "$repo_file" "$HOST_REPO_FOLDER/$base_repo_file"
                 exit 1
             else
                 echo "No differences found in $base_repo_file."
@@ -114,6 +140,7 @@ extract_services() {
         # Create a file with the service name and insert content
         echo "$service_contents" > "${dest_folder}/${service_name}"
     done
+    #echo "Services extracted and saved in folder $DEST_FOLDER"
 }
 
 # Function to extract services and copy files defined in .storage.trees
@@ -193,6 +220,8 @@ cleanup() {
     echo "Cleaning up..."
     podman rm $CONTAINER_NAME 2>/dev/null || true
     podman rmi $CONTAINER_IMAGE 2>/dev/null || true
+
+    rm -rf "$TMP_SCRIPT_PATH" "$TMP_UPDATED_SCRIPT_PATH" "$UPDATE_TMP_DIR"
 }
 
 update_config() {
@@ -225,6 +254,11 @@ update_config() {
     local current_version=$(jq -r '.version // "0.0.0"' "$stripped_current_config_file")
     local default_version=$(jq -r '.version' "$stripped_default_config_file")
 
+    # System Migrations
+    if version_le "$current_version" "1.4.0"; then
+        rm -rf /var/lib/*.done
+    fi
+
     # Compare versions
     if version_le "$current_version" "$default_version"; then
         echo "Current version ($current_version) is less than or equal to default version ($default_version)."
@@ -251,12 +285,43 @@ update_config() {
 
         echo "Updated /etc/k4all-config.json with new version $default_version."
     else
-        echo "Current version ($current_version) is greater than default version ($default_version). No update needed."
+        echo "Current version ($current_version) is greater or equal than default version ($default_version). No update needed."
     fi
+}
+
+setup_services() {
+    echo "Removing existing services starting with 'fck8s'..."
+    for svc in /etc/systemd/system/fck8s*.service; do
+        if [ -f "$svc" ]; then
+            systemctl stop "$(basename "$svc")" &> /dev/null
+            systemctl disable "$(basename "$svc")" &> /dev/null
+            rm "$svc"
+            echo "Stopped, Disabled and Removed: $svc"
+        fi
+    done
+
+    systemctl daemon-reload
+
+    # Installation of new services
+    echo "Installing new services..."
+    for svc in "$DEST_FOLDER"/*.service; do
+        if [ -f "$svc" ]; then
+            cp -fp "$svc" /etc/systemd/system/
+            systemctl enable "$(basename "$svc")"
+            # Uncomment the following if you want to start the services immediately
+            # if ! systemctl start "$(basename "$svc")"; then
+            #     echo "Error starting $(basename "$svc"), will retry later"
+            # else
+            #     echo "Installed and started: $(basename "$svc")"
+            # fi
+        fi
+    done
 }
 
 # Trap to perform cleanup at the end of the script
 trap cleanup EXIT
+
+set_or_get_node_type
 
 # Create folder to save services
 mkdir -p "$UPDATE_TMP_DIR"
@@ -296,35 +361,11 @@ chmod +x /usr/local/bin/*
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu" "$DEST_FOLDER"
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu" "$DEST_FOLDER"
 
-#echo "Services extracted and saved in folder $DEST_FOLDER"
-
 # Removal of services starting with 'fck8s'
-echo "Removing existing services starting with 'fck8s'..."
-for svc in /etc/systemd/system/fck8s*.service; do
-    if [ -f "$svc" ]; then
-        systemctl stop "$(basename "$svc")" &> /dev/null
-        systemctl disable "$(basename "$svc")" &> /dev/null
-        rm "$svc"
-        echo "Stopped, Disabled and Removed: $svc"
-    fi
-done
+setup_services
 
-systemctl daemon-reload
-
-# Installation of new services
-echo "Installing new services..."
-for svc in "$DEST_FOLDER"/*.service; do
-    if [ -f "$svc" ]; then
-        cp -fp "$svc" /etc/systemd/system/
-        systemctl enable "$(basename "$svc")"
-        # Uncomment the following if you want to start the services immediately
-        # if ! systemctl start "$(basename "$svc")"; then
-        #     echo "Error starting $(basename "$svc"), will retry later"
-        # else
-        #     echo "Installed and started: $(basename "$svc")"
-        # fi
-    fi
-done
+#cleanup updated Data
+cleanup
 
 # Uncomment if you have a reinstall script to run
 /usr/local/bin/reinstall.sh --yes
