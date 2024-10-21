@@ -18,10 +18,11 @@ retry_command "kubectl apply -f https://github.com/kubevirt/kubevirt/releases/do
 kubectl -n kubevirt patch kubevirt kubevirt --type=merge --patch '{"spec":{"infra":{"replicas": 1 }}}'
 kubectl -n kubevirt wait kubevirt kubevirt --for condition=Available --timeout=3600s
 
+set_cli_arch
 # Install virtctl
-retry_command "curl -L https://github.com/kubevirt/kubevirt/releases/download/${RELEASE}/virtctl-${RELEASE}-linux-amd64 -o /usr/local/bin/virtctl-${RELEASE}-linux-amd64" 10 30
-chmod +x /usr/local/bin/virtctl-${RELEASE}-linux-amd64
-ln -sf /usr/local/bin/virtctl-${RELEASE}-linux-amd64 /usr/local/bin/virtctl
+retry_command "curl -L https://github.com/kubevirt/kubevirt/releases/download/${RELEASE}/virtctl-${RELEASE}-linux-${CLI_ARCH} -o /usr/local/bin/virtctl-${RELEASE}-linux-${CLI_ARCH}" 10 30
+chmod +x /usr/local/bin/virtctl-${RELEASE}-linux-${CLI_ARCH}
+ln -sf /usr/local/bin/virtctl-${RELEASE}-linux-${CLI_ARCH} /usr/local/bin/virtctl
 chmod +x /usr/local/bin/virtctl
 
 virtctl completion bash > /etc/bash_completion.d/virtctl_bash_completion

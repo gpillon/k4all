@@ -14,7 +14,7 @@ source /usr/local/bin/k4all-utils
 
 # Install cilium CLI
 retry_command "CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)" 10 30
-CLI_ARCH=amd64
+set_cli_arch
 if [ "$(uname -m)" = "aarch64" ]; then CLI_ARCH=arm64; fi
 retry_command "curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}" 10 30
 sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
