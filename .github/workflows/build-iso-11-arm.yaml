@@ -11,8 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ROLES: "bootstrap control worker"  # Defining roles as a space-separated string
-      COREOS_URL: "https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/40.20240701.3.0/x86_64/fedora-coreos-40.20240701.3.0-live.x86_64.iso"
-      ARCH: "x86_64"
+      ARCH: "aarch64"
 
     steps:
       - name: Check out the repository

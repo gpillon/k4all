@@ -23,7 +23,7 @@ host_ips=$(hostname -I)
 
 # Check if any host IP matches the advertise address
 if [[ $host_ips =~ $advertise_address ]]; then
-  echo -e "\n[ OK ] Host IP $advertise_address is used as Kubernetes API advertise address.\n"
+ printf "\n[ OK ] Host IP $advertise_address is used as Kubernetes API advertise address.\n"
 else
-  echo "\n[ ERROR ] Kubernetes Advertise address $advertise_address is not any of the host IPs.\n"
+  printf "\n[ ERROR ] Kubernetes Advertise address $advertise_address is not any of the host IPs.\n"
 fi

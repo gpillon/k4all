@@ -20,7 +20,8 @@ fi
 
 helm upgrade --kubeconfig=/etc/kubernetes/admin.conf --install ingress-nginx ingress-nginx \
   --repo https://kubernetes.github.io/ingress-nginx \
-  --namespace ingress-nginx --create-namespace -f /usr/local/share/ingress-values.yaml --set controller.hostPort.enabled=false \
+  --namespace ingress-nginx --create-namespace -f /usr/local/share/ingress-values.yaml --timeout 15m \
+  --set controller.hostPort.enabled=false \
   --set controller.service.type=LoadBalancer \
   --set controller.service.externalIPs[0]=$(get_cluster_ip) \
   --set controller.service.loadBalancerIP=$(get_cluster_ip) \
