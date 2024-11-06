@@ -56,6 +56,12 @@ First version you want to install is the boostrap image: i'ts a single node, wit
 5. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 2013's Hardware).
 6. Follow next steps
 
+### Using prebuilt images
+1. Mount image on your favourite virtualization software
+2. Start the VM
+3. If you want to customize the installation, just press 1 or 2 doring installation to modify the JSON. Discovered disk and ethernet cards will be shown in the config. 
+4. Follow next steps
+
 ## Post-Install
 - **Access Dashboard and Token**:
   - `ssh` in your newly installed machine with `ssh core@<MACHINE IP>` (default password: core)
