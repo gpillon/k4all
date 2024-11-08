@@ -62,6 +62,10 @@ To create a bootable USB device with the `k4all` ISO:
 3. If you want to customize the installation, just press 1 or 2 doring installation to modify the JSON. Discovered disk and ethernet cards will be shown in the config. 
 4. Follow next steps
 
+While Waiting you could listen a nice kubernetes song:
+
+[![NCS - Kubernetes - Virtual Realms](https://img.youtube.com/vi/UMqWNKWYwd8/0.jpg)](https://www.youtube.com/watch?v=UMqWNKWYwd8)
+
 ## Post-Install
 - **Access Dashboard and Token**:
   - `ssh` in your newly installed machine with `ssh core@<MACHINE IP>` (default password: core)
