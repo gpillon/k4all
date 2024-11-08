@@ -44,7 +44,7 @@ To create a bootable USB device with the `k4all` ISO:
    - Select the `k4all` ISO, choose your USB device, and click `Start`.
 
 ## Installation
-First version you want to install is the boostrap image: i'ts a single node, with schedulable master. Later, you can add other control nodes or worker nodes. 
+**First version you want to install is the boostrap image**: i'ts a single node, with schedulable master. Later, you can add other control nodes or worker nodes. 
 
 ### Using the ISO
 
