@@ -113,3 +113,4 @@ Let's take a look to [Openshift Single Node](https://docs.openshift.com/containe
 
 ## References
  - [kubevirt-manager.io](https://kubevirt-manager.io/)
+ - [kube-vip](https://kube-vip.io)
