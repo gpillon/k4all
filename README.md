@@ -97,7 +97,7 @@ Next features:
 - [ ] Applications catalog
 - [ ] Argocd Based installation ([?](https://github.com/gpillon/k4all/issues/12))
 - [ ] Multi node (WIP)
-- [ ] ARM platform
+- [x] ARM platform (Under Test, ATM the test container in manifest "example pod" is not working... need to change image)
 
 ## Further Information
 
