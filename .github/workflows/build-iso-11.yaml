@@ -27,7 +27,7 @@ env:
   K4ALL_VERSION: testing
   ARCH: x86_64
   VARIANT: CoreOS
-  ISO_NAME: k4all-${{ github.ref_name }}-${{ env.K4ALL_VERSION }}.iso
+  ISO_NAME: k4all-${{ github.ref_name }}-testing.iso
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name || github.run_id }}
