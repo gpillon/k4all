@@ -70,7 +70,7 @@ jobs:
 
   build-iso:
     name: Build Bootable ISO
-    needs: build-and-push-image
+    # needs: build-and-push-image
     runs-on: ubuntu-latest
     permissions:
       contents: read
