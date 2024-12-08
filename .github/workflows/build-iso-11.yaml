@@ -105,8 +105,6 @@ jobs:
       
       - name: Configure Loop Devices
         run: |
-          sudo modprobe loop
-          sudo lsmod | grep loop
           sudo tree output/
       - name: Convert Raw to ISO
         run: |
