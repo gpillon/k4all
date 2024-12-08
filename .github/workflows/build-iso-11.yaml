@@ -86,13 +86,16 @@ jobs:
 
       - name: Download Boot Files
         run: |
-          wget -O bootfiles/isolinux.bin https://raw.githubusercontent.com/Tomas-M/linux-live/master/bootfiles/isolinux.bin
-          wget -O bootfiles/vesamenu.c32 https://raw.githubusercontent.com/Tomas-M/linux-live/master/bootfiles/vesamenu.c32
-          wget -O bootfiles/chain.c32 https://raw.githubusercontent.com/Tomas-M/linux-live/master/bootfiles/chain.c32
-          wget -O bootfiles/libcom32.c32 https://raw.githubusercontent.com/Tomas-M/linux-live/master/bootfiles/libcom32.c32
-          wget -O bootfiles/libutil.c32 https://raw.githubusercontent.com/Tomas-M/linux-live/master/bootfiles/libutil.c32
-          wget -O bootfiles/ldlinux.c32 https://raw.githubusercontent.com/Tomas-M/linux-live/master/bootfiles/ldlinux.c32
-          wget -O bootfiles/isohdpfx.bin https://raw.githubusercontent.com/Tomas-M/linux-live/master/bootfiles/isohdpfx.bin
+          # Base URL for raw files
+          BASE_URL="https://raw.githubusercontent.com/Tomas-M/linux-live/e51c6b7/bootfiles"
+          
+          # Download required files
+          wget -O bootfiles/isolinux.bin "$BASE_URL/isolinux.bin"
+          wget -O bootfiles/vesamenu.c32 "$BASE_URL/vesamenu.c32"
+          wget -O bootfiles/ldlinux.c32 "$BASE_URL/ldlinux.c32"
+          wget -O bootfiles/libcom32.c32 "$BASE_URL/libcom32.c32"
+          wget -O bootfiles/libutil.c32 "$BASE_URL/libutil.c32"
+          wget -O bootfiles/mbr.bin "$BASE_URL/mbr.bin"
 
       - name: Install required packages
         run: |
@@ -114,93 +117,90 @@ jobs:
             --rootfs xfs \
             --local ghcr.io/gpillon/k4all-image
 
-      - name: Configure Loop Devices
+      - name: Move RAW Image
         run: |
-          sudo tree output/
           sudo mv output/image/disk.raw output/${{ env.RAW_NAME }}
           sudo chown 1000:1000 output/${{ env.RAW_NAME }}
           
-          - name: Convert Raw to ISO
-          run: |
-            # Set up loop device and get device name
-            LOOP_DEV=$(sudo losetup --show -f output/${{ env.RAW_NAME }})
-            echo "Using loop device: $LOOP_DEV"
-            
-            # Set up partition mapping
-            sudo kpartx -av $LOOP_DEV
-            
-            # Create temporary mount points
-            sudo mkdir -p /mnt/raw /mnt/boot /mnt/efi
-            
-            # Find the root and boot partitions
-            ROOT_PART=$(echo $LOOP_DEV | sed 's/\/dev\//\/dev\/mapper\//')
-            ROOT_PART="${ROOT_PART}p4"  # root is partition 4
-            BOOT_PART="${ROOT_PART%p4}p3"  # boot is partition 3
-            
-            # Mount partitions
-            sudo mount $ROOT_PART /mnt/raw
-            sudo mount $BOOT_PART /mnt/boot
-            
-            # Create ISO directory structure
-            mkdir -p isofs/{isolinux,EFI/BOOT}
-            
-            # Copy boot files from OSTree directory with exact filenames
-            sudo cp "/mnt/boot/ostree/default-717f957fb4680546cce36bc1c5e633abdbf5e4ecb6e99e5665df3c00a56088fa/vmlinuz-6.11.6-300.fc41.x86_64" isofs/isolinux/vmlinuz
-            sudo cp "/mnt/boot/ostree/default-717f957fb4680546cce36bc1c5e633abdbf5e4ecb6e99e5665df3c00a56088fa/initramfs-6.11.6-300.fc41.x86_64.img" isofs/isolinux/initrd
-            
-            # Copy boot files from linux-live
-            cp bootfiles/isolinux.bin isofs/isolinux/
-            cp bootfiles/vesamenu.c32 isofs/isolinux/
-            cp bootfiles/chain.c32 isofs/isolinux/
-            cp bootfiles/libcom32.c32 isofs/isolinux/
-            cp bootfiles/libutil.c32 isofs/isolinux/
-            cp bootfiles/ldlinux.c32 isofs/isolinux/
-            
-            # Create isolinux configuration
-            cat > isofs/isolinux/isolinux.cfg << EOF
-            UI vesamenu.c32
-            
-            MENU TITLE Boot Menu
-            MENU BACKGROUND /isolinux/back.png
-            MENU COLOR border       30;44   #40ffffff #a0000000 std
-            MENU COLOR title        1;36;44 #9033ccff #a0000000 std
-            MENU COLOR sel          7;37;40 #e0ffffff #20ffffff all
-            MENU COLOR unsel        37;44   #50ffffff #a0000000 std
-            MENU COLOR help         37;40   #c0ffffff #a0000000 std
-            MENU COLOR timeout_msg  37;40   #80ffffff #00000000 std
-            MENU COLOR timeout      1;37;40 #c0ffffff #00000000 std
-            MENU COLOR msg07        37;40   #90ffffff #a0000000 std
-            MENU COLOR tabmsg       31;40   #30ffffff #00000000 std
-            
-            MENU CLEAR
-            MENU IMMEDIATE
-            TIMEOUT 300
-            
-            LABEL linux
-              MENU LABEL Start K4All Linux
-              MENU DEFAULT
-              KERNEL vmlinuz
-              APPEND initrd=initrd root=live:CDLABEL=BOOTC-ISO rd.live.image quiet console=tty0 console=ttyS0,115200n8
-            EOF
-            
-            # Create ISO
-            sudo xorriso -as mkisofs \
-              -iso-level 3 \
-              -full-iso9660-filenames \
-              -volid "BOOTC-ISO" \
-              -eltorito-boot isolinux/isolinux.bin \
-              -eltorito-catalog isolinux/boot.cat \
-              -no-emul-boot -boot-load-size 4 -boot-info-table \
-              -isohybrid-mbr bootfiles/isohdpfx.bin \
-              -output output/${{ env.ISO_NAME }} \
-              isofs
-            
-            # Cleanup
-            sudo umount /mnt/boot
-            sudo umount /mnt/raw
-            sudo kpartx -d $LOOP_DEV
-            sudo losetup -d $LOOP_DEV
-            sudo rm -rf isofs /mnt/{raw,boot,efi}
+      - name: Convert Raw to ISO
+        run: |
+          # Set up loop device and get device name
+          LOOP_DEV=$(sudo losetup --show -f output/${{ env.RAW_NAME }})
+          echo "Using loop device: $LOOP_DEV"
+          
+          # Set up partition mapping
+          sudo kpartx -av $LOOP_DEV
+          
+          # Create temporary mount points
+          sudo mkdir -p /mnt/raw /mnt/boot /mnt/efi
+          
+          # Find the root and boot partitions
+          ROOT_PART=$(echo $LOOP_DEV | sed 's/\/dev\//\/dev\/mapper\//')
+          ROOT_PART="${ROOT_PART}p4"  # root is partition 4
+          BOOT_PART="${ROOT_PART%p4}p3"  # boot is partition 3
+          
+          # Mount partitions
+          sudo mount $ROOT_PART /mnt/raw
+          sudo mount $BOOT_PART /mnt/boot
+          
+          # Create ISO directory structure
+          mkdir -p isofs/{isolinux,EFI/BOOT}
+          
+          # Copy boot files from OSTree directory with exact filenames
+          sudo cp "/mnt/boot/ostree/default-717f957fb4680546cce36bc1c5e633abdbf5e4ecb6e99e5665df3c00a56088fa/vmlinuz-6.11.6-300.fc41.x86_64" isofs/isolinux/vmlinuz
+          sudo cp "/mnt/boot/ostree/default-717f957fb4680546cce36bc1c5e633abdbf5e4ecb6e99e5665df3c00a56088fa/initramfs-6.11.6-300.fc41.x86_64.img" isofs/isolinux/initrd
+          
+          # Copy boot files from linux-live
+          cp bootfiles/isolinux.bin isofs/isolinux/
+          cp bootfiles/vesamenu.c32 isofs/isolinux/
+          cp bootfiles/ldlinux.c32 isofs/isolinux/
+          cp bootfiles/libcom32.c32 isofs/isolinux/
+          cp bootfiles/libutil.c32 isofs/isolinux/
+          
+          # Create isolinux configuration
+          cat > isofs/isolinux/isolinux.cfg << EOF
+          UI vesamenu.c32
+          
+          MENU TITLE Boot Menu
+          MENU COLOR border       30;44   #40ffffff #a0000000 std
+          MENU COLOR title        1;36;44 #9033ccff #a0000000 std
+          MENU COLOR sel          7;37;40 #e0ffffff #20ffffff all
+          MENU COLOR unsel        37;44   #50ffffff #a0000000 std
+          MENU COLOR help         37;40   #c0ffffff #a0000000 std
+          MENU COLOR timeout_msg  37;40   #80ffffff #00000000 std
+          MENU COLOR timeout      1;37;40 #c0ffffff #00000000 std
+          MENU COLOR msg07        37;40   #90ffffff #a0000000 std
+          MENU COLOR tabmsg       31;40   #30ffffff #00000000 std
+          
+          MENU CLEAR
+          MENU IMMEDIATE
+          TIMEOUT 300
+          
+          LABEL linux
+            MENU LABEL Start K4All Linux
+            MENU DEFAULT
+            KERNEL vmlinuz
+            APPEND initrd=initrd root=live:CDLABEL=BOOTC-ISO rd.live.image quiet console=tty0 console=ttyS0,115200n8
+          EOF
+          
+          # Create ISO
+          sudo xorriso -as mkisofs \
+            -iso-level 3 \
+            -full-iso9660-filenames \
+            -volid "BOOTC-ISO" \
+            -eltorito-boot isolinux/isolinux.bin \
+            -eltorito-catalog isolinux/boot.cat \
+            -no-emul-boot -boot-load-size 4 -boot-info-table \
+            -isohybrid-mbr bootfiles/mbr.bin \
+            -output output/${{ env.ISO_NAME }} \
+            isofs
+          
+          # Cleanup
+          sudo umount /mnt/boot
+          sudo umount /mnt/raw
+          sudo kpartx -d $LOOP_DEV
+          sudo losetup -d $LOOP_DEV
+          sudo rm -rf isofs /mnt/{raw,boot,efi}
 
       - name: Upload ISO to Job Artifacts
         uses: actions/upload-artifact@v4
