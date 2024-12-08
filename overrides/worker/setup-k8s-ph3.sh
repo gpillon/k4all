@@ -10,3 +10,5 @@ fi
 # nothing to do ATM on workers
 
 touch /opt/k4all/setup-ph3.done
+
+systemctl reboot

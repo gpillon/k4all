@@ -86,7 +86,6 @@ if [ "$CURRENT_IP_CONFIG" = "static" ]; then
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.gateway "${GATEWAY}"
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns "${DNS}"
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns-search "${DNS_SEARCH}"
-  modify_nmcli_connection_if_needed ovs-bridge-int ethernet.mac-address "${MAC_ADDR}"
   
 else
   # echo "WARNING! this should not happen...."
@@ -98,6 +97,9 @@ else
 
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.method auto
 fi
+
+ modify_nmcli_connection_if_needed ovs-bridge-int ethernet.cloned-mac-address "${MAC_ADDR}"
+ # modify_nmcli_connection_if_needed ovs-port-eth-int ethernet.cloned-mac-address "${MAC_ADDR}"
 
 # Bring up the ovs-port-eth-int and ovs-bridge-int connections
 nmcli con up ovs-port-eth-int
@@ -186,6 +188,8 @@ if systemctl is-enabled --quiet firewalld; then
 
   firewall-cmd --reload
 fi
+
+systemctl restart NetworkManager
 
 # Mark the setup phase as done
 touch /opt/k4all/setup-ph2.done
