@@ -94,7 +94,7 @@ jobs:
           
       - name: Build Raw Image
         run: |
-          podman run \
+          sudo podman run \
             --rm \
             --privileged \
             --pull=newer \
