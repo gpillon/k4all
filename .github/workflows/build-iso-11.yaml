@@ -233,7 +233,7 @@ jobs:
           make_latest: ${{ steps.get-branch.outputs.branch == 'main' }}
           prerelease: ${{ steps.get-branch.outputs.branch != 'main' }}
           files: |
-            ./artifacts/${{ env.ISO_NAME }}
+            ./output/${{ env.ISO_NAME }}
 
   # generate-release:
   #   name: Generate Release
