@@ -93,11 +93,10 @@ jobs:
       - name: Create Bootable ISO
         run: |
           mkdir -p iso-output
-          coreos-installer iso customize \
+          docker run --privileged --rm -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso customize \
             --dest-device /dev/sda \
             --dest-image iso-output/${{ env.ISO_NAME }} \
-            --image-file custom-coreos.img \
-            --live-kargs ignition.firstboot
+            --image-file custom-coreos.img
 
       - name: Move ISO to Upload Directory
         id: upload-directory
