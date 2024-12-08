@@ -97,3 +97,64 @@ jobs:
         with:
           name: ${{ env.ISO_NAME }}
           path: ${{ env.ISO_NAME }}
+                - name: Move ISOs to Upload Directory
+        id: upload-directory
+        shell: bash
+        run: |
+          ISO_UPLOAD_DIR=${{ github.workspace }}/upload
+          mkdir -p ${ISO_UPLOAD_DIR}
+          mv ${{ steps.build.outputs.iso_path }}/${{ steps.build.outputs.iso_name }} ${ISO_UPLOAD_DIR}
+          mv ${{ steps.build.outputs.iso_path }}/${{ steps.build.outputs.iso_name }}-CHECKSUM ${ISO_UPLOAD_DIR}
+          echo "iso-upload-dir=${ISO_UPLOAD_DIR}" >> $GITHUB_OUTPUT
+
+      - name: Upload ISOs and Checksum to Job Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IMAGE_NAME }}-${{ github.ref_name }}
+          path: ${{ steps.upload-directory.outputs.iso-upload-dir }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+
+  generate-release:
+    name: Generate Release
+    needs: build-iso
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Get Branch Name
+        id: get-branch
+        run: |
+          BRANCH_NAME=${GITHUB_REF##*/}
+          echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ env.IMAGE_NAME }}-${{ steps.get-branch.outputs.branch }}
+          path: ./artifacts
+
+      - name: Generate Changelog
+        id: generate-changelog
+        run: |
+          echo "This release was generated for branch ${{ steps.get-branch.outputs.branch }}" > changelog.md
+
+      - name: Create or Update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ steps.get-branch.outputs.branch }}
+          tag_name: ${{ steps.get-branch.outputs.branch }}
+          body_path: ./changelog.md
+          make_latest: ${{ steps.get-branch.outputs.branch == 'main' }}
+          prerelease: ${{ steps.get-branch.outputs.branch != 'main' }}
+
+      - name: Upload ISO to Release
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create-release.outputs.upload_url }}
+          asset_path: ./artifacts/${{ env.ISO_NAME }}
+          asset_name: ${{ env.ISO_NAME }}
+          content_type: application/octet-stream
