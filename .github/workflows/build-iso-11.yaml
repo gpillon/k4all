@@ -102,7 +102,12 @@ jobs:
             --type raw \
             --rootfs xfs \
             --local ghcr.io/gpillon/k4all-image
-
+      
+      - name: Configure Loop Devices
+        run: |
+          sudo modprobe loop
+          sudo lsmod | grep loop
+          sudo ls output/
       - name: Convert Raw to ISO
         run: |
           # First, create a temporary mount point
