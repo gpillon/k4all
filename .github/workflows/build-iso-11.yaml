@@ -87,13 +87,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y podman xorriso genisoimage
-
-      - name: Pull Container Image
-        run: |
-          podman pull ghcr.io/gpillon/k4all-image
           
       - name: Build Raw Image
         run: |
+          sudo podman pull ghcr.io/gpillon/k4all-image
           sudo podman run \
             --rm \
             --privileged \
