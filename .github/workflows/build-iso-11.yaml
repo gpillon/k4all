@@ -81,11 +81,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install CoreOS Tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y coreos-installer xorriso
-
       - name: Download Custom CoreOS Image
         run: |
           curl -L -o custom-coreos.img "https://${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
