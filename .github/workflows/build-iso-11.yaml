@@ -70,7 +70,6 @@ jobs:
 
   build-iso:
     name: Build Bootable ISO
-    # needs: build-and-push-image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -86,8 +85,8 @@ jobs:
       - name: Install required packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman xorriso genisoimage
-          
+          sudo apt-get install -y podman xorriso genisoimage fdisk kpartx
+
       - name: Build Raw Image
         run: |
           sudo podman pull ghcr.io/gpillon/k4all-image
@@ -102,12 +101,6 @@ jobs:
             --type raw \
             --rootfs xfs \
             --local ghcr.io/gpillon/k4all-image
-      
-      # - name: Configure Loop Devices
-      #   run: |
-      #     sudo tree output/
-      #     sudo mv output/bootiso/install.iso output/${{ env.ISO_NAME }}
-      #     sudo chown 1000:1000 output/${{ env.ISO_NAME }} disk.raw
 
       - name: Configure Loop Devices
         run: |
@@ -117,38 +110,65 @@ jobs:
           
       - name: Convert Raw to ISO
         run: |
-          # First, create a temporary mount point
+          # Set up loop device and create device mappings
+          sudo kpartx -av output/${{ env.RAW_NAME }}
+          
+          # Create mount point
           sudo mkdir -p /mnt/raw
           
-          # Mount the raw image
-          sudo mount -o loop output/${{ env.RAW_NAME }} /mnt/raw
+          # Mount the root partition (typically the third partition for Fedora)
+          sudo mount /dev/mapper/loop0p3 /mnt/raw
+          
+          # Mount the boot partition
+          sudo mkdir -p /mnt/raw/boot
+          sudo mount /dev/mapper/loop0p2 /mnt/raw/boot
           
           # Create ISO directory structure
-          mkdir -p isofs/isolinux
+          mkdir -p isofs/{isolinux,EFI/BOOT}
           
-          # Copy the necessary files from the raw image
-          sudo cp -r /mnt/raw/boot/vmlinuz* isofs/isolinux/vmlinuz
-          sudo cp -r /mnt/raw/boot/initramfs* isofs/isolinux/initrd
+          # Copy boot files
+          sudo cp /mnt/raw/boot/vmlinuz-* isofs/isolinux/vmlinuz
+          sudo cp /mnt/raw/boot/initramfs-*.img isofs/isolinux/initrd
+          
+          # Copy EFI files
+          sudo cp -r /mnt/raw/boot/efi/* isofs/EFI/
+          
+          # Download isolinux files
+          sudo apt-get install -y syslinux syslinux-common
+          sudo cp /usr/lib/ISOLINUX/isolinux.bin isofs/isolinux/
+          sudo cp /usr/lib/syslinux/modules/bios/*.c32 isofs/isolinux/
           
           # Create isolinux configuration
           cat > isofs/isolinux/isolinux.cfg << EOF
           DEFAULT linux
+          TIMEOUT 20
+          PROMPT 0
+          
           LABEL linux
-          KERNEL vmlinuz
-          APPEND initrd=initrd root=/dev/sda3 console=tty0 console=ttyS0,115200n8
+            KERNEL vmlinuz
+            APPEND initrd=initrd root=live:CDLABEL=RHCOS-ISO rd.live.image quiet
           EOF
           
           # Create the ISO
-          genisoimage -o output/${{ env.ISO_NAME }} \
-            -b isolinux/isolinux.bin \
-            -c isolinux/boot.cat \
+          sudo xorriso -as mkisofs \
+            -iso-level 3 \
+            -full-iso9660-filenames \
+            -volid "RHCOS-ISO" \
+            -eltorito-boot isolinux/isolinux.bin \
+            -eltorito-catalog isolinux/boot.cat \
+            -no-emul-boot -boot-load-size 4 -boot-info-table \
+            -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
+            -eltorito-alt-boot \
+            -e EFI/BOOT/grub.efi \
             -no-emul-boot \
-            -boot-load-size 4 \
-            -boot-info-table \
-            -R -J -v -T isofs/
+            -isohybrid-gpt-basdat \
+            -output output/${{ env.ISO_NAME }} \
+            isofs
           
           # Cleanup
+          sudo umount /mnt/raw/boot
           sudo umount /mnt/raw
+          sudo kpartx -d output/${{ env.RAW_NAME }}
           sudo rm -rf isofs /mnt/raw
 
       - name: Upload ISO to Job Artifacts
