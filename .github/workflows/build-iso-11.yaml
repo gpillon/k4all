@@ -99,50 +99,57 @@ jobs:
             -v ./output:/output \
             -v /var/lib/containers/storage:/var/lib/containers/storage \
             quay.io/centos-bootc/bootc-image-builder:latest \
-            --type iso \
+            --type raw \
             --rootfs xfs \
             --local ghcr.io/gpillon/k4all-image
       
+      # - name: Configure Loop Devices
+      #   run: |
+      #     sudo tree output/
+      #     sudo mv output/bootiso/install.iso output/${{ env.ISO_NAME }}
+      #     sudo chown 1000:1000 output/${{ env.ISO_NAME }} disk.raw
+
       - name: Configure Loop Devices
         run: |
           sudo tree output/
-          sudo mv output/bootiso/install.iso output/${{ env.ISO_NAME }}
-          sudo chown 1000:1000 output/${{ env.ISO_NAME }}
-      # - name: Convert Raw to ISO
-      #   run: |
-      #     # First, create a temporary mount point
-      #     sudo mkdir -p /mnt/raw
+          sudo mv output/image/disk.raw output/${{ env.RAW_NAME }}
+          sudo chown 1000:1000 output/${{ env.RAW_NAME }}
           
-      #     # Mount the raw image
-      #     sudo mount -o loop output/${{ env.RAW_NAME }} /mnt/raw
+      - name: Convert Raw to ISO
+        run: |
+          # First, create a temporary mount point
+          sudo mkdir -p /mnt/raw
           
-      #     # Create ISO directory structure
-      #     mkdir -p isofs/isolinux
+          # Mount the raw image
+          sudo mount -o loop output/${{ env.RAW_NAME }} /mnt/raw
           
-      #     # Copy the necessary files from the raw image
-      #     sudo cp -r /mnt/raw/boot/vmlinuz* isofs/isolinux/vmlinuz
-      #     sudo cp -r /mnt/raw/boot/initramfs* isofs/isolinux/initrd
+          # Create ISO directory structure
+          mkdir -p isofs/isolinux
           
-      #     # Create isolinux configuration
-      #     cat > isofs/isolinux/isolinux.cfg << EOF
-      #     DEFAULT linux
-      #     LABEL linux
-      #     KERNEL vmlinuz
-      #     APPEND initrd=initrd root=/dev/sda3 console=tty0 console=ttyS0,115200n8
-      #     EOF
+          # Copy the necessary files from the raw image
+          sudo cp -r /mnt/raw/boot/vmlinuz* isofs/isolinux/vmlinuz
+          sudo cp -r /mnt/raw/boot/initramfs* isofs/isolinux/initrd
           
-      #     # Create the ISO
-      #     genisoimage -o output/${{ env.ISO_NAME }} \
-      #       -b isolinux/isolinux.bin \
-      #       -c isolinux/boot.cat \
-      #       -no-emul-boot \
-      #       -boot-load-size 4 \
-      #       -boot-info-table \
-      #       -R -J -v -T isofs/
+          # Create isolinux configuration
+          cat > isofs/isolinux/isolinux.cfg << EOF
+          DEFAULT linux
+          LABEL linux
+          KERNEL vmlinuz
+          APPEND initrd=initrd root=/dev/sda3 console=tty0 console=ttyS0,115200n8
+          EOF
           
-      #     # Cleanup
-      #     sudo umount /mnt/raw
-      #     sudo rm -rf isofs /mnt/raw
+          # Create the ISO
+          genisoimage -o output/${{ env.ISO_NAME }} \
+            -b isolinux/isolinux.bin \
+            -c isolinux/boot.cat \
+            -no-emul-boot \
+            -boot-load-size 4 \
+            -boot-info-table \
+            -R -J -v -T isofs/
+          
+          # Cleanup
+          sudo umount /mnt/raw
+          sudo rm -rf isofs /mnt/raw
 
       - name: Upload ISO to Job Artifacts
         uses: actions/upload-artifact@v4
