@@ -211,39 +211,6 @@ jobs:
           retention-days: 7
           overwrite: true
 
-  generate-release:
-    name: Generate Release
-    needs: build-iso
-    permissions:
-      contents: write  # Add this permission for release creation
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Get Branch Name
-        id: get-branch
-        run: |
-          BRANCH_NAME=${GITHUB_REF##*/}
-          echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
-
-      - name: Download Artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: ${{ env.IMAGE_NAME }}-${{ steps.get-branch.outputs.branch }}
-          path: ./artifacts
-
-      - name: List Contents
-        run: |
-          ls -la ./artifacts
-          echo "Contents of artifacts directory:"
-          find ./artifacts -type f
-
-      - name: Generate Changelog
-        id: generate-changelog
-        run: |
-          echo "This release was generated for branch ${{ steps.get-branch.outputs.branch }}" > changelog.md
-
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2
         env:
@@ -256,48 +223,49 @@ jobs:
           prerelease: ${{ steps.get-branch.outputs.branch != 'main' }}
           files: |
             ./artifacts/${{ env.ISO_NAME }}
-            generate-release:
-              name: Generate Release
-              needs: build-iso
-              permissions:
-                contents: write  # Add this permission for release creation
-              runs-on: ubuntu-latest
-              steps:
-                - name: Checkout Repository
-                  uses: actions/checkout@v4
-          
-                - name: Get Branch Name
-                  id: get-branch
-                  run: |
-                    BRANCH_NAME=${GITHUB_REF##*/}
-                    echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
-          
-                - name: Download Artifacts
-                  uses: actions/download-artifact@v3
-                  with:
-                    name: ${{ env.IMAGE_NAME }}-${{ steps.get-branch.outputs.branch }}
-                    path: ./artifacts
-          
-                - name: List Contents
-                  run: |
-                    ls -la ./artifacts
-                    echo "Contents of artifacts directory:"
-                    find ./artifacts -type f
-          
-                - name: Generate Changelog
-                  id: generate-changelog
-                  run: |
-                    echo "This release was generated for branch ${{ steps.get-branch.outputs.branch }}" > changelog.md
-          
-                - name: Create Release and Upload Assets
-                  uses: softprops/action-gh-release@v2
-                  env:
-                    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  with:
-                    name: Release ${{ steps.get-branch.outputs.branch }}
-                    tag_name: ${{ steps.get-branch.outputs.branch }}
-                    body_path: ./changelog.md
-                    make_latest: ${{ steps.get-branch.outputs.branch == 'main' }}
-                    prerelease: ${{ steps.get-branch.outputs.branch != 'main' }}
-                    files: |
-                      ./artifacts/${{ env.ISO_NAME }}
+
+  # generate-release:
+  #   name: Generate Release
+  #   needs: build-iso
+  #   permissions:
+  #     contents: write  # Add this permission for release creation
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout Repository
+  #       uses: actions/checkout@v4
+
+  #     - name: Get Branch Name
+  #       id: get-branch
+  #       run: |
+  #         BRANCH_NAME=${GITHUB_REF##*/}
+  #         echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+
+  #     - name: Download Artifacts
+  #       uses: actions/download-artifact@v3
+  #       with:
+  #         name: ${{ env.IMAGE_NAME }}-${{ steps.get-branch.outputs.branch }}
+  #         path: ./artifacts
+
+  #     - name: List Contents
+  #       run: |
+  #         ls -la ./artifacts
+  #         echo "Contents of artifacts directory:"
+  #         find ./artifacts -type f
+
+  #     - name: Generate Changelog
+  #       id: generate-changelog
+  #       run: |
+  #         echo "This release was generated for branch ${{ steps.get-branch.outputs.branch }}" > changelog.md
+
+  #     - name: Create Release and Upload Assets
+  #       uses: softprops/action-gh-release@v2
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #       with:
+  #         name: Release ${{ steps.get-branch.outputs.branch }}
+  #         tag_name: ${{ steps.get-branch.outputs.branch }}
+  #         body_path: ./changelog.md
+  #         make_latest: ${{ steps.get-branch.outputs.branch == 'main' }}
+  #         prerelease: ${{ steps.get-branch.outputs.branch != 'main' }}
+  #         files: |
+  #           ./artifacts/${{ env.ISO_NAME }}
