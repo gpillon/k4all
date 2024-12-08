@@ -92,7 +92,7 @@ jobs:
           docker run --rm --privileged \
             -v /var/tmp:/var/tmp \
             -v $(pwd)/iso-output:/output \
-            quay.io/centos-boot/bootc-image-builder:latest \
+            quay.io/centos-bootc/bootc-image-builder:latest \
             --type iso \
             --output-dir /output \
             # --config-git https://github.com/${{ github.repository }}.git \
