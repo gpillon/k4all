@@ -69,7 +69,7 @@ jobs:
             ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
             ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
- build-iso:
+  build-iso:
     name: Build Bootable ISO
     needs: build-and-push-image
     runs-on: ubuntu-latest
