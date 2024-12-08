@@ -210,6 +210,12 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           overwrite: true
+          
+      - name: Get Branch Name
+        id: get-branch
+        run: |
+          BRANCH_NAME=${GITHUB_REF##*/}
+          echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
 
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2
