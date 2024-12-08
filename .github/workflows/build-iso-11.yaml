@@ -129,22 +129,20 @@ jobs:
           sudo mount $ROOT_PART /mnt/raw
           sudo mount $BOOT_PART /mnt/boot
           
-          # Debug: List contents
-          echo "Root partition contents:"
-          sudo ls -la /mnt/raw
-          echo "Boot partition contents:"
-          sudo ls -la /mnt/boot
-          
-          # Find the deployment directory
-          DEPLOY_DIR=$(sudo find /mnt/raw/ostree/deploy -type d -name "*.0" | head -n 1)
-          echo "Found deployment directory: $DEPLOY_DIR"
+          # Debug: List contents of important directories
+          echo "Boot/ostree contents:"
+          sudo ls -la /mnt/boot/ostree
           
           # Create ISO directory structure
           mkdir -p isofs/{isolinux,EFI/BOOT}
           
-          # Copy boot files from boot partition
-          sudo cp /mnt/boot/vmlinuz-* isofs/isolinux/vmlinuz
-          sudo cp /mnt/boot/initramfs-* isofs/isolinux/initrd
+          # Find and copy the most recent kernel and initramfs
+          BOOT_DIR=$(sudo find /mnt/boot/ostree -name "*.0" -type d | head -n 1)
+          echo "Using boot directory: $BOOT_DIR"
+          
+          # Copy boot files from OSTree directory
+          sudo cp $BOOT_DIR/vmlinuz isofs/isolinux/vmlinuz
+          sudo cp $BOOT_DIR/initramfs isofs/isolinux/initrd
           
           # Install and copy required isolinux files
           sudo apt-get install -y syslinux syslinux-common
@@ -159,7 +157,7 @@ jobs:
           
           LABEL linux
             KERNEL vmlinuz
-            APPEND initrd=initrd root=live:CDLABEL=BOOTC-ISO rd.live.image quiet
+            APPEND initrd=initrd root=live:CDLABEL=BOOTC-ISO rd.live.image quiet console=tty0 console=ttyS0,115200n8
           EOF
           
           # Create ISO
