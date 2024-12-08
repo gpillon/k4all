@@ -1,0 +1,9 @@
+
+[allowlist]
+description = "Global Allowlist"
+
+paths = [ ]
+
+regexes = [
+'''\$6\$xyz\$CCw54pypmRZ5rXtbwICd253nhHKkgqAAqenBsi\.shPNfjDVnJ\/Sz\/\.p2ovQiSA7eUl61lLQkDyq6itQQTMqfX0''',
+]

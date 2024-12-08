@@ -1,0 +1,185 @@
+# k8s.bu
+variant: fcos
+version: 1.5.0
+
+kernel_arguments:
+  should_exist:
+    - mitigations=off
+  should_not_exist:
+    - mitigations=auto,nosmt
+    
+passwd:
+  users:
+    - name: core
+      password_hash: "$6$xyz$CCw54pypmRZ5rXtbwICd253nhHKkgqAAqenBsi.shPNfjDVnJ/Sz/.p2ovQiSA7eUl61lLQkDyq6itQQTMqfX0"
+
+systemd:
+  units:
+    - name: fck8s-lvm-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Setup LVM
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-lvm.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-set-static-ip.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set Static Ip Address
+        Requires=network-online.target
+        After=network-online.target
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/set-static-ip.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-set-hostname.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set Hostname
+        Requires=fck8s-set-static-ip.service
+        After=fck8s-set-static-ip.service 
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/set-hostname.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-k8s-setup-ph1.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Kubernetes
+        Requires=fck8s-set-hostname.service
+        After=fck8s-set-hostname.service 
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-k8s-ph1.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-k8s-setup-ph2.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Kubernetes
+        Requires=fck8s-k8s-setup-ph1.service
+        After=fck8s-k8s-setup-ph1.service       
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-k8s-ph2.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-k8s-setup-ph3.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Kubernetes
+        Requires=fck8s-k8s-setup-ph2.service
+        After=fck8s-k8s-setup-ph2.service       
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-k8s-ph3.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
+    - name: fck8s-k8s-setup-init.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up Kubernetes Cluster
+        Requires=fck8s-k8s-setup-ph3.service
+        Requires=crio.service
+        After=fck8s-k8s-setup-ph3.service crio.service
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-k8s-init.sh
+        RemainAfterExit=yes
+        Restart=on-failure
+        
+        [Install]
+        WantedBy=multi-user.target
+        
+storage:
+  disks:
+    - device: /dev/sda
+      wipe_table: false
+      partitions:
+        - label: root
+          number: 4
+          size_mib: 50000
+          resize: true
+        - label: lvm
+          size_mib: 0
+          wipe_partition_entry: true
+  trees:
+    - local: manifests
+      path: /usr/local/share/mainifests/
+    - local: scripts
+      path: /usr/local/bin/
+
+  #filesystems:
+  #  - device: /dev/disk/by-label/lvm
+  #    format: none 
+  #    path: /data/
+  
+  directories:
+    - path: /root/.config
+      user:
+        name: root
+      group:
+        name: root
+    - path: /opt/k4all
+      user:
+        name: core
+      group:
+        name: core
+
+  files:
+    - path: "/etc/sysctl.d/k8s.conf"
+      mode: 420
+      contents:
+        inline: |
+         net.ipv4.ip_forward = 1
+         net.ipv4.ip_nonlocal_bind = 1
+    - path: "/etc/yum.repos.d/kubernetes.repo"
+      mode: 420
+      contents:
+        local: repo/kubernetes.repo
+    - path: /etc/ssh/sshd_config.d/20-enable-passwords.conf
+      mode: 0600
+      contents:
+        inline: |
+          # Fedora CoreOS disables SSH password login by default.
+          # Enable it.
+          # This file must sort before 40-disable-passwords.conf.
+          PasswordAuthentication yes
+    - path: /etc/zincati/config.d/10-update-periodic.toml
+      mode: 0644
+      user:
+        name: zincati
+      group:
+        name: zincati
+      contents:
+        local: data/10-update-periodic.toml

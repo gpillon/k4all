@@ -1,0 +1,243 @@
+#!/bin/bash
+
+# Path to the JSON configuration file
+K4ALL_CONFIG_FILE="/etc/k4all-config.json"
+KUBECONFIG=/etc/kubernetes/admin.conf
+
+retry_command() {
+  local command="$1"
+  local max_retries="$2"
+  local delay="$3"
+  local retry_count=0
+  local success=false
+
+  while [ "$retry_count" -lt "$max_retries" ]; do
+    echo "Attempt $(($retry_count + 1))..."
+
+    # Execute the command
+    if eval "$command"; then
+      echo "Command executed successfully."
+      success=true
+      break
+    else
+      echo "Command failed. Retrying in $delay seconds..."
+      retry_count=$(($retry_count + 1))
+      sleep "$delay"
+    fi
+  done
+
+  # Check if we succeeded after all retries
+  if [ "$success" = false ]; then
+    echo "Command failed after $max_retries retries."
+    return 1
+  fi
+}
+
+# Function to set up kubeconfig for a specified user
+function setup_kubeconfig_for_user() {
+  local user_name=$1
+  local user_home=$2
+  local override_file_name=${3:-"admin.conf"}
+
+  mkdir -p "${user_home}/.kube"
+  cp /etc/kubernetes/${override_file_name} "${user_home}/.kube/config"
+  chown "${user_name}:${user_name}" "${user_home}/.kube/config"
+}
+
+# Function to finalize the setup for a specified user
+finalize_k8s_setup_for_user() {
+  local user_name=$1
+  local user_home=$2
+
+  # Ensure the .kube directory exists
+  mkdir -p "${user_home}/.kube"
+
+  # Generate the kubectl completion script
+  local completion_file="${user_home}/.kube/completion.bash.inc"
+  kubectl completion bash > "$completion_file"
+
+  # Source the completion script in the user's .bash_profile if not already sourced
+  local source_string="source '$completion_file'"
+  if ! grep -qF "$source_string" "${user_home}/.bash_profile"; then
+    printf "\n# kubectl shell completion\n$source_string\n" >> "${user_home}/.bash_profile"
+  fi
+}
+
+function get_network_device() {
+    # Check if the configuration file exists
+    if [ ! -f "$K4ALL_CONFIG_FILE" ]; then
+        # Configuration file does not exist, use the default network interface
+        ip route show default | awk '/default/ {print $5; exit}'  # Exit after the first match
+        return
+    fi
+
+    # Extract the iface.dev value from the JSON configuration file
+    local net_dev=$(jq -r '.networking.iface.dev' "$K4ALL_CONFIG_FILE")
+    
+    # Check if the iface.dev is set to auto
+    if [ "$net_dev" = "auto" ]; then
+        # Find the default network interface used for the first default route
+        net_dev=$(ip route show default | awk '/default/ {print $5; exit}')  # Exit after the first match
+    fi
+
+    # Output the result
+    echo $net_dev
+}
+
+# Function to get the first available physical network interface
+get_first_physical_interface() {
+  ip link show | awk '/^[0-9]+: [^lo]/ {print $2}' | grep -v 'ovs-bridge' | sed 's/://g' | head -n 1
+}
+
+# Function to get the physical interface from the Open vSwitch bridge
+get_physical_interface_for_ovs_port() {
+  local ovs_port=$1
+  ovs-vsctl list interface "$ovs_port" 2>/dev/null | grep 'type.*system' >/dev/null && echo "$ovs_port" || echo ""
+}
+
+# Function to find the original physical interface used in the bridge
+get_original_physical_interface() {
+  for port in $(ovs-vsctl list-ports ovs-bridge); do
+    local physical_interface=$(get_physical_interface_for_ovs_port "$port")
+    if [ -n "$physical_interface" ]; then
+      echo "$physical_interface"
+      return
+    fi
+  done
+  # If no physical interface is found, return the first physical interface available
+  get_first_physical_interface
+}
+
+get_real_interface() {
+  local NET_DEV=$(get_network_device)
+
+  if [ "$NET_DEV" == "ovs-bridge" ]; then
+    local PHYS_NET_DEV=$(get_original_physical_interface)
+  else
+    local PHYS_NET_DEV=$NET_DEV
+  fi
+  echo $PHYS_NET_DEV
+}
+
+remove_tagged_block() {
+  local file_path="$1"
+  local start_tag="$2"
+  local end_tag="$3"
+  
+  sed -i "/#### ${start_tag} ####/,/#### ${end_tag} ####/d" "$file_path"
+}
+
+
+# Function to get the current IP address
+get_ip() {
+    if jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "keepalived"; then
+        jq -r '.node.ha.apiControlEndpoint' $K4ALL_CONFIG_FILE
+    else
+        hostname -I | awk '{print $1}'
+    fi
+}
+
+# Function to get the current FQDN
+get_fqdn() {
+    hostname -f
+}
+
+# Function to check if the FQDN contains a domain part
+has_domain() {
+    local fqdn=$1
+    [[ "$fqdn" =~ \. ]]
+}
+
+# Function to patch the ingress with a given host
+patch_ingress() {
+    local host=$1
+    local route_number=$2
+    local route_host_prefix=$3
+    local ingress_name=$4
+    local ingress_namespace=$5
+
+
+    kubectl --kubeconfig=$KUBECONFIG patch ingress $ingress_name -n $ingress_namespace --type=json -p="[
+      {
+        \"op\": \"replace\",
+        \"path\": \"/spec/rules/$route_number/host\",
+        \"value\": \"$route_host_prefix.$host\"
+      }
+    ]"
+}
+
+get_ingress_urls() {
+  # get_ingress_urls "namespace" "ingress-name"
+  local ingress_name="$1"
+  local namespace="$2"
+
+  if [[ -z "$namespace" || -z "$ingress_name" ]]; then
+    echo "Usage: get_ingress_urls <namespace> <ingress_name>" >&2
+    exit 1
+  fi
+
+  if ! kubectl get ingress "$ingress_name" -n "$namespace" &> /dev/null; then
+    echo "Ingress '$ingress_name' not found in namespace '$namespace'" >&2
+    exit 1
+  fi
+
+  kubectl get ingress "$ingress_name" -n "$namespace" -o jsonpath='{range .spec.rules[*]}{.host}{"\n"}{end}' | while read host; do
+    kubectl get ingress "$ingress_name" -n "$namespace" -o jsonpath="{range .spec.rules[?(@.host=='$host')].http.paths[*]}https://$host{.path}{'\n'}{end}"
+  done
+}
+
+cidr_to_mask() {
+  local cidr=$1
+  local mask=""
+  local full_octets=$((cidr / 8))
+  local partial_octet=$((cidr % 8))
+
+  for ((i=0; i<4; i++)); do
+    if [ $i -lt $full_octets ]; then
+      mask+=255
+    elif [ $i -eq $full_octets ]; then
+      mask+=$((256 - 2**(8-partial_octet)))
+    else
+      mask+=0
+    fi
+    if [ $i -lt 3 ]; then
+      mask+='.'
+    fi
+  done
+
+  echo $mask
+}
+
+# Function to convert subnet mask to CIDR notation
+mask_to_cidr() {
+  c=0 x=0$( printf '%o' ${1//./ } )
+  while [ $x -gt 0 ]; do
+      let c+=$((x%2)) 'x>>=1'
+  done
+
+  echo $c ; 
+}
+
+# Function to get the system's architecture
+get_architecture() {
+    uname -m
+}
+
+# Function to set CLI_ARCH based on the detected architecture
+set_cli_arch() {
+    local ARCH=$(get_architecture)
+    case "${ARCH}" in
+        x86_64)
+            CLI_ARCH="amd64"
+            ;;
+        armv7l | armv8* | aarch64)
+            CLI_ARCH="arm64"
+            ;;
+        *)
+            echo "Unsupported architecture: ${ARCH}"
+            exit 1
+            ;;
+    esac
+    echo "CLI_ARCH is set to: ${CLI_ARCH}"
+    export CLI_ARCH
+}

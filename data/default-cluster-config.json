@@ -1,0 +1,123 @@
+// This file is used to configure the device.
+// The device will read this fle and apply the settings during boot.
+{
+  "version": "1.5.5",
+  "networking": {
+    //default_cni (calico cilium)
+    "cni": {
+      "type": "calico"
+    },
+
+    //Firewalld Config
+    "firewalld": {
+      // Enabled?
+      "enabled": "false"
+    },
+
+    "iface": {
+      //eth card ( found_eth_cards)
+      "dev": "auto",
+      
+      "ipconfig": "dhcp"
+      // Uncomment the following lines to configure a static IP address
+      
+      // "ipconfig": "static",
+
+      // Required for static IP configuration
+      // "ipaddr": "192.168.0.100",
+
+      // Required for static IP configuration
+      // "gateway": "192.168.0.1",
+
+      // Required for static IP configuration
+      // "subnet_mask": "255.255.255.0",
+
+      // comma separated list of DNS servers
+      // "dns": "1.1.1.1,8.8.8.8",
+
+      // Optional, comma separated list of search domains; leave empty to use the default, but don't remove the line!
+      // "dns_search": "" 
+    }
+  },
+
+  //disk configuration
+  "disk": {
+    // root disk configuration
+    "root": {
+      // install disk ( found_disks )
+      "disk": "auto",
+      //root disk size in MiB or in percentage; minimum 12000 MiB; for just a few pods, 20000 MiB is recommended at least; recommended 50000 MiB for most use cases, 120000 MiB for about 50-80 deployments
+      // if a percentage, the disk will be calculated as 12Gib + % of remaning free disk space; eg 100gb with 20% will be 17. GiB for os and container images and 82.4GiB for PVCs
+      // in any case minimum root disk size will be 12GiB and 120GiB Maximum
+      "size_mib": "20%"
+    },
+
+    // If set to true, all lvm volumes will be NOT be cleared before installation
+    "keep_lvm" : "true"
+  },
+
+  //features configuration
+  "features": {
+    // virt configuration
+    "virt": {
+      // Enable Virtualization.
+      "enabled": "false",
+      // Enable Emulation ("true", "false", or "auto")
+      "emulation": "auto"
+    },
+    // argocd configuration
+    "argocd": {
+      // Enable ArgoCD.
+      "enabled": "false"
+    }
+  },
+
+  "node": {
+    "ha": {
+      //interface: the network interface to use for the virtual IP; use auto to automatically select the interface with the default route"
+      "interface": "auto",
+
+      // "type": "none" | "keepalived | kubevip"
+      "type": "none"
+      //"type": "keepalived",
+      //"type": "kubevip",
+
+      // Control plane endpoint for the API server, ignored in "none" mode
+      // "apiControlEndpoint": "192.168.0.200",
+      
+      //  Control plane endpoint subnet size for the API server, ignored in "none" mode
+      // "apiControlEndpointSubnetSize": 24
+    }
+  }
+}
+
+// not used now; but ideas for future
+// {
+//"wifi": {
+//    "ssid": "your-ssid",
+//    "password": "your-password"
+//  }
+
+//other boostrap / control configuration
+// "node": {
+//    "name": "node1",
+//    "role": "master" | "worker",
+//    "ha": {
+//        "type": "none" | "keepalived" | "extenalLoadBalancer",
+//        "apihostname": "api.yourdomain.com",
+//        "apiport": 443,
+//        "ingress": {
+//            "hostname": "*.k8s.yourdomain.com",
+//            "port": 443
+//        },
+//        "keepalived": {
+//            "vrid": 1,
+//            "priority": 100,
+//            "interface": "eth0",
+//            "virtual_ip": "
+//        },
+//        "externalLoadBalancer": {
+//            "ip": ""
+//        }
+//    }
+// }
