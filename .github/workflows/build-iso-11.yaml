@@ -120,19 +120,31 @@ jobs:
           # Create temporary mount points
           sudo mkdir -p /mnt/raw /mnt/boot /mnt/efi
           
-          # Find the root partition (should be the third partition)
+          # Find the root and boot partitions
           ROOT_PART=$(echo $LOOP_DEV | sed 's/\/dev\//\/dev\/mapper\//')
-          ROOT_PART="${ROOT_PART}p3"
+          ROOT_PART="${ROOT_PART}p4"  # root is partition 4
+          BOOT_PART="${ROOT_PART%p4}p3"  # boot is partition 3
           
           # Mount partitions
           sudo mount $ROOT_PART /mnt/raw
+          sudo mount $BOOT_PART /mnt/boot
+          
+          # Debug: List contents
+          echo "Root partition contents:"
+          sudo ls -la /mnt/raw
+          echo "Boot partition contents:"
+          sudo ls -la /mnt/boot
+          
+          # Find the deployment directory
+          DEPLOY_DIR=$(sudo find /mnt/raw/ostree/deploy -type d -name "*.0" | head -n 1)
+          echo "Found deployment directory: $DEPLOY_DIR"
           
           # Create ISO directory structure
           mkdir -p isofs/{isolinux,EFI/BOOT}
           
-          # Copy boot files
-          sudo cp /mnt/raw/boot/vmlinuz-* isofs/isolinux/vmlinuz
-          sudo cp /mnt/raw/boot/initramfs-*.img isofs/isolinux/initrd
+          # Copy boot files from boot partition
+          sudo cp /mnt/boot/vmlinuz-* isofs/isolinux/vmlinuz
+          sudo cp /mnt/boot/initramfs-* isofs/isolinux/initrd
           
           # Install and copy required isolinux files
           sudo apt-get install -y syslinux syslinux-common
@@ -163,6 +175,7 @@ jobs:
             isofs
           
           # Cleanup
+          sudo umount /mnt/boot
           sudo umount /mnt/raw
           sudo kpartx -d $LOOP_DEV
           sudo losetup -d $LOOP_DEV
