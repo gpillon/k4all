@@ -1,140 +1,99 @@
-name: Build and Release k4all ISO
-'on':
-  push:
-    tags:
-      - '*'
-    branches:
-      - release
-  workflow_dispatch: null
-jobs:
-  build-iso:
-    runs-on: ubuntu-latest
-    env:
-      ROLES: "bootstrap control worker"  # Defining roles as a space-separated string
-      COREOS_URL: "https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/40.20240701.3.0/x86_64/fedora-coreos-40.20240701.3.0-live.x86_64.iso"
-      ARCH: "x86_64"
+name: Build and Deploy k4all
 
+on:
+  # schedule:
+  #   - cron: "40 4 * * 1" # Runs at 4:40 UTC every Monday
+  pull_request:
+    branches:
+      - image-based
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  push:
+    branches:
+      - image-based
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  workflow_dispatch:
+    inputs:
+      changelog:
+        description: 'Brief description of changes in this build'
+        required: false
+
+env:
+  IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
+  IMAGE_NAME: k4all
+  K4ALL_VERSION: testing
+  ARCH: x86_64
+  VARIANT: CoreOS
+  ISO_NAME: k4all-${{ github.ref_name }}-${{ env.K4ALL_VERSION }}.iso
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push-image:
+    name: Build and Push Fedora CoreOS Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     steps:
-      - name: Check out the repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+      - name: Set Up QEMU
+        uses: docker/setup-qemu-action@v2
 
-      - name: Extract branch or tag version
-        id: version
-        run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            VERSION="${GITHUB_REF_NAME}"
-            # Determine prerelease status based on tag format "vX.Y.Z-<alpha or beta>"
-            if [[ "$VERSION" =~ v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta) ]]; then
-              echo "prerelease=true" >> $GITHUB_ENV
-            else
-              echo "prerelease=false" >> $GITHUB_ENV
-            fi
-            echo "draft=false" >> $GITHUB_ENV
-          else
-            VERSION="${GITHUB_REF_NAME:-main}"
-            echo "draft=true" >> $GITHUB_ENV
-            echo "prerelease=false" >> $GITHUB_ENV
-          fi
-          echo "version=$VERSION" >> $GITHUB_ENV
+      - name: Set Up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-      - name: Download Fedora CoreOS ISO
-        run: |
-          FCOS_PATH="./k4all"
-          ARCH=${{ env.ARCH }}
-          
-          mkdir -p $FCOS_PATH
-
-          COREOS_JSON=https://builds.coreos.fedoraproject.org/streams/stable.json
-          ISO_URL=$(curl $COREOS_JSON | jq -r ".architectures.$ARCH.artifacts.metal.formats.iso.disk.location")
-          FCOS_IMAGE=$(basename "$ISO_URL")
-
-          # Check if the file exists
-          if [ -f "$FCOS_PATH/$FCOS_IMAGE" ]; then
-              echo "The file $FCOS_IMAGE already exists."
-          else
-              echo "The file $FCOS_IMAGE does not exist. Downloading..."
-              curl -o "$FCOS_PATH/$FCOS_IMAGE" "$ISO_URL"
-              echo "Download completed."
-          fi
-          mv $FCOS_PATH/$FCOS_IMAGE $FCOS_PATH/fedora-coreos.iso
-        shell: bash
-
-      - name: Make scripts executable
-        run: |
-          chmod -R +x ./install-scripts/*
-          chmod -R +x ./scripts/*
-
-      - name: Generate ISOs for Multiple Roles
-        run: |
-          docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-base.bu" > "k8s-base.ign"
-          IFS=' ' read -ra ROLE_ARRAY <<< "${{ env.ROLES }}"
-          for role in "${ROLE_ARRAY[@]}"; do
-            docker run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-$role.bu" > "k8s.ign"
-            docker run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < install.bu > install.ign
-            docker run --privileged --rm -v /dev:/dev -v "$(pwd):/data" -w /data -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso ignition embed -i "/data/install.ign" -o "/k4all/k4all-$role-${{ env.version }}-${{ env.ARCH }}.iso" "/k4all/fedora-coreos.iso"
-            docker run --privileged --rm -v ./k4all:/k4all/ quay.io/coreos/coreos-installer:release iso kargs modify -a coreos.liveiso.fromram "/k4all/k4all-$role-${{ env.version }}-${{ env.ARCH }}.iso"
-          done
-
-      - name: Check ISO directory and Fix file permissions
-        run: |
-          sudo chown -R 1001:127 ./k4all
-          ls -lan ./k4all
-
-      - name: Install qemu-img
-        run: sudo apt-get -qq update && sudo apt-get -qq install -y qemu-utils
-
-      - name: Create k4all QCOW2 / VDI image
-        run: |
-          IFS=' ' read -ra ROLE_ARRAY <<< "${{ env.ROLES }}"
-          for role in "${ROLE_ARRAY[@]}"; do
-            qemu-img convert -O qcow2 ./k4all/k4all-$role-${{ env.version }}-${{ env.ARCH }}.iso ./k4all/k4all-$role-${{ env.version }}-${{ env.ARCH }}.qcow2
-            qemu-img resize ./k4all/k4all-$role-${{ env.version }}-${{ env.ARCH }}.qcow2 60G
-            qemu-img convert -O vdi ./k4all/k4all-$role-${{ env.version }}-${{ env.ARCH }}.qcow2 ./k4all/k4all-$role-${{ env.version }}-${{ env.ARCH }}.vdi
-          done
-        shell: bash
-
-      - name: Create a GitHub Release
-        id: create_release_bootstrap
-        uses: softprops/action-gh-release@v2
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
         with:
-          tag_name: '${{ env.version }}'
-          name: 'Release ${{ env.version }}'
-          draft: '${{ env.draft }}'
-          prerelease: '${{ env.prerelease }}'
-          files: |
-            ./k4all/k4all-bootstrap-${{ env.version }}-${{ env.ARCH }}.iso
-            ./k4all/k4all-bootstrap-${{ env.version }}-${{ env.ARCH }}.qcow2
-            ./k4all/k4all-bootstrap-${{ env.version }}-${{ env.ARCH }}.vdi
-        env:
-          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
-      - name: Create a GitHub Release
-        id: create_release_control
-        uses: softprops/action-gh-release@v2
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v4
         with:
-          tag_name: '${{ env.version }}'
-          name: 'Release ${{ env.version }}'
-          draft: '${{ env.draft }}'
-          prerelease: '${{ env.prerelease }}'
-          files: |
-            ./k4all/k4all-control-${{ env.version }}-${{ env.ARCH }}.iso
-            ./k4all/k4all-control-${{ env.version }}-${{ env.ARCH }}.qcow2
-            ./k4all/k4all-control-${{ env.version }}-${{ env.ARCH }}.vdi
-        env:
-          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
-      - name: Create a GitHub Release
-        id: create_release_worker
-        uses: softprops/action-gh-release@v2
+          context: .
+          file: ./Containerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+  build-iso:
+    name: Build ISO
+    needs: build-and-push-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build ISO
+        uses: JasonN3/build-container-installer@v1.2.3
         with:
-          tag_name: '${{ env.version }}'
-          name: 'Release ${{ env.version }}'
-          draft: '${{ env.draft }}'
-          prerelease: '${{ env.prerelease }}'
-          files: |
-            ./k4all/k4all-worker-${{ env.version }}-${{ env.ARCH }}.iso
-            ./k4all/k4all-worker-${{ env.version }}-${{ env.ARCH }}.qcow2
-            ./k4all/k4all-worker-${{ env.version }}-${{ env.ARCH }}.vdi
-        env:
-          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          arch: ${{ env.ARCH }}
+          image_name: ${{ env.IMAGE_NAME }}
+          image_repo: ${{ env.IMAGE_REGISTRY }}
+          image_tag: ${{ github.ref_name }}
+          version: ${{ env.K4ALL_VERSION }}
+          variant: ${{ env.VARIANT }}
+          iso_name: ${{ env.ISO_NAME }}
+
+      - name: Upload ISO Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ISO_NAME }}
+          path: ${{ env.ISO_NAME }}
