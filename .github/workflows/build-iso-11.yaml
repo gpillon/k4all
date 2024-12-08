@@ -108,6 +108,51 @@ jobs:
           sudo mv output/image/disk.raw output/${{ env.RAW_NAME }}
           sudo chown 1000:1000 output/${{ env.RAW_NAME }}
           
+      name: Build and Deploy k4all
+
+# Previous parts of the workflow remain the same...
+
+jobs:
+  build-iso:
+    name: Build Bootable ISO
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Create Output Directory
+        run: mkdir -p output
+
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman xorriso genisoimage fdisk kpartx ostree tree
+
+      - name: Build Raw Image
+        run: |
+          sudo podman pull ghcr.io/gpillon/k4all-image
+          sudo podman run \
+            --rm \
+            --privileged \
+            --pull=newer \
+            --security-opt label=type:unconfined_t \
+            -v ./output:/output \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            quay.io/centos-bootc/bootc-image-builder:latest \
+            --type raw \
+            --rootfs xfs \
+            --local ghcr.io/gpillon/k4all-image
+
+      - name: Configure Loop Devices
+        run: |
+          sudo tree output/
+          sudo mv output/image/disk.raw output/${{ env.RAW_NAME }}
+          sudo chown 1000:1000 output/${{ env.RAW_NAME }}
+          
       - name: Convert Raw to ISO
         run: |
           # Set up loop device and get device name
@@ -129,20 +174,25 @@ jobs:
           sudo mount $ROOT_PART /mnt/raw
           sudo mount $BOOT_PART /mnt/boot
           
-          # Debug: List contents of important directories
-          echo "Boot/ostree contents:"
-          sudo ls -la /mnt/boot/ostree
+          # Debug: Show full directory structure
+          echo "Complete boot directory structure:"
+          sudo tree /mnt/boot
+          
+          echo "Complete ostree directory structure:"
+          sudo find /mnt/boot/ostree -type f
           
           # Create ISO directory structure
           mkdir -p isofs/{isolinux,EFI/BOOT}
           
-          # Find and copy the most recent kernel and initramfs
-          BOOT_DIR=$(sudo find /mnt/boot/ostree -name "*.0" -type d | head -n 1)
-          echo "Using boot directory: $BOOT_DIR"
+          # Find the boot files in the ostree directory
+          OSTREE_DIR="/mnt/boot/ostree/default-717f957fb4680546cce36bc1c5e633abdbf5e4ecb6e99e5665df3c00a56088fa"
+          
+          echo "Contents of OSTree directory:"
+          sudo ls -la $OSTREE_DIR
           
           # Copy boot files from OSTree directory
-          sudo cp $BOOT_DIR/vmlinuz isofs/isolinux/vmlinuz
-          sudo cp $BOOT_DIR/initramfs isofs/isolinux/initrd
+          sudo cp $OSTREE_DIR/vmlinuz-* isofs/isolinux/vmlinuz
+          sudo cp $OSTREE_DIR/initramfs-* isofs/isolinux/initrd
           
           # Install and copy required isolinux files
           sudo apt-get install -y syslinux syslinux-common
