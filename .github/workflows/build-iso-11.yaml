@@ -97,7 +97,8 @@ jobs:
         with:
           name: ${{ env.ISO_NAME }}
           path: ${{ env.ISO_NAME }}
-                - name: Move ISOs to Upload Directory
+          
+      - name: Move ISOs to Upload Directory
         id: upload-directory
         shell: bash
         run: |
