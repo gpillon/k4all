@@ -106,6 +106,8 @@ jobs:
       - name: Configure Loop Devices
         run: |
           sudo tree output/
+          sudo mv output/bootiso/install.iso output/${{ env.ISO_NAME }}
+          sudo chown 1000:1000 output/${{ env.ISO_NAME }}
       # - name: Convert Raw to ISO
       #   run: |
       #     # First, create a temporary mount point
@@ -146,7 +148,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.IMAGE_NAME }}-${{ github.ref_name }}
-          path: output/image/${{ env.ISO_NAME }}
+          path: output/${{ env.ISO_NAME }}
           if-no-files-found: error
           retention-days: 7
           overwrite: true
