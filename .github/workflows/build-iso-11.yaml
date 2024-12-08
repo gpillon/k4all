@@ -108,51 +108,6 @@ jobs:
           sudo mv output/image/disk.raw output/${{ env.RAW_NAME }}
           sudo chown 1000:1000 output/${{ env.RAW_NAME }}
           
-      name: Build and Deploy k4all
-
-# Previous parts of the workflow remain the same...
-
-jobs:
-  build-iso:
-    name: Build Bootable ISO
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Create Output Directory
-        run: mkdir -p output
-
-      - name: Install required packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y podman xorriso genisoimage fdisk kpartx ostree tree
-
-      - name: Build Raw Image
-        run: |
-          sudo podman pull ghcr.io/gpillon/k4all-image
-          sudo podman run \
-            --rm \
-            --privileged \
-            --pull=newer \
-            --security-opt label=type:unconfined_t \
-            -v ./output:/output \
-            -v /var/lib/containers/storage:/var/lib/containers/storage \
-            quay.io/centos-bootc/bootc-image-builder:latest \
-            --type raw \
-            --rootfs xfs \
-            --local ghcr.io/gpillon/k4all-image
-
-      - name: Configure Loop Devices
-        run: |
-          sudo tree output/
-          sudo mv output/image/disk.raw output/${{ env.RAW_NAME }}
-          sudo chown 1000:1000 output/${{ env.RAW_NAME }}
-          
       - name: Convert Raw to ISO
         run: |
           # Set up loop device and get device name
