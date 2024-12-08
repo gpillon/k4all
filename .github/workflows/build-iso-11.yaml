@@ -110,18 +110,22 @@ jobs:
           
       - name: Convert Raw to ISO
         run: |
-          # Set up loop device and create device mappings
-          sudo kpartx -av output/${{ env.RAW_NAME }}
+          # Set up loop device and get device name
+          LOOP_DEV=$(sudo losetup --show -f output/${{ env.RAW_NAME }})
+          echo "Using loop device: $LOOP_DEV"
           
-          # Create mount point
-          sudo mkdir -p /mnt/raw
+          # Set up partition mapping
+          sudo kpartx -av $LOOP_DEV
           
-          # Mount the root partition (typically the third partition for Fedora)
-          sudo mount /dev/mapper/loop0p3 /mnt/raw
+          # Create temporary mount points
+          sudo mkdir -p /mnt/raw /mnt/boot /mnt/efi
           
-          # Mount the boot partition
-          sudo mkdir -p /mnt/raw/boot
-          sudo mount /dev/mapper/loop0p2 /mnt/raw/boot
+          # Find the root partition (should be the third partition)
+          ROOT_PART=$(echo $LOOP_DEV | sed 's/\/dev\//\/dev\/mapper\//')
+          ROOT_PART="${ROOT_PART}p3"
+          
+          # Mount partitions
+          sudo mount $ROOT_PART /mnt/raw
           
           # Create ISO directory structure
           mkdir -p isofs/{isolinux,EFI/BOOT}
@@ -130,10 +134,7 @@ jobs:
           sudo cp /mnt/raw/boot/vmlinuz-* isofs/isolinux/vmlinuz
           sudo cp /mnt/raw/boot/initramfs-*.img isofs/isolinux/initrd
           
-          # Copy EFI files
-          sudo cp -r /mnt/raw/boot/efi/* isofs/EFI/
-          
-          # Download isolinux files
+          # Install and copy required isolinux files
           sudo apt-get install -y syslinux syslinux-common
           sudo cp /usr/lib/ISOLINUX/isolinux.bin isofs/isolinux/
           sudo cp /usr/lib/syslinux/modules/bios/*.c32 isofs/isolinux/
@@ -146,30 +147,26 @@ jobs:
           
           LABEL linux
             KERNEL vmlinuz
-            APPEND initrd=initrd root=live:CDLABEL=RHCOS-ISO rd.live.image quiet
+            APPEND initrd=initrd root=live:CDLABEL=BOOTC-ISO rd.live.image quiet
           EOF
           
-          # Create the ISO
+          # Create ISO
           sudo xorriso -as mkisofs \
             -iso-level 3 \
             -full-iso9660-filenames \
-            -volid "RHCOS-ISO" \
+            -volid "BOOTC-ISO" \
             -eltorito-boot isolinux/isolinux.bin \
             -eltorito-catalog isolinux/boot.cat \
             -no-emul-boot -boot-load-size 4 -boot-info-table \
             -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
-            -eltorito-alt-boot \
-            -e EFI/BOOT/grub.efi \
-            -no-emul-boot \
-            -isohybrid-gpt-basdat \
             -output output/${{ env.ISO_NAME }} \
             isofs
           
           # Cleanup
-          sudo umount /mnt/raw/boot
           sudo umount /mnt/raw
-          sudo kpartx -d output/${{ env.RAW_NAME }}
-          sudo rm -rf isofs /mnt/raw
+          sudo kpartx -d $LOOP_DEV
+          sudo losetup -d $LOOP_DEV
+          sudo rm -rf isofs /mnt/{raw,boot,efi}
 
       - name: Upload ISO to Job Artifacts
         uses: actions/upload-artifact@v4
