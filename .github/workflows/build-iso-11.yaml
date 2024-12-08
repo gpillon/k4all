@@ -1,8 +1,6 @@
 name: Build and Deploy k4all
 
 on:
-  # schedule:
-  #   - cron: "40 4 * * 1" # Runs at 4:40 UTC every Monday
   pull_request:
     branches:
       - image-based
@@ -28,46 +26,47 @@ env:
   ARCH: x86_64
   VARIANT: CoreOS
   ISO_NAME: k4all-${{ github.ref_name }}-testing.iso
+  RAW_NAME: k4all-${{ github.ref_name }}-testing.raw
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  build-and-push-image:
-    name: Build and Push Fedora CoreOS Image
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+  # build-and-push-image:
+  #   name: Build and Push Fedora CoreOS Image
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: read
+  #     packages: write
+  #     id-token: write
+  #   steps:
+  #     - name: Checkout Repository
+  #       uses: actions/checkout@v4
 
-      - name: Set Up QEMU
-        uses: docker/setup-qemu-action@v2
+  #     - name: Set Up QEMU
+  #       uses: docker/setup-qemu-action@v2
 
-      - name: Set Up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+  #     - name: Set Up Docker Buildx
+  #       uses: docker/setup-buildx-action@v2
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+  #     - name: Log in to GitHub Container Registry
+  #       uses: docker/login-action@v2
+  #       with:
+  #         registry: ghcr.io
+  #         username: ${{ github.actor }}
+  #         password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push Image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          file: ./Containerfile
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-            ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+  #     - name: Build and Push Image
+  #       uses: docker/build-push-action@v4
+  #       with:
+  #         context: .
+  #         file: ./Containerfile
+  #         platforms: linux/amd64
+  #         push: true
+  #         tags: |
+  #           ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+  #           ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
   build-iso:
     name: Build Bootable ISO
@@ -81,39 +80,73 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v2
+      - name: Create Output Directory
+        run: mkdir -p output
 
-      - name: Create Working Directory
-        run: mkdir -p iso-output
-
-      - name: Build ISO with bootc-image-builder
+      - name: Install required packages
         run: |
-          docker run --rm --privileged \
-            -v /var/tmp:/var/tmp \
-            -v $(pwd)/iso-output:/output \
+          sudo apt-get update
+          sudo apt-get install -y podman xorriso genisoimage
+
+      - name: Pull Container Image
+        run: |
+          podman pull ghcr.io/gpillon/k4all-image
+          
+      - name: Build Raw Image
+        run: |
+          podman run \
+            --rm \
+            --privileged \
+            --pull=newer \
+            --security-opt label=type:unconfined_t \
+            -v ./output:/output \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
             quay.io/centos-bootc/bootc-image-builder:latest \
-            --type iso \
-            --output-dir /output \
-            # --config-git https://github.com/${{ github.repository }}.git \
-            # --config-branch ${{ github.ref_name }} \
-            --container-image ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} \
-            --output-name ${{ env.ISO_NAME }}
+            --type raw \
+            --rootfs xfs \
+            --local ghcr.io/gpillon/k4all-image
 
-      - name: Move ISO to Upload Directory
-        id: upload-directory
-        shell: bash
+      - name: Convert Raw to ISO
         run: |
-          ISO_UPLOAD_DIR=${{ github.workspace }}/upload
-          mkdir -p ${ISO_UPLOAD_DIR}
-          mv iso-output/${{ env.ISO_NAME }} ${ISO_UPLOAD_DIR}/
-          echo "iso-upload-dir=${ISO_UPLOAD_DIR}" >> $GITHUB_OUTPUT
+          # First, create a temporary mount point
+          sudo mkdir -p /mnt/raw
+          
+          # Mount the raw image
+          sudo mount -o loop output/${{ env.RAW_NAME }} /mnt/raw
+          
+          # Create ISO directory structure
+          mkdir -p isofs/isolinux
+          
+          # Copy the necessary files from the raw image
+          sudo cp -r /mnt/raw/boot/vmlinuz* isofs/isolinux/vmlinuz
+          sudo cp -r /mnt/raw/boot/initramfs* isofs/isolinux/initrd
+          
+          # Create isolinux configuration
+          cat > isofs/isolinux/isolinux.cfg << EOF
+          DEFAULT linux
+          LABEL linux
+          KERNEL vmlinuz
+          APPEND initrd=initrd root=/dev/sda3 console=tty0 console=ttyS0,115200n8
+          EOF
+          
+          # Create the ISO
+          genisoimage -o output/${{ env.ISO_NAME }} \
+            -b isolinux/isolinux.bin \
+            -c isolinux/boot.cat \
+            -no-emul-boot \
+            -boot-load-size 4 \
+            -boot-info-table \
+            -R -J -v -T isofs/
+          
+          # Cleanup
+          sudo umount /mnt/raw
+          sudo rm -rf isofs /mnt/raw
 
       - name: Upload ISO to Job Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.IMAGE_NAME }}-${{ github.ref_name }}
-          path: ${{ steps.upload-directory.outputs.iso-upload-dir }}
+          path: output/${{ env.ISO_NAME }}
           if-no-files-found: error
           retention-days: 7
           overwrite: true

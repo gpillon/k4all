@@ -4,3 +4,5 @@ install-*.ign
 
 # Ignore files starting with "private-" in the "manifests" subfolder
 manifests/private-*
+
+output/*
