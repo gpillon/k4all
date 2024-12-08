@@ -129,30 +129,19 @@ jobs:
           sudo mount $ROOT_PART /mnt/raw
           sudo mount $BOOT_PART /mnt/boot
           
-          # Debug: Show full directory structure
-          echo "Complete boot directory structure:"
-          sudo tree /mnt/boot
-          
-          echo "Complete ostree directory structure:"
-          sudo find /mnt/boot/ostree -type f
-          
           # Create ISO directory structure
           mkdir -p isofs/{isolinux,EFI/BOOT}
           
-          # Find the boot files in the ostree directory
-          OSTREE_DIR="/mnt/boot/ostree/default-717f957fb4680546cce36bc1c5e633abdbf5e4ecb6e99e5665df3c00a56088fa"
+          # Copy boot files from OSTree directory with exact filenames
+          sudo cp "/mnt/boot/ostree/default-717f957fb4680546cce36bc1c5e633abdbf5e4ecb6e99e5665df3c00a56088fa/vmlinuz-6.11.6-300.fc41.x86_64" isofs/isolinux/vmlinuz
+          sudo cp "/mnt/boot/ostree/default-717f957fb4680546cce36bc1c5e633abdbf5e4ecb6e99e5665df3c00a56088fa/initramfs-6.11.6-300.fc41.x86_64.img" isofs/isolinux/initrd
           
-          echo "Contents of OSTree directory:"
-          sudo ls -la $OSTREE_DIR
-          
-          # Copy boot files from OSTree directory
-          sudo cp $OSTREE_DIR/vmlinuz-* isofs/isolinux/vmlinuz
-          sudo cp $OSTREE_DIR/initramfs-* isofs/isolinux/initrd
-          
-          # Install and copy required isolinux files
-          sudo apt-get install -y syslinux syslinux-common
-          sudo cp /usr/lib/ISOLINUX/isolinux.bin isofs/isolinux/
-          sudo cp /usr/lib/syslinux/modules/bios/*.c32 isofs/isolinux/
+          # Copy required isolinux files from Ubuntu paths
+          sudo cp /usr/lib/syslinux/modules/bios/isolinux.bin isofs/isolinux/
+          sudo cp /usr/lib/syslinux/modules/bios/ldlinux.c32 isofs/isolinux/
+          sudo cp /usr/lib/syslinux/modules/bios/libcom32.c32 isofs/isolinux/
+          sudo cp /usr/lib/syslinux/modules/bios/libutil.c32 isofs/isolinux/
+          sudo cp /usr/lib/syslinux/modules/bios/vesamenu.c32 isofs/isolinux/
           
           # Create isolinux configuration
           cat > isofs/isolinux/isolinux.cfg << EOF
@@ -173,7 +162,7 @@ jobs:
             -eltorito-boot isolinux/isolinux.bin \
             -eltorito-catalog isolinux/boot.cat \
             -no-emul-boot -boot-load-size 4 -boot-info-table \
-            -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
+            -isohybrid-mbr /usr/lib/syslinux/mbr/isohdpfx.bin \
             -output output/${{ env.ISO_NAME }} \
             isofs
           
