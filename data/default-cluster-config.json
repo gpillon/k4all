@@ -1,7 +1,7 @@
 // This file is used to configure the device.
 // The device will read this fle and apply the settings during boot.
 {
-  "version": "1.5.1",
+  "version": "1.5.5",
   "networking": {
     //default_cni (calico cilium)
     "cni": {

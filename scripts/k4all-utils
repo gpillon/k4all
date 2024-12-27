@@ -217,3 +217,27 @@ mask_to_cidr() {
 
   echo $c ; 
 }
+
+# Function to get the system's architecture
+get_architecture() {
+    uname -m
+}
+
+# Function to set CLI_ARCH based on the detected architecture
+set_cli_arch() {
+    local ARCH=$(get_architecture)
+    case "${ARCH}" in
+        x86_64)
+            CLI_ARCH="amd64"
+            ;;
+        armv7l | armv8* | aarch64)
+            CLI_ARCH="arm64"
+            ;;
+        *)
+            echo "Unsupported architecture: ${ARCH}"
+            exit 1
+            ;;
+    esac
+    echo "CLI_ARCH is set to: ${CLI_ARCH}"
+    export CLI_ARCH
+}

@@ -152,11 +152,11 @@ function setup_for_keepalived() {
 # Check if the configuration is static and edit the Ignition file accordingly
 if jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "keepalived"; then
   setup_for_keepalived
-fi
-
 # Check if the configuration is static and edit the Ignition file accordingly
-if jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "kubevip"; then
+elif jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "kubevip"; then
   setup_for_kubevip
+else
+  set_control_plane_endpoint "$(hostname -f)"
 fi
 
 # Check if the block already exists and delete it

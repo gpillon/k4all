@@ -32,6 +32,9 @@ modify_nmcli_connection_if_needed() {
   local key=$2
   local new_value=$3
   local current_value
+  if ["$key" == "ipv4.addresses"]; then
+    nmcli con modify "$con_name" ipv4.method manual
+  fi
   current_value=$(nmcli -g "$key" con show "$con_name")
   if [ "$current_value" != "$new_value" ]; then
     nmcli con modify "$con_name" "$key" "$new_value"
@@ -86,8 +89,8 @@ if [ "$CURRENT_IP_CONFIG" = "static" ]; then
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.gateway "${GATEWAY}"
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns "${DNS}"
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns-search "${DNS_SEARCH}"
-
-else 
+  
+else
   # echo "WARNING! this should not happen...."
   # Retrieve IP, Gateway, DNS, and Domain information from the original network device
   # IP_CIDR=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}" | head -n 1 | cut -d'|' -f1)
@@ -97,6 +100,9 @@ else
 
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.method auto
 fi
+
+ modify_nmcli_connection_if_needed ovs-bridge-int ethernet.cloned-mac-address "${MAC_ADDR}"
+ # modify_nmcli_connection_if_needed ovs-port-eth-int ethernet.cloned-mac-address "${MAC_ADDR}"
 
 # Bring up the ovs-port-eth-int and ovs-bridge-int connections
 nmcli con up ovs-port-eth-int
@@ -124,7 +130,7 @@ if systemctl is-enabled --quiet firewalld; then
 
   # Allow Management Ports
   add_firewalld_rule_if_not_exists 22/tcp  # ssh
-  
+
   # Allow Ingress Ports
   add_firewalld_rule_if_not_exists 80/tcp  # ssh
   add_firewalld_rule_if_not_exists 443/tcp  # ssh
@@ -185,6 +191,8 @@ if systemctl is-enabled --quiet firewalld; then
 
   firewall-cmd --reload
 fi
+
+systemctl restart NetworkManager
 
 # Mark the setup phase as done
 touch /opt/k4all/setup-ph2.done
