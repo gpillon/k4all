@@ -32,7 +32,7 @@ modify_nmcli_connection_if_needed() {
   local key=$2
   local new_value=$3
   local current_value
-  if ["$key" == "ipv4.addresses"]; then
+  if [ "$key" = "ipv4.addresses" ]; then
     nmcli con modify "$con_name" ipv4.method manual
   fi
   current_value=$(nmcli -g "$key" con show "$con_name")
@@ -95,11 +95,11 @@ else
   # DNS=$(nmcli -t -f IP4.DNS dev show "${NET_DEV}" | awk -F":" '{print $2}' | paste -sd "," -)
   # DNS_SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
 
-  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.method auto
+modify_nmcli_connection_if_needed ovs-bridge-int ipv4.method auto
 fi
 
- modify_nmcli_connection_if_needed ovs-bridge-int ethernet.cloned-mac-address "${MAC_ADDR}"
- # modify_nmcli_connection_if_needed ovs-port-eth-int ethernet.cloned-mac-address "${MAC_ADDR}"
+modify_nmcli_connection_if_needed ovs-bridge-int 802-3-ethernet.cloned-mac-address "${MAC_ADDR}"
+# modify_nmcli_connection_if_needed ovs-port-eth-int ethernet.cloned-mac-address "${MAC_ADDR}"
 
 # Bring up the ovs-port-eth-int and ovs-bridge-int connections
 nmcli con up ovs-port-eth-int
