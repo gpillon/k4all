@@ -73,6 +73,12 @@
   },
 
   "node": {
+    // set to false, if you wanto to use the IP address to solve the control plane endpoint
+    "useHostname": "true",
+
+    // set a custom hostname for the controlplane (in this case "useHostname" is ignored)
+    "customHostname": "",
+
     "ha": {
       //interface: the network interface to use for the virtual IP; use auto to automatically select the interface with the default route"
       "interface": "auto",

@@ -33,11 +33,12 @@ modify_nmcli_connection_if_needed() {
   local new_value=$3
   local current_value
   if [ "$key" = "ipv4.addresses" ]; then
-    nmcli con modify "$con_name" ipv4.method manual
-  fi
-  current_value=$(nmcli -g "$key" con show "$con_name")
-  if [ "$current_value" != "$new_value" ]; then
-    nmcli con modify "$con_name" "$key" "$new_value"
+    nmcli con modify "$con_name" ipv4.method manual "$key" "$new_value"
+  else
+    current_value=$(nmcli -g "$key" con show "$con_name")
+    if [ "$current_value" != "$new_value" ]; then
+      nmcli con modify "$con_name" "$key" "$new_value"
+    fi
   fi
 }
 

@@ -20,6 +20,30 @@ validate_node() {
     return 1
   fi
 
+  if ! check_json_value '.node.useHostname'; then
+    echo "Missing 'node.useHostname' section."
+    return 1
+  fi
+
+    if ! check_json_value '.node.customHostname'; then
+    echo "Missing 'node.customHostname' section."
+    return 1
+  fi
+
+    # Check if nnetworking.firewalld.enabled has either 'true' or 'false' values
+  NODE_USEHOSTNAME=$(jq -r '.node.useHostname' "$CONFIG_FILE")
+  if [[ "$NODE_USEHOSTNAME" != "true" && "$NODE_USEHOSTNAME" != "false" ]]; then
+    echo "Invalid 'node.useHostname' value. Must be 'true' or 'false'."
+    return 1
+  fi
+
+    # Check if nnetworking.firewalld.enabled has either 'true' or 'false' values
+  FIREWALLD_ENABLED=$(jq -r '.networking.firewalld.enabled' "$CONFIG_FILE")
+  if [[ "$FIREWALLD_ENABLED" != "true" && "$FIREWALLD_ENABLED" != "false" ]]; then
+    echo "Invalid 'networking.firewalld.enabled' value. Must be 'true' or 'false'."
+    return 1
+  fi
+
   # Check if ha.type has either 'none' or 'keepalived' values
   HA_TYPE=$(jq -r '.node.ha.type' "$CONFIG_FILE")
   if [[ "$HA_TYPE" != "none" && "$HA_TYPE" != "keepalived"  && "$HA_TYPE" != "kubevip" ]]; then

@@ -155,7 +155,9 @@ if jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "keepalived"; then
 # Check if the configuration is static and edit the Ignition file accordingly
 elif jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "kubevip"; then
   setup_for_kubevip
-else
+elif [ "$(jq -r '.node.customHostname // empty' "$K4ALL_CONFIG_FILE")" != "" ]; then
+  set_control_plane_endpoint "$(jq -r '.node.customHostname' "$K4ALL_CONFIG_FILE")"
+elif jq -e '.node.useHostname' "$K4ALL_CONFIG_FILE" | grep -q "true"; then
   set_control_plane_endpoint "$(hostname -f)"
 fi
 
@@ -170,8 +172,10 @@ sh /usr/local/bin/check-advertise-address.sh
 ' >> /root/.bash_profile
 fi
 
-# Append new block
-printf '\n
+# Append new block; TODO: fix to enable hostname usage here (maybe checking /etc/k4allconfig.json -> node.useHostname / node.customHostname)! 
+if ! grep -q "#### K4ALL HELPER ####" /root/.bash_profile; then
+
+  printf '\n
 #### K4ALL HELPER ####
 #### pls, DO NOT REMOVE "K4ALL HELPER" tags, or you could mess up updates :) ###
 
@@ -188,5 +192,5 @@ echo "$(kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath={".dat
 echo ""
 #### END K4ALL HELPER ####
 ' >> /root/.bash_profile
-
+fi
 touch /opt/k4all/setup-ph3.done
