@@ -44,7 +44,7 @@ To create a bootable USB device with the `k4all` ISO:
    - Select the `k4all` ISO, choose your USB device, and click `Start`.
 
 ## Installation
-First version you want to install is the boostrap image: i'ts a single node, with schedulable master. Later, you can add other control nodes or worker nodes. 
+**First version you want to install is the boostrap image**: it's a single node, with schedulable master. Later, you can add other control nodes or worker nodes. 
 
 ### Using the ISO
 
@@ -55,6 +55,16 @@ First version you want to install is the boostrap image: i'ts a single node, wit
 4. Once completed, the system will reboot into the new environment.
 5. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 2013's Hardware).
 6. Follow next steps
+
+### Using prebuilt images
+1. Mount image on your favourite virtualization software
+2. Start the VM
+3. If you want to customize the installation, just press 1 or 2 doring installation to modify the JSON. Discovered disk and ethernet cards will be shown in the config. 
+4. Follow next steps
+
+While Waiting you could listen a nice kubernetes song:
+
+[![NCS - Kubernetes - Virtual Realms](https://img.youtube.com/vi/UMqWNKWYwd8/0.jpg)](https://www.youtube.com/watch?v=UMqWNKWYwd8)
 
 ## Post-Install
 - **Access Dashboard and Token**:
@@ -73,7 +83,7 @@ First version you want to install is the boostrap image: i'ts a single node, wit
 
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
 
-During installation you can run `install-status.sh` to monitor the installation status. When the installation is completed, all the services should be in `loaded     active     exited` state. take a look to te pods also with `kubectl get pods -A`
+During installation you can run `install-status.sh` to monitor the installation status. When the installation is completed, all the services should be in `loaded     active     exited` state. take a look to the pods also with `kubectl get pods -A`
 
 Be Aware: during the installation phase, some failing logs are normal! 
 
@@ -91,7 +101,7 @@ Next features:
 - [ ] Applications catalog
 - [ ] Argocd Based installation ([?](https://github.com/gpillon/k4all/issues/12))
 - [ ] Multi node (WIP)
-- [ ] ARM platform
+- [x] ARM platform (Under Test, ATM the test container in manifest "example pod" is not working... need to change image)
 
 ## Further Information
 
@@ -107,3 +117,4 @@ Let's take a look to [Openshift Single Node](https://docs.openshift.com/containe
 
 ## References
  - [kubevirt-manager.io](https://kubevirt-manager.io/)
+ - [kube-vip](https://kube-vip.io)
