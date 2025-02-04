@@ -73,7 +73,7 @@
   },
 
   "node": {
-    // set to false, if you wanto to use the IP address to solve the control plane endpoint
+    // set to false, if you want to use the IP address to solve the control plane endpoint. set to "short" to use the hostname without the domain part.
     "useHostname": "true",
 
     // set a custom hostname for the controlplane (in this case "useHostname" is ignored)

@@ -157,6 +157,8 @@ elif jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "kubevip"; then
   setup_for_kubevip
 elif [ "$(jq -r '.node.customHostname // empty' "$K4ALL_CONFIG_FILE")" != "" ]; then
   set_control_plane_endpoint "$(jq -r '.node.customHostname' "$K4ALL_CONFIG_FILE")"
+elif jq -e '.node.useHostname' "$K4ALL_CONFIG_FILE" | grep -q "short"; then
+  set_control_plane_endpoint "$(hostname)"
 elif jq -e '.node.useHostname' "$K4ALL_CONFIG_FILE" | grep -q "true"; then
   set_control_plane_endpoint "$(hostname -f)"
 fi

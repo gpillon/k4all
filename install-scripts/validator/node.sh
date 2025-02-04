@@ -25,15 +25,15 @@ validate_node() {
     return 1
   fi
 
-    if ! check_json_value '.node.customHostname'; then
+  if ! check_json_value '.node.customHostname'; then
     echo "Missing 'node.customHostname' section."
     return 1
   fi
 
-    # Check if nnetworking.firewalld.enabled has either 'true' or 'false' values
+    # Check if node.useHostname has either 'true' or 'false' values
   NODE_USEHOSTNAME=$(jq -r '.node.useHostname' "$CONFIG_FILE")
-  if [[ "$NODE_USEHOSTNAME" != "true" && "$NODE_USEHOSTNAME" != "false" ]]; then
-    echo "Invalid 'node.useHostname' value. Must be 'true' or 'false'."
+  if [[ "$NODE_USEHOSTNAME" != "true" && "$NODE_USEHOSTNAME" != "false" && "$NODE_USEHOSTNAME" != "short"  ]]; then
+    echo "Invalid 'node.useHostname' value. Must be 'true', 'false' or short."
     return 1
   fi
 
