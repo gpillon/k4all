@@ -24,6 +24,7 @@ Key features include:
 - 2 CPU Cores.
 - 4GB Ram (2G used by K8all).
 - 20 Minutes.
+- Working DNS (optional) (.... what do you mean?)
 - Coffee, Sugar, Milk (not required).
 
 ## Creating a Bootable USB
@@ -41,7 +42,10 @@ To create a bootable USB device with the `k4all` ISO:
    ```
 3. Use Rufus on Windows:
    - Download [Rufus](https://rufus.ie/)
-   - Select the `k4all` ISO, choose your USB device, and click `Start`.
+   - Select the `k4all` ISO
+   - choose your USB device
+   - select USE DD MODE (!)
+   - click `Start`.
 
 ## Installation
 **First version you want to install is the boostrap image**: it's a single node, with schedulable master. Later, you can add other control nodes or worker nodes. 
@@ -79,7 +83,7 @@ While Waiting you could listen a nice kubernetes song:
 - **Sample Pod**: A sample pod will be created in the `default` namespace if the LVM setup is successful. You can safely delete this pod.
 - **Dashboard**: Access the Kubernetes dashboard via the URL and token you obtain from the system.
    
-## Debugging Failed Setup
+## Debugging Failed Installation
 
 Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
 
@@ -87,7 +91,8 @@ During installation you can run `install-status.sh` to monitor the installation 
 
 Be Aware: during the installation phase, some failing logs are normal! 
 
-## Building the ISO
+## \[Development\] Building the ISO
+Building the ISO for normal installation is not required. If you want to go deep, take a look to the [Wiki]
 
 1. Ensure all dependencies (Podman or Docker) are installed.
 2. Run the `build.sh` script or the GitHub workflow to generate the `k4all` ISO.
@@ -100,7 +105,7 @@ Next features:
 - [ ] Fancy UI to manage your k4all installation
 - [ ] Applications catalog
 - [ ] Argocd Based installation ([?](https://github.com/gpillon/k4all/issues/12))
-- [ ] Multi node (WIP)
+- [x] Multi node
 - [x] ARM platform (Under Test, ATM the test container in manifest "example pod" is not working... need to change image)
 
 ## Further Information
