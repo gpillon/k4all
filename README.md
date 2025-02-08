@@ -92,7 +92,7 @@ During installation you can run `install-status.sh` to monitor the installation 
 Be Aware: during the installation phase, some failing logs are normal! 
 
 ## \[Development\] Building the ISO
-Building the ISO for normal installation is not required. If you want to go deep, take a look to the [Build Process](wiki/Geeky-Stuff:-Build-Process) and the [Installation Process](Geeky-Stuff:-Installation-Process)  
+Building the ISO for normal installation is not required. If you want to go deep, take a look to the [Build Process](wiki/Geeky-Stuff:-Build-Process) and the [Installation Process](wiki/Geeky-Stuff:-Installation-Process)  
 
 1. Ensure all dependencies (Podman or Docker) are installed.
 2. Run the `build.sh` script or the GitHub workflow to generate the `k4all` ISO.
