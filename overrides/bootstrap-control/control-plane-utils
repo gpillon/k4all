@@ -29,12 +29,12 @@ function set_control_plane_endpoint() {
 }
 
 function get_ha_ep_ip() {
-    haEndpoint=$(jq -r '.node.ha.apiControlEndpoint' $K4ALL_CONFIG_FILE)
+    haEndpoint=$(jq -r '.cluster.ha.apiControlEndpoint' $K4ALL_CONFIG_FILE)
     echo $haEndpoint
 }
 
 function get_cluster_ip() {
-    HA_TYPE=$(jq -r '.node.ha.type' "$K4ALL_CONFIG_FILE")
+    HA_TYPE=$(jq -r '.cluster.ha.type' "$K4ALL_CONFIG_FILE")
      if [[ "$HA_TYPE" == "keepalived" ||  "$HA_TYPE" == "kubevip" ]]; then
         ip=$(get_ha_ep_ip)
      else 

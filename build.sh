@@ -22,7 +22,7 @@ fetch_fcos_image() {
 
     # Check if the file already exists in the specified path
     if [ -f "$FCOS_PATH$FCOS_IMAGE" ]; then
-        echo "The file $FCOS_IMAGE already exists."
+        echo "The file $FCOS_IMAGE already exists in $FCOS_PATH$FCOS_IMAGE."
     else
         echo "The file $FCOS_IMAGE does not exist. Downloading..."
         # Download the ISO image
@@ -69,10 +69,11 @@ for role in "${roles[@]}"; do
     # Generate the Ignition file for each role
     echo "Generating Ignition file for $role..."
     $CONTAINER_TOOL run --interactive -v "$(pwd):/data/" --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < "k8s-$role.bu" > "k8s.ign"
+    echo "Generating install Ignition file for $role..."
     $CONTAINER_TOOL run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < install.bu > install.ign
 
     # Remove old ISO if it exists
-    rm -rf "$FCOS_PATH/fcos40-k8s-$role.iso"
+    rm -rf "$FCOS_PATH/fcos42-k8s-$role.iso"
 
     # Generate the customized Fedora CoreOS ISO
     echo "Creating customized ISO for $role..."
@@ -84,7 +85,7 @@ for role in "${roles[@]}"; do
       quay.io/coreos/coreos-installer:release \
       iso ignition embed \
       -i "/data/install.ign" \
-      -o "/fcos/fcos40-k8s-$role.iso" \
+      -o "/fcos/fcos42-k8s-$role.iso" \
       "/fcos/$FCOS_IMAGE"
 
     # Modify kernel arguments for the ISO
@@ -94,7 +95,7 @@ for role in "${roles[@]}"; do
      quay.io/coreos/coreos-installer:release \
      iso kargs modify \
      -a coreos.liveiso.fromram \
-     "/fcos/fcos40-k8s-$role.iso"
+     "/fcos/fcos42-k8s-$role.iso"
 
      mv ./k8s.ign k8s-$role.ign
      mv ./install.ign install-$role.ign

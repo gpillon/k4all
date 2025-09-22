@@ -130,8 +130,8 @@ remove_tagged_block() {
 
 # Function to get the current IP address
 get_ip() {
-    if jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "keepalived"; then
-        jq -r '.node.ha.apiControlEndpoint' $K4ALL_CONFIG_FILE
+    if jq -e '.cluster.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "keepalived"; then
+        jq -r '.cluster.ha.apiControlEndpoint' $K4ALL_CONFIG_FILE
     else
         hostname -I | awk '{print $1}'
     fi

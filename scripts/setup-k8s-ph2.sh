@@ -83,10 +83,7 @@ if [ "$CURRENT_IP_CONFIG" = "static" ]; then
   echo "Search Domains: $DNS_SEARCH"
   echo "IP with CIDR: $IP_CIDR"
 
-  # modify_nmcli_connection_if_needed ovs-bridge-int ipv4.method manual
-  # modify_nmcli_connection_if_needed ovs-bridge-int ipv4.addresses "${IP_CIDR}"
-  ## Temp workaround, need to fix; It works, but ideally is not idempotent
-  nmcli con modify ovs-bridge-int ipv4.method manual ipv4.addresses "${IP_CIDR}"
+  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.addresses "${IP_CIDR}"
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.gateway "${GATEWAY}"
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns "${DNS}"
   modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns-search "${DNS_SEARCH}"

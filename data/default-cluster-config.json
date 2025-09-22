@@ -1,7 +1,7 @@
 // This file is used to configure the device.
 // The device will read this fle and apply the settings during boot.
 {
-  "version": "1.5.5",
+  "version": "1.7.0",
   "networking": {
     //default_cni (calico cilium)
     "cni": {
@@ -72,12 +72,12 @@
     }
   },
 
-  "node": {
-    // set to false, if you wanto to use the IP address to solve the control plane endpoint
-    "useHostname": "true",
+  "cluster": {
+    // set to false, if you want to use the IP address to solve the control plane endpoint. set to "short" to use the hostname without the domain part.
+    "apiEndPointUseHostName": "true",
 
     // set a custom hostname for the controlplane (in this case "useHostname" is ignored)
-    "customHostname": "",
+    "customApiEndPoint": "",
 
     "ha": {
       //interface: the network interface to use for the virtual IP; use auto to automatically select the interface with the default route"
@@ -88,12 +88,20 @@
       //"type": "keepalived",
       //"type": "kubevip",
 
-      // Control plane endpoint for the API server, ignored in "none" mode
+      // Control plane endpoint for the API server, ignored in "none" mode. MUST be an ip, then an external DNS should be configured to resolve the IP. customApiEndPoint & customApiEndPoint are ignored.
       // "apiControlEndpoint": "192.168.0.200",
       
       //  Control plane endpoint subnet size for the API server, ignored in "none" mode
       // "apiControlEndpointSubnetSize": 24
     }
+  },
+  "proxy": {
+    // HTTP Proxy
+    "http_proxy": "",
+    // HTTPS Proxy
+    "https_proxy": "",
+    // No Proxy
+    "no_proxy": ""
   }
 }
 
