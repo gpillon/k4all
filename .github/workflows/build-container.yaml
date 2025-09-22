@@ -27,6 +27,8 @@ jobs:
 
       - name: Create Dockerfile
         run: |
+          touch .dockerignore
+          echo "test" > .dockerignore
           echo "FROM scratch" > Dockerfile
           echo "COPY . /src" >> Dockerfile
           

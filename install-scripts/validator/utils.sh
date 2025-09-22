@@ -47,8 +47,8 @@ is_valid_size() {
   # Extract the value from JSON file
   local value=$(jq -r "$json_path" "$file")
 
-  # Check if the value is an integer
-  if [[ "$value" =~ ^[0-9]+$ ]]; then
+  # Check if the value is an integer and if at least 12000
+  if [[ "$value" =~ ^[0-9]+$ ]] && [[ "$value" -ge 12000 ]]; then
     return 0  # Success exit code
   # Check if the value is a valid percentage within 0% to 100%
   elif [[ "$value" =~ ^([0-9]|[1-9][0-9]|100)%$ ]]; then

@@ -15,7 +15,8 @@ systemd:
         [Unit]
         Description=Set up Helm
         Requires=network-online.target
-        After=network-online.target
+        Requires=fck8s-setup-proxy.service
+        After=network-online.target fck8s-setup-proxy.service
         
         [Service]
         Type=oneshot

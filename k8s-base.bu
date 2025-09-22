@@ -28,6 +28,21 @@ systemd:
         
         [Install]
         WantedBy=multi-user.target
+    - name: fck8s-setup-proxy.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Setup Proxy
+        Requires=network-online.target
+        After=network-online.target
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/setup-proxy.sh
+        RemainAfterExit=yes
+        
+        [Install]
+        WantedBy=multi-user.target
     - name: fck8s-set-static-ip.service
       enabled: true
       contents: |
@@ -64,7 +79,8 @@ systemd:
         [Unit]
         Description=Set up Kubernetes
         Requires=fck8s-set-hostname.service
-        After=fck8s-set-hostname.service 
+        Requires=fck8s-setup-proxy.service
+        After=fck8s-set-hostname.service fck8s-setup-proxy.service
         
         [Service]
         Type=oneshot
@@ -157,6 +173,11 @@ storage:
         name: core
 
   files:
+    - path: "/etc/systemd/system.conf.d/proxy.conf"
+      mode: 420
+      contents:
+        inline: |
+         [Manager]
     - path: "/etc/sysctl.d/k8s.conf"
       mode: 420
       contents:

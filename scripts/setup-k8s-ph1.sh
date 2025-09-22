@@ -21,7 +21,7 @@ if [ -f "/opt/k4all/k8s-setup-ph1.reboot" ]; then
 fi
 
 # Check if node.ha.type is "keepalived" in $CONFIG_JSON, then add keepalived to the package list
-if jq -e '.node.ha.type == "keepalived"' "$K4ALL_CONFIG_FILE" >/dev/null; then
+if jq -e '.cluster.ha.type == "keepalived"' "$K4ALL_CONFIG_FILE" >/dev/null; then
   echo "Adding keepalived to the installation list..."
   PACKAGES="$PACKAGES keepalived"
 fi

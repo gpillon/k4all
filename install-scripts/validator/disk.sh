@@ -32,11 +32,11 @@ validate_disk() {
     return 1
   fi
 
-  # Check for disk.root.size_mib is greater than 12000
-  if [[ $(jq -r '.disk.root.size_mib' "$CONFIG_FILE") -lt 12000 ]]; then
-    echo "Invalid 'disk.root.size_mib' value. Must be greater than 12000."
-    return 1
-  fi
+  # # Check for disk.root.size_mib is greater than 12000 if not a percentage
+  # if [[ $(jq -r '.disk.root.size_mib' "$CONFIG_FILE") -lt 12000 ]]; then
+  #   echo "Invalid 'disk.root.size_mib' value. Must be greater than 12000."
+  #   return 1
+  # fi
 
   # Check for disk.keep_lvm section
   if ! check_json_value '.disk.keep_lvm'; then

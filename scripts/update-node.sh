@@ -47,21 +47,20 @@ function set_or_get_node_type() {
     fi
 }
 
-
-version_le() {
-    # Return 0 (true) if $1 < $2, else return 1 (false)
-    [ "$1" = "$2" ] && return 1
-
+# Check if version $1 is less than version $2
+version_lt() {
     local IFS=.
     local i ver1=($1) ver2=($2)
-    # Fill empty fields in ver1 with zeros
+
+    # Fill empty fields in ver1 and ver2 with zeros
     for ((i=${#ver1[@]}; i<${#ver2[@]}; i++)); do
         ver1[i]=0
     done
-    # Fill empty fields in ver2 with zeros
     for ((i=${#ver2[@]}; i<${#ver1[@]}; i++)); do
         ver2[i]=0
     done
+
+    # Compare versions
     for ((i=0; i<${#ver1[@]}; i++)); do
         if ((10#${ver1[i]} < 10#${ver2[i]})); then
             return 0
@@ -69,7 +68,15 @@ version_le() {
             return 1
         fi
     done
-    return 1
+    return 1  # Return 1 if all parts are equal
+}
+
+# Check if version $1 is less than or equal to version $2
+version_le() {
+    if [ "$1" = "$2" ]; then
+        return 0  # versions are equal
+    fi
+    version_lt $1 $2
 }
 
 # Function to migrate configuration
@@ -97,6 +104,15 @@ migrate_config() {
         echo "Performing migration steps to version 2.0.0" >&2
         # For example, remove a deprecated field
         # config=$(echo "$config" | jq 'del(.deprecatedField)')
+    fi
+
+    # Apply changes specifically for version 1.6.1 or higher
+    if ! version_lt "$new_version" "1.6.1"; then  # This means new_version >= 1.6.1
+        echo "Applying schema changes for version 1.6.1 or higher" >&2
+        # Rename "node" to "cluster"
+        config=$(echo "$config" | jq 'if has("node") then .cluster = .node | del(.node) else . end')
+        # Rename "customHostname" to "apiEndPoint" in "cluster"
+        config=$(echo "$config" | jq '.cluster |= (if has("customHostname") then .customApiEndPoint = .customHostname | del(.customHostname) else . end)')
     fi
 
     # Return the modified config
@@ -141,7 +157,7 @@ extract_services() {
         echo "$service_contents" > "${dest_folder}/${service_name}"
     done
     #echo "Services extracted and saved in folder $DEST_FOLDER"
-}
+} 
 
 # Function to extract services and copy files defined in .storage.trees
 extract_and_copy_trees() {

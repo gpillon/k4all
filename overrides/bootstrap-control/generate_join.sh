@@ -13,6 +13,7 @@ function print_help {
     echo "  control               Generate a join command for a control plane node."
     echo ""
     echo "OPTIONS:"
+    echo "  --unattended          Output the join command without any additional output. (overrides all other options)"
     echo "  --debug               Output the join command in clear text."
     echo ""
     echo "Examples:"
@@ -29,6 +30,9 @@ do
             ;;
         --debug)
             debug=1
+            ;;
+        --unattended)
+            unattended=1
             ;;
         --help)
             print_help
@@ -61,6 +65,9 @@ if [[ $mode == "control" ]]; then
     JOIN_COMMAND="${JOIN_COMMAND} --control-plane --certificate-key ${CERT_KEY}"
 fi
 
+
+if [[ $unattended -eq 1 ]]; then
+    echo "${JOIN_COMMAND}"
 if [[ $debug -eq 1 ]]; then
     # Output in clear text if --debug is specified
     echo "Clear text join command:"

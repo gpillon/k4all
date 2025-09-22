@@ -14,7 +14,7 @@ HOME=/root/
 HA_INGRESS_PARAMS=""
 
 # Check if the configuration is static and edit the Ignition file accordingly
-if jq -e '.node.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "kubevip"; then
+if jq -e '.cluster.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "kubevip"; then
   HA_INGRESS_PARAMS="--set \"controller.service.loadBalancerClass=kube-vip.io/kube-vip-class\" " 
 fi
 
