@@ -74,7 +74,7 @@
 
   "cluster": {
     // set to false, if you want to use the IP address to solve the control plane endpoint. set to "short" to use the hostname without the domain part.
-    "apiEndPointUseHostName": "true",
+    "apiEndPointUseHostName": "false",
 
     // set a custom hostname for the controlplane (in this case "useHostname" is ignored)
     "customApiEndPoint": "",

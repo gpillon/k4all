@@ -21,9 +21,9 @@ $h upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager
 echo "Waiting for Cert-Manager pods to be up and running..."
 
 # Wait for cert-manager deployment to complete
-$k wait --namespace cert-manager --for=condition=available --timeout=600s deployment/cert-manager
-$k wait --namespace cert-manager --for=condition=available --timeout=600s deployment/cert-manager-webhook
-$k wait --namespace cert-manager --for=condition=available --timeout=600s deployment/cert-manager-cainjector
+$k wait --namespace cert-manager --for=condition=available --timeout=1800s deployment/cert-manager
+$k wait --namespace cert-manager --for=condition=available --timeout=1800s deployment/cert-manager-webhook
+$k wait --namespace cert-manager --for=condition=available --timeout=1800s deployment/cert-manager-cainjector
 
 echo "Cert-manager installation complete, proceeding with the rest of the script."
 touch /opt/k4all/certmanager-setup.done

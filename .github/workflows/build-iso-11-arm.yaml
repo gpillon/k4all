@@ -1,4 +1,4 @@
-name: Build and Release k4all ISO
+name: Build and Release k4all ISO - ARM
 'on':
   push:
     tags:
@@ -95,7 +95,7 @@ jobs:
           done
         shell: bash
 
-      - name: Create a GitHub Release
+      - name: Create a GitHub Release - Bootstrap
         id: create_release_bootstrap
         uses: softprops/action-gh-release@v2
         with:
@@ -109,7 +109,7 @@ jobs:
             ./k4all/k4all-bootstrap-${{ env.version }}-${{ env.ARCH }}.vdi
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
-      - name: Create a GitHub Release
+      - name: Create a GitHub Release - Control
         id: create_release_control
         uses: softprops/action-gh-release@v2
         with:
@@ -123,7 +123,7 @@ jobs:
             ./k4all/k4all-control-${{ env.version }}-${{ env.ARCH }}.vdi
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
-      - name: Create a GitHub Release
+      - name: Create a GitHub Release - Worker
         id: create_release_worker
         uses: softprops/action-gh-release@v2
         with:
