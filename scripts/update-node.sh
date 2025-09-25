@@ -130,7 +130,7 @@ check_repos() {
         if [ -f "$HOST_REPO_FOLDER/$base_repo_file" ]; then
             if ! diff -Z "$repo_file" "$HOST_REPO_FOLDER/$base_repo_file" > /dev/null; then
                 echo "Differences found in $base_repo_file. Exiting script. You probably need to update the cluster to a newer version. Use the --force flag if you want to update anyway."
-                echo "please visit https://github.com/gpillon/k4all/wiki/Kubernetes-updates to update the cluster to a newer version."
+                echo "Please visit https://github.com/gpillon/k4all/wiki/Kubernetes-updates to update the cluster to a newer version."
                 diff -Z "$repo_file" "$HOST_REPO_FOLDER/$base_repo_file"
                 exit 1
             else

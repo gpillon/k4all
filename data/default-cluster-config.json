@@ -103,6 +103,11 @@
     // No Proxy
     "no_proxy": ""
   }
+
+  // autojoin configuration
+  // to autojoin the node to cluster, paste here the join command generated on master/bootstrap node with "generate_join.sh worker | control" 
+  //"autoJoin": "<Base 64 string>"
+
 }
 
 // not used now; but ideas for future
