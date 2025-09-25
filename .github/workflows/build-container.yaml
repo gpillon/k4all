@@ -11,6 +11,7 @@ name: Build and Push Container
 jobs:
   build-and-push-src-in-container:
     runs-on: ubuntu-latest
+    environment: "Build Standard"
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
