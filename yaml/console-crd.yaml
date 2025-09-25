@@ -1,0 +1,222 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    kubernetes.io/metadata.name: openshift-console
+  name: openshift-console
+spec:
+  finalizers:
+    - kubernetes
+
+---
+apiVersion: v1
+data:
+  console-config.yaml: |
+    apiVersion: console.openshift.io/v1
+    kind: ConsoleConfig
+    clusterInfo:
+      consoleBaseAddress: http://localhost:9000
+      controlPlaneTopology: SingleReplica
+      releaseVersion: "custom"
+    customization:
+      branding: okd
+      capabilities:
+      - name: LightspeedButton
+        visibility:
+          state: Disabled
+      - name: GettingStartedBanner
+        visibility:
+          state: Enabled
+      developerCatalog:
+        categories: null
+        types:
+          state: Enabled
+      documentationBaseURL: https://github.com/gpillon/k4all/wiki/
+      perspectives:
+      - id: dev
+        visibility:
+          state: Disabled
+kind: ConfigMap
+metadata:
+  name: console-config
+  namespace: openshift-console
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: console
+  namespace: openshift-console
+
+---
+apiVersion: v1
+data:
+  ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURCVENDQWUyZ0F3SUJBZ0lJV25ZNllaOFFaS0F3RFFZSktvWklodmNOQVFFTEJRQXdGVEVUTUJFR0ExVUUKQXhNS2EzVmlaWEp1WlhSbGN6QWVGdzB5TlRBNU1qSXdNREV4TlROYUZ3MHpOVEE1TWpBd01ERTJOVE5hTUJVeApFekFSQmdOVkJBTVRDbXQxWW1WeWJtVjBaWE13Z2dFaU1BMEdDU3FHU0liM0RRRUJBUVVBQTRJQkR3QXdnZ0VLCkFvSUJBUURoRzQrWGVLNFJmdDVMbG03UW02UlBvYzR3cU85Q3VjSElNY0NHNjBFT2NRUDFYNDVQd2NNOE42a2EKSmFvb01IR3VCWmRnTG5Zb3piSklITUYzWktFYldpN2hRVVY3QmRaYktBZkJKRlE3MVJkalZtajRCVUVFWWtoUQpleUhORUJBTm9lVEN3VU02UVMxUUkxb0JCdjV5ZVliNUhJZHA1Q0gyTjFxcllIa3cyZmZEQ0g5TXJ6M3puTGdzCmNPNWdDYlExQUtjYmFmRWcreWV5MVIwWHRiNXdqYzl3VE80S2tIdUkwb1hHSG1BUVlBcUordzJLMFJqd1JzTEsKQ0gvdm1zcTdoSjEwcHFib1BXWUF6SFNoczVPRkJQNE1UenpIUUtDMml1WHZYOW1COTBPY0xZQ3pxbTNtODkyawp6Yno4VnZhTi9uZTR5VTlyNW9qcXRiZU9xaWpsQWdNQkFBR2pXVEJYTUE0R0ExVWREd0VCL3dRRUF3SUNwREFQCkJnTlZIUk1CQWY4RUJUQURBUUgvTUIwR0ExVWREZ1FXQkJROWdtTmhHNTlWeFR3M3hyYjQzTklKbHA5Q3BEQVYKQmdOVkhSRUVEakFNZ2dwcmRXSmxjbTVsZEdWek1BMEdDU3FHU0liM0RRRUJDd1VBQTRJQkFRRFc4Ny9ZaUpTOAprU3FIUE8yUnBSd0pWV0pzKzkwSFRrc0NQVkRML0xtbEpSeTQvNSs2ZTYxVG1hYlN3WkFlUHEvdGp2bEQ3QzF1CnYvWm5iSVd2N1RYWXllQnltZ2lwV0IrTEk5cGJZdmtRQ29sUFR2YXZDYjRYYmU3V0g2MzR6RlUrbjlPSHpvQ0oKL1h6akhnTmpYTE1DMUpXRE5Jc3BPa3BnMlhwTFQxdklZTDRTRDNENGoyMGY1WnFDTXRlVDdhdFkrMkZUR2JOVQpWcWt0bGtMazVvNThEVnBqRXRkRHFxUkw4UlUyQ1hpNEpZbmk5UzV0WklTM1JZc3ZNUE1ONTZ6RURoRkdYWVp4ClY1eEtzcUoyd3BHVFQyaTFrRFpVbVZpenlGTDhvOENtQi8zY1p1ZTJ2S0N4UVZ0MldvVkNyWGl0NnZvMHdERnYKQ0R3QURpcFJCcW8rCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+  namespace: b3BlbnNoaWZ0LWNvbnNvbGU=
+  token: ZXlKaGJHY2lPaUpTVXpJMU5pSXNJbXRwWkNJNkluaE9XbVJNY3pkelZsY3hkbVJ4YlZOMWJIQndRemxQV21SclVrdERjR2syVFMwM1ExOWxjMlJhUVZFaWZRLmV5SnBjM01pT2lKcmRXSmxjbTVsZEdWekwzTmxjblpwWTJWaFkyTnZkVzUwSWl3aWEzVmlaWEp1WlhSbGN5NXBieTl6WlhKMmFXTmxZV05qYjNWdWRDOXVZVzFsYzNCaFkyVWlPaUp2Y0dWdWMyaHBablF0WTI5dWMyOXNaU0lzSW10MVltVnlibVYwWlhNdWFXOHZjMlZ5ZG1salpXRmpZMjkxYm5RdmMyVmpjbVYwTG01aGJXVWlPaUpqYjI1emIyeGxMWE5oTFhSdmEyVnVJaXdpYTNWaVpYSnVaWFJsY3k1cGJ5OXpaWEoyYVdObFlXTmpiM1Z1ZEM5elpYSjJhV05sTFdGalkyOTFiblF1Ym1GdFpTSTZJbU52Ym5OdmJHVWlMQ0pyZFdKbGNtNWxkR1Z6TG1sdkwzTmxjblpwWTJWaFkyTnZkVzUwTDNObGNuWnBZMlV0WVdOamIzVnVkQzUxYVdRaU9pSmxOV0l4TkRKaE1TMDVNVEE0TFRRd1pEWXRZV1k0TmkwMU4yUTNZV00zTm1SallqUWlMQ0p6ZFdJaU9pSnplWE4wWlcwNmMyVnlkbWxqWldGalkyOTFiblE2YjNCbGJuTm9hV1owTFdOdmJuTnZiR1U2WTI5dWMyOXNaU0o5LmNaME11UTdwSnNiWllrTmt4SEI3YWkzVFQwMWJaQ0drZWpmb3NmemZKNFlDdV9PRkNuNTJ4d28wc2cwLUF6NE5waEZwbUdSSnlsV1RKTmcwMDBBY295Sk9Jc3ZieUhsSjRiSVdqUGF6UVo3UGlwN180SlVEbFg0aDhReGlOT0ZwS2pIVENrSURZWjEwc0xfaUJyU3NLWnNrWjU0cVFiYkdpVGd3V1pfai11VVVuQ3NJdUNjZ0lNeFBVS3Z0dUxVQnpyRXpIZmRQVDlFY1g1UHFwSkVsWlZ6NkhjLUNLWFM3aGJXaTJsOXZTODRkaWxjc0UydUNtZlhrU3lacFJSVDZZc1l0V0dobHl4VW9RZTVJUmg0OGZldm1FTFJEMXNINFc1VFlyTkRkTEwxdkdxQVBUZHEyQWZVa3ROdXJlcjRUZVB0OEdMYURROFN5aDV1UkxpUG9WUQ==
+kind: Secret
+metadata:
+  labels:
+    kubernetes.io/legacy-token-last-used: "2025-09-24"
+  name: console-sa-token
+  namespace: openshift-console
+type: kubernetes.io/service-account-token
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: console-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: console
+    namespace: openshift-console
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: console-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: console
+    namespace: openshift-console
+	
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: console
+    component: ui
+  name: console
+  namespace: openshift-console
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: console
+      component: ui
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: console
+        component: ui
+    spec:
+      containers:
+        - command:
+            - /opt/bridge/bin/bridge
+            - --public-dir=/opt/bridge/static
+            - --user-auth=disabled
+            - --config=/var/console-config/console-config.yaml
+            - --k8s-mode-off-cluster-skip-verify-tls=true
+          env:
+            - name: BRIDGE_USER_AUTH
+              value: disabled
+            - name: BRIDGE_K8S_MODE
+              value: off-cluster
+            - name: BRIDGE_K8S_MODE_OFF_CLUSTER_ENDPOINT
+              value: https://kubernetes.default.svc:443
+            - name: BRIDGE_K8S_MODE_OFF_CLUSTER_SKIP_VERIFY_TLS
+              value: "true"
+            - name: BRIDGE_K8S_MODE_OFF_CLUSTER_CA_FILE
+              value: /var/run/secrets/kubernetes.io/k8s-ca/ca.crt
+            - name: BRIDGE_K8S_AUTH_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: token
+                  name: console-sa-token
+          image: quay.io/openshift/origin-console:4.21.0
+          imagePullPolicy: Always
+          name: console
+          ports:
+            - containerPort: 9000
+              name: http
+              protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - mountPath: /var/console-config
+              name: console-config
+              readOnly: true
+            - mountPath: /etc/pki/ca-trust/extracted/pem
+              name: trusted-ca-bundle
+              readOnly: true
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - configMap:
+            defaultMode: 420
+            name: console-config
+          name: console-config
+        - configMap:
+            defaultMode: 420
+            items:
+              - key: ca.crt
+                path: tls-ca-bundle.pem
+            name: kube-root-ca.crt
+          name: trusted-ca-bundle
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: console
+  namespace: openshift-console
+spec:
+  clusterIP: 10.96.120.65
+  clusterIPs:
+    - 10.96.120.65
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: web
+      port: 9000
+      protocol: TCP
+      targetPort: 9000
+  selector:
+    app: console
+    component: ui
+  sessionAffinity: None
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: console
+  namespace: openshift-console
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: console.192.168.221.161.nip.io
+      http:
+        paths:
+          - backend:
+              service:
+                name: console
+                port:
+                  name: web
+            path: /
+            pathType: Prefix

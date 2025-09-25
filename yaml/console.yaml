@@ -1,15 +1,32 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  labels:
-    kubernetes.io/metadata.name: openshift-console
   name: openshift-console
 spec:
   finalizers:
     - kubernetes
-
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-console-user-settings
+spec:
+  finalizers:
+    - kubernetes
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-network-console
+spec:
+  finalizers:
+    - kubernetes
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: console-config
+  namespace: openshift-console
 data:
   console-config.yaml: |
     apiVersion: console.openshift.io/v1
@@ -18,6 +35,12 @@ data:
       consoleBaseAddress: http://localhost:9000
       controlPlaneTopology: SingleReplica
       releaseVersion: "custom"
+    i18nNamespaces:
+      - plugin__networking-console-plugin
+    plugins:
+      networking-console-plugin: http://networking-console-plugin.openshift-network-console.svc.cluster.local:9080/
+    pluginsOrder:
+    - networking-console-plugin
     customization:
       branding: okd
       capabilities:
@@ -26,7 +49,7 @@ data:
           state: Disabled
       - name: GettingStartedBanner
         visibility:
-          state: Enabled
+          state: Disabled
       developerCatalog:
         categories: null
         types:
@@ -36,11 +59,7 @@ data:
       - id: dev
         visibility:
           state: Disabled
-kind: ConfigMap
-metadata:
-  name: console-config
-  namespace: openshift-console
-
+          
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -50,16 +69,12 @@ metadata:
 
 ---
 apiVersion: v1
-data:
-  ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURCVENDQWUyZ0F3SUJBZ0lJV25ZNllaOFFaS0F3RFFZSktvWklodmNOQVFFTEJRQXdGVEVUTUJFR0ExVUUKQXhNS2EzVmlaWEp1WlhSbGN6QWVGdzB5TlRBNU1qSXdNREV4TlROYUZ3MHpOVEE1TWpBd01ERTJOVE5hTUJVeApFekFSQmdOVkJBTVRDbXQxWW1WeWJtVjBaWE13Z2dFaU1BMEdDU3FHU0liM0RRRUJBUVVBQTRJQkR3QXdnZ0VLCkFvSUJBUURoRzQrWGVLNFJmdDVMbG03UW02UlBvYzR3cU85Q3VjSElNY0NHNjBFT2NRUDFYNDVQd2NNOE42a2EKSmFvb01IR3VCWmRnTG5Zb3piSklITUYzWktFYldpN2hRVVY3QmRaYktBZkJKRlE3MVJkalZtajRCVUVFWWtoUQpleUhORUJBTm9lVEN3VU02UVMxUUkxb0JCdjV5ZVliNUhJZHA1Q0gyTjFxcllIa3cyZmZEQ0g5TXJ6M3puTGdzCmNPNWdDYlExQUtjYmFmRWcreWV5MVIwWHRiNXdqYzl3VE80S2tIdUkwb1hHSG1BUVlBcUordzJLMFJqd1JzTEsKQ0gvdm1zcTdoSjEwcHFib1BXWUF6SFNoczVPRkJQNE1UenpIUUtDMml1WHZYOW1COTBPY0xZQ3pxbTNtODkyawp6Yno4VnZhTi9uZTR5VTlyNW9qcXRiZU9xaWpsQWdNQkFBR2pXVEJYTUE0R0ExVWREd0VCL3dRRUF3SUNwREFQCkJnTlZIUk1CQWY4RUJUQURBUUgvTUIwR0ExVWREZ1FXQkJROWdtTmhHNTlWeFR3M3hyYjQzTklKbHA5Q3BEQVYKQmdOVkhSRUVEakFNZ2dwcmRXSmxjbTVsZEdWek1BMEdDU3FHU0liM0RRRUJDd1VBQTRJQkFRRFc4Ny9ZaUpTOAprU3FIUE8yUnBSd0pWV0pzKzkwSFRrc0NQVkRML0xtbEpSeTQvNSs2ZTYxVG1hYlN3WkFlUHEvdGp2bEQ3QzF1CnYvWm5iSVd2N1RYWXllQnltZ2lwV0IrTEk5cGJZdmtRQ29sUFR2YXZDYjRYYmU3V0g2MzR6RlUrbjlPSHpvQ0oKL1h6akhnTmpYTE1DMUpXRE5Jc3BPa3BnMlhwTFQxdklZTDRTRDNENGoyMGY1WnFDTXRlVDdhdFkrMkZUR2JOVQpWcWt0bGtMazVvNThEVnBqRXRkRHFxUkw4UlUyQ1hpNEpZbmk5UzV0WklTM1JZc3ZNUE1ONTZ6RURoRkdYWVp4ClY1eEtzcUoyd3BHVFQyaTFrRFpVbVZpenlGTDhvOENtQi8zY1p1ZTJ2S0N4UVZ0MldvVkNyWGl0NnZvMHdERnYKQ0R3QURpcFJCcW8rCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
-  namespace: b3BlbnNoaWZ0LWNvbnNvbGU=
-  token: ZXlKaGJHY2lPaUpTVXpJMU5pSXNJbXRwWkNJNkluaE9XbVJNY3pkelZsY3hkbVJ4YlZOMWJIQndRemxQV21SclVrdERjR2syVFMwM1ExOWxjMlJhUVZFaWZRLmV5SnBjM01pT2lKcmRXSmxjbTVsZEdWekwzTmxjblpwWTJWaFkyTnZkVzUwSWl3aWEzVmlaWEp1WlhSbGN5NXBieTl6WlhKMmFXTmxZV05qYjNWdWRDOXVZVzFsYzNCaFkyVWlPaUp2Y0dWdWMyaHBablF0WTI5dWMyOXNaU0lzSW10MVltVnlibVYwWlhNdWFXOHZjMlZ5ZG1salpXRmpZMjkxYm5RdmMyVmpjbVYwTG01aGJXVWlPaUpqYjI1emIyeGxMWE5oTFhSdmEyVnVJaXdpYTNWaVpYSnVaWFJsY3k1cGJ5OXpaWEoyYVdObFlXTmpiM1Z1ZEM5elpYSjJhV05sTFdGalkyOTFiblF1Ym1GdFpTSTZJbU52Ym5OdmJHVWlMQ0pyZFdKbGNtNWxkR1Z6TG1sdkwzTmxjblpwWTJWaFkyTnZkVzUwTDNObGNuWnBZMlV0WVdOamIzVnVkQzUxYVdRaU9pSmxOV0l4TkRKaE1TMDVNVEE0TFRRd1pEWXRZV1k0TmkwMU4yUTNZV00zTm1SallqUWlMQ0p6ZFdJaU9pSnplWE4wWlcwNmMyVnlkbWxqWldGalkyOTFiblE2YjNCbGJuTm9hV1owTFdOdmJuTnZiR1U2WTI5dWMyOXNaU0o5LmNaME11UTdwSnNiWllrTmt4SEI3YWkzVFQwMWJaQ0drZWpmb3NmemZKNFlDdV9PRkNuNTJ4d28wc2cwLUF6NE5waEZwbUdSSnlsV1RKTmcwMDBBY295Sk9Jc3ZieUhsSjRiSVdqUGF6UVo3UGlwN180SlVEbFg0aDhReGlOT0ZwS2pIVENrSURZWjEwc0xfaUJyU3NLWnNrWjU0cVFiYkdpVGd3V1pfai11VVVuQ3NJdUNjZ0lNeFBVS3Z0dUxVQnpyRXpIZmRQVDlFY1g1UHFwSkVsWlZ6NkhjLUNLWFM3aGJXaTJsOXZTODRkaWxjc0UydUNtZlhrU3lacFJSVDZZc1l0V0dobHl4VW9RZTVJUmg0OGZldm1FTFJEMXNINFc1VFlyTkRkTEwxdkdxQVBUZHEyQWZVa3ROdXJlcjRUZVB0OEdMYURROFN5aDV1UkxpUG9WUQ==
 kind: Secret
 metadata:
-  labels:
-    kubernetes.io/legacy-token-last-used: "2025-09-24"
   name: console-sa-token
   namespace: openshift-console
+  annotations:
+    kubernetes.io/service-account.name: "console"
 type: kubernetes.io/service-account-token
 
 ---
@@ -75,7 +90,6 @@ subjects:
   - kind: ServiceAccount
     name: console
     namespace: openshift-console
-
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -89,7 +103,6 @@ subjects:
   - kind: ServiceAccount
     name: console
     namespace: openshift-console
-	
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -132,8 +145,12 @@ spec:
               value: off-cluster
             - name: BRIDGE_K8S_MODE_OFF_CLUSTER_ENDPOINT
               value: https://kubernetes.default.svc:443
+            - name: BRIDGE_USER_SETTINGS_LOCATION
+              value: localstorage
             - name: BRIDGE_K8S_MODE_OFF_CLUSTER_SKIP_VERIFY_TLS
               value: "true"
+            - name: HELM_REPOSITORY_CONFIG
+              value: "/tmp/repositories.yaml"
             - name: BRIDGE_K8S_MODE_OFF_CLUSTER_CA_FILE
               value: /var/run/secrets/kubernetes.io/k8s-ca/ca.crt
             - name: BRIDGE_K8S_AUTH_BEARER_TOKEN
@@ -155,8 +172,9 @@ spec:
             - mountPath: /var/console-config
               name: console-config
               readOnly: true
-            - mountPath: /etc/pki/ca-trust/extracted/pem
+            - mountPath: /etc/pki/ca-trust/extracted/pem/k8s-ca-bundle.pem
               name: trusted-ca-bundle
+              subPath: k8s-ca-bundle.pem
               readOnly: true
       dnsPolicy: ClusterFirst
       restartPolicy: Always
@@ -172,7 +190,7 @@ spec:
             defaultMode: 420
             items:
               - key: ca.crt
-                path: tls-ca-bundle.pem
+                path: k8s-ca-bundle.pem
             name: kube-root-ca.crt
           name: trusted-ca-bundle
 
@@ -200,23 +218,196 @@ spec:
     component: ui
   sessionAffinity: None
   type: ClusterIP
-
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: helm.openshift.io/v1beta1
+kind: HelmChartRepository
 metadata:
-  name: console
-  namespace: openshift-console
+  annotations:
+    capability.openshift.io/name: Console
+    include.release.openshift.io/hypershift: 'true'
+    include.release.openshift.io/ibm-cloud-managed: 'true'
+    include.release.openshift.io/self-managed-high-availability: 'true'
+    include.release.openshift.io/single-node-developer: 'true'
+    release.openshift.io/create-only: 'true'
+  name: openshift-helm-charts
 spec:
-  ingressClassName: nginx
-  rules:
-    - host: console.192.168.221.161.nip.io
-      http:
-        paths:
-          - backend:
-              service:
-                name: console
-                port:
-                  name: web
-            path: /
-            pathType: Prefix
+  connectionConfig:
+    url: https://charts.openshift.io
+  name: OpenShift Helm Charts
+---
+apiVersion: console.openshift.io/v1
+kind: ConsolePlugin
+metadata:
+  name: networking-console-plugin
+spec:
+  backend:
+    service:
+      basePath: /
+      name: networking-console-plugin
+      namespace: openshift-network-console
+      port: 9443
+    type: Service
+  displayName: Networking Console Plugin
+  i18n:
+    loadType: Preload
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    openshift.io/description: >-
+      Expose the networking console plugin service on port 9080. This port is
+      for internal use, and no other usage is guaranteed.
+  labels:
+    app.kubernetes.io/component: networking-console-plugin
+  name: networking-console-plugin
+  namespace: openshift-network-console
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: http
+      port: 9080
+      protocol: TCP
+      targetPort: 9080
+  selector:
+    app.kubernetes.io/component: networking-console-plugin
+    app.kubernetes.io/name: networking-console-plugin
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: v1
+data:
+  nginx.conf: |-
+    error_log /dev/stdout info;
+    events {}
+    http {
+      include            /etc/nginx/mime.types;
+      default_type       application/octet-stream;
+      keepalive_timeout  65;
+
+      server {
+        listen              9080;   
+        listen              [::]:9080;
+        root                /opt/app-root/src;
+
+        # Prevent caching for plugin-manifest.json
+        location = /plugin-manifest.json {
+          add_header Cache-Control 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0';
+          add_header Pragma 'no-cache';
+          add_header Expires '0';
+        }
+
+        # Prevent caching for plugin-entry.js
+        location = /plugin-entry.js {
+          add_header Cache-Control 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0';
+          add_header Pragma 'no-cache';
+          add_header Expires '0';
+        }
+      }
+    }
+immutable: false
+kind: ConfigMap
+metadata:
+  name: networking-console-plugin
+  namespace: openshift-network-console
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kubernetes.io/description: |
+      This deployment deploys the Networking console plugin pod which serves
+      the contents of the Networking section in OpenShift Console
+  labels:
+    app.kubernetes.io/component: networking-console-plugin
+    app.kubernetes.io/name: networking-console-plugin
+  name: networking-console-plugin
+  namespace: openshift-network-console
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: networking-console-plugin
+      app.kubernetes.io/name: networking-console-plugin
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        openshift.io/required-scc: restricted-v2
+      labels:
+        app.kubernetes.io/component: networking-console-plugin
+        app.kubernetes.io/name: networking-console-plugin
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - command:
+            - /bin/sh
+            - '-c'
+            - >
+              if echo "$POD_IP" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+                LISTEN_ADDRESS_PORT_REPLACED_AT_RUNTIME="9080"
+              else
+                LISTEN_ADDRESS_PORT_REPLACED_AT_RUNTIME="[::]:9080"
+              fi
+
+              sed
+              "s/LISTEN_ADDRESS_PORT_REPLACED_AT_RUNTIME/$LISTEN_ADDRESS_PORT_REPLACED_AT_RUNTIME/g"
+              /etc/nginx/nginx.conf > /tmp/nginx.conf
+
+              exec nginx -c /tmp/nginx.conf -g 'daemon off;'
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+          image: >-
+            quay.io/okd/scos-content@sha256:8a6a434b6975e50072284893997dc37223ecfdd33d5a4bae79f5b16dfd998159
+          imagePullPolicy: IfNotPresent
+          name: networking-console-plugin
+          ports:
+            - containerPort: 9080
+              name: http
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 1m
+              memory: 50Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+            - mountPath: /etc/nginx/nginx.conf
+              name: nginx-conf
+              readOnly: true
+              subPath: nginx.conf
+      dnsPolicy: ClusterFirst
+      nodeSelector:
+        kubernetes.io/os: linux
+      priorityClassName: system-cluster-critical
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - configMap:
+            defaultMode: 420
+            name: networking-console-plugin
+          name: nginx-conf
+---
