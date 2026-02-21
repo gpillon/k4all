@@ -1,0 +1,16 @@
+[Unit]
+Description=K4All - Role Dispatcher (copy role-specific scripts based on /etc/node-type)
+DefaultDependencies=no
+Before=fck8s-k8s-setup-ph3.service fck8s-k8s-setup-init.service
+After=local-fs.target
+ConditionPathExists=/etc/node-type
+ConditionPathExists=!/opt/k4all/role-dispatcher.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/k4all-role-dispatcher.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

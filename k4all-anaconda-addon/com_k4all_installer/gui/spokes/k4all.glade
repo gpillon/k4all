@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk+" version="3.24"/>
+  <object class="GtkBox" id="k4allSpokeWindow">
+    <property name="visible">True</property>
+    <property name="can-focus">False</property>
+    <property name="orientation">vertical</property>
+    <property name="spacing">12</property>
+    <property name="margin-start">24</property>
+    <property name="margin-end">24</property>
+    <property name="margin-top">24</property>
+    <property name="margin-bottom">24</property>
+    
+    <!-- Title -->
+    <child>
+      <object class="GtkLabel">
+        <property name="visible">True</property>
+        <property name="can-focus">False</property>
+        <property name="label" translatable="yes">K4All Kubernetes Configuration</property>
+        <attributes>
+          <attribute name="weight" value="bold"/>
+          <attribute name="scale" value="1.5"/>
+        </attributes>
+      </object>
+    </child>
+    
+    <!-- Description -->
+    <child>
+      <object class="GtkLabel">
+        <property name="visible">True</property>
+        <property name="can-focus">False</property>
+        <property name="label" translatable="yes">Configure the Kubernetes cluster node settings for this installation.</property>
+        <property name="wrap">True</property>
+      </object>
+    </child>
+    
+    <!-- Main Grid -->
+    <child>
+      <object class="GtkGrid">
+        <property name="visible">True</property>
+        <property name="can-focus">False</property>
+        <property name="row-spacing">12</property>
+        <property name="column-spacing">12</property>
+        <property name="margin-top">12</property>
+        
+        <!-- Node Role -->
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="label" translatable="yes">Node Role:</property>
+            <property name="halign">end</property>
+          </object>
+          <packing>
+            <property name="left-attach">0</property>
+            <property name="top-attach">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkComboBoxText" id="roleComboBox">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <items>
+              <item translatable="yes">Bootstrap (first node)</item>
+              <item translatable="yes">Control Plane</item>
+              <item translatable="yes">Worker</item>
+            </items>
+            <property name="active">0</property>
+          </object>
+          <packing>
+            <property name="left-attach">1</property>
+            <property name="top-attach">0</property>
+          </packing>
+        </child>
+        
+        <!-- CNI Plugin -->
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="label" translatable="yes">CNI Plugin:</property>
+            <property name="halign">end</property>
+          </object>
+          <packing>
+            <property name="left-attach">0</property>
+            <property name="top-attach">1</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkComboBoxText" id="cniComboBox">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <items>
+              <item translatable="yes">Calico</item>
+              <item translatable="yes">Cilium</item>
+            </items>
+            <property name="active">0</property>
+          </object>
+          <packing>
+            <property name="left-attach">1</property>
+            <property name="top-attach">1</property>
+          </packing>
+        </child>
+        
+        <!-- HA Type -->
+        <child>
+          <object class="GtkLabel">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="label" translatable="yes">High Availability:</property>
+            <property name="halign">end</property>
+          </object>
+          <packing>
+            <property name="left-attach">0</property>
+            <property name="top-attach">2</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkComboBoxText" id="haComboBox">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <items>
+              <item translatable="yes">None (single node)</item>
+              <item translatable="yes">Keepalived</item>
+              <item translatable="yes">KubeVIP</item>
+            </items>
+            <property name="active">0</property>
+          </object>
+          <packing>
+            <property name="left-attach">1</property>
+            <property name="top-attach">2</property>
+          </packing>
+        </child>
+        
+      </object>
+    </child>
+    
+    <!-- Features Section -->
+    <child>
+      <object class="GtkFrame">
+        <property name="visible">True</property>
+        <property name="can-focus">False</property>
+        <property name="label" translatable="yes">Optional Features</property>
+        <property name="margin-top">12</property>
+        <child>
+          <object class="GtkBox">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="orientation">vertical</property>
+            <property name="spacing">6</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">12</property>
+            
+            <child>
+              <object class="GtkCheckButton" id="virtCheckButton">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="label" translatable="yes">Enable KubeVirt (virtualization)</property>
+              </object>
+            </child>
+            
+            <child>
+              <object class="GtkCheckButton" id="argocdCheckButton">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="label" translatable="yes">Enable ArgoCD (GitOps)</property>
+              </object>
+            </child>
+            
+            <child>
+              <object class="GtkCheckButton" id="firewalldCheckButton">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="label" translatable="yes">Enable firewalld</property>
+              </object>
+            </child>
+            
+          </object>
+        </child>
+      </object>
+    </child>
+    
+    <!-- Spacer -->
+    <child>
+      <object class="GtkBox">
+        <property name="visible">True</property>
+        <property name="can-focus">False</property>
+        <property name="vexpand">True</property>
+      </object>
+    </child>
+    
+  </object>
+</interface>
+

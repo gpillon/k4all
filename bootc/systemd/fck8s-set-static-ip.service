@@ -1,0 +1,14 @@
+[Unit]
+Description=K4All - Set Static IP Address
+Requires=network-online.target
+After=network-online.target
+ConditionPathExists=!/opt/k4all/setup-static-ip.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/set-static-ip.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,12 @@
+[Unit]
+Description=K4All - Setup LVM (vg_data)
+ConditionPathExists=!/opt/k4all/lvm-setup.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-lvm.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

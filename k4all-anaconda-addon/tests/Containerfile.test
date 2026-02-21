@@ -1,0 +1,39 @@
+# =============================================================================
+# K4All Anaconda Addon - Full Integration Test Container
+# =============================================================================
+# This container installs real anaconda packages to run integration tests
+# against the actual pyanaconda/pykickstart/dasbus libraries.
+#
+# Usage:
+#   podman build -t k4all-addon-test -f tests/Containerfile.test .
+#   podman run --rm k4all-addon-test
+# =============================================================================
+
+FROM quay.io/centos/centos:stream9
+
+# Install anaconda and test dependencies
+RUN dnf install -y \
+    anaconda-core \
+    python3-pykickstart \
+    python3-dasbus \
+    python3-pip \
+    python3-pytest \
+    lvm2 \
+    && dnf clean all
+
+# Install pytest if not available from RPM
+RUN pip3 install pytest || true
+
+# Copy addon source
+COPY com_k4all_installer/ /usr/share/anaconda/addons/com_k4all_installer/
+
+# Copy tests (without conftest.py, since we use real anaconda)
+COPY tests/test_constants.py tests/test_kickstart.py tests/test_installation.py tests/test_service.py /tests/
+
+# Set PYTHONPATH so imports work
+ENV PYTHONPATH="/usr/share/anaconda/addons:/usr/share/anaconda"
+
+WORKDIR /tests
+
+# Run tests (without conftest.py mock - uses real anaconda)
+CMD ["python3", "-m", "pytest", "-v", "--tb=short"]

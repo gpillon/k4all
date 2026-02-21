@@ -1,0 +1,20 @@
+controller:
+  replicaCount: 1
+
+lvmd:
+  deviceClasses:
+    - name: default
+      volume-group: vg_data
+      default: true
+      spare-gb: 5
+
+
+cert-manager:
+  enabled: true
+
+storageClasses:
+  - name: topolvm-provisioner
+    storageClass: 
+      fsType: xfs
+      isDefaultClass: true
+      allowVolumeExpansion: true

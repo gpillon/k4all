@@ -1,0 +1,824 @@
+kind: CustomResourceDefinition
+apiVersion: apiextensions.k8s.io/v1
+metadata:
+  name: projecthelmchartrepositories.helm.openshift.io
+  annotations:
+    api-approved.openshift.io: 'https://github.com/openshift/api/pull/1084'
+    api.openshift.io/merged-by-featuregates: 'true'
+    include.release.openshift.io/ibm-cloud-managed: 'true'
+    include.release.openshift.io/self-managed-high-availability: 'true'
+spec:
+  group: helm.openshift.io
+  names:
+    plural: projecthelmchartrepositories
+    singular: projecthelmchartrepository
+    kind: ProjectHelmChartRepository
+    listKind: ProjectHelmChartRepositoryList
+  scope: Namespaced
+  versions:
+    - name: v1beta1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          description: |-
+            ProjectHelmChartRepository holds namespace-wide configuration for proxied Helm chart repository
+
+            Compatibility level 2: Stable within a major release for a minimum of 9 months or 3 minor releases (whichever is longer).
+          type: object
+          required:
+            - spec
+          properties:
+            apiVersion:
+              description: |-
+                APIVersion defines the versioned schema of this representation of an object.
+                Servers should convert recognized schemas to the latest internal value, and
+                may reject unrecognized values.
+                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              type: string
+            kind:
+              description: |-
+                Kind is a string value representing the REST resource this object represents.
+                Servers may infer this from the endpoint the client submits requests to.
+                Cannot be updated.
+                In CamelCase.
+                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: spec holds user settable values for configuration
+              type: object
+              properties:
+                connectionConfig:
+                  description: Required configuration for connecting to the chart repo
+                  type: object
+                  properties:
+                    basicAuthConfig:
+                      description: |-
+                        basicAuthConfig is an optional reference to a secret by name that contains
+                        the basic authentication credentials to present when connecting to the server.
+                        The key "username" is used locate the username.
+                        The key "password" is used to locate the password.
+                        The namespace for this secret must be same as the namespace where the project helm chart repository is getting instantiated.
+                      type: object
+                      required:
+                        - name
+                      properties:
+                        name:
+                          description: name is the metadata.name of the referenced secret
+                          type: string
+                    ca:
+                      description: |-
+                        ca is an optional reference to a config map by name containing the PEM-encoded CA bundle.
+                        It is used as a trust anchor to validate the TLS certificate presented by the remote server.
+                        The key "ca-bundle.crt" is used to locate the data.
+                        If empty, the default system roots are used.
+                        The namespace for this configmap must be same as the namespace where the project helm chart repository is getting instantiated.
+                      type: object
+                      required:
+                        - name
+                      properties:
+                        name:
+                          description: name is the metadata.name of the referenced config map
+                          type: string
+                    tlsClientConfig:
+                      description: |-
+                        tlsClientConfig is an optional reference to a secret by name that contains the
+                        PEM-encoded TLS client certificate and private key to present when connecting to the server.
+                        The key "tls.crt" is used to locate the client certificate.
+                        The key "tls.key" is used to locate the private key.
+                        The namespace for this secret must be same as the namespace where the project helm chart repository is getting instantiated.
+                      type: object
+                      required:
+                        - name
+                      properties:
+                        name:
+                          description: name is the metadata.name of the referenced secret
+                          type: string
+                    url:
+                      description: Chart repository URL
+                      type: string
+                      maxLength: 2048
+                      pattern: '^https?:\/\/'
+                description:
+                  description: 'Optional human readable repository description, it can be used by UI for displaying purposes'
+                  type: string
+                  maxLength: 2048
+                  minLength: 1
+                disabled:
+                  description: 'If set to true, disable the repo usage in the namespace'
+                  type: boolean
+                name:
+                  description: 'Optional associated human readable repository name, it can be used by UI for displaying purposes'
+                  type: string
+                  maxLength: 100
+                  minLength: 1
+            status:
+              description: Observed status of the repository within the namespace..
+              type: object
+              properties:
+                conditions:
+                  description: conditions is a list of conditions and their statuses
+                  type: array
+                  items:
+                    description: Condition contains details for one aspect of the current state of this API Resource.
+                    type: object
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    properties:
+                      lastTransitionTime:
+                        description: |-
+                          lastTransitionTime is the last time the condition transitioned from one status to another.
+                          This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                        type: string
+                        format: date-time
+                      message:
+                        description: |-
+                          message is a human readable message indicating details about the transition.
+                          This may be an empty string.
+                        type: string
+                        maxLength: 32768
+                      observedGeneration:
+                        description: |-
+                          observedGeneration represents the .metadata.generation that the condition was set based upon.
+                          For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                          with respect to the current state of the instance.
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      reason:
+                        description: |-
+                          reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                          Producers of specific condition types may define expected values and meanings for this field,
+                          and whether the values are considered a guaranteed API.
+                          The value should be a CamelCase string.
+                          This field may not be empty.
+                        type: string
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: '^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$'
+                      status:
+                        description: 'status of the condition, one of True, False, Unknown.'
+                        type: string
+                        enum:
+                          - 'True'
+                          - 'False'
+                          - Unknown
+                      type:
+                        description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                        type: string
+                        maxLength: 316
+                        pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$'
+                  x-kubernetes-list-map-keys:
+                    - type
+                  x-kubernetes-list-type: map
+      subresources:
+        status: {}
+  conversion:
+    strategy: None
+---
+kind: CustomResourceDefinition
+apiVersion: apiextensions.k8s.io/v1
+metadata:
+  name: helmchartrepositories.helm.openshift.io
+  annotations:
+    api-approved.openshift.io: 'https://github.com/openshift/api/pull/598'
+    api.openshift.io/merged-by-featuregates: 'true'
+    include.release.openshift.io/ibm-cloud-managed: 'true'
+    include.release.openshift.io/self-managed-high-availability: 'true'
+spec:
+  group: helm.openshift.io
+  names:
+    plural: helmchartrepositories
+    singular: helmchartrepository
+    kind: HelmChartRepository
+    listKind: HelmChartRepositoryList
+  scope: Cluster
+  versions:
+    - name: v1beta1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          description: |-
+            HelmChartRepository holds cluster-wide configuration for proxied Helm chart repository
+
+            Compatibility level 2: Stable within a major release for a minimum of 9 months or 3 minor releases (whichever is longer).
+          type: object
+          required:
+            - spec
+          properties:
+            apiVersion:
+              description: |-
+                APIVersion defines the versioned schema of this representation of an object.
+                Servers should convert recognized schemas to the latest internal value, and
+                may reject unrecognized values.
+                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              type: string
+            kind:
+              description: |-
+                Kind is a string value representing the REST resource this object represents.
+                Servers may infer this from the endpoint the client submits requests to.
+                Cannot be updated.
+                In CamelCase.
+                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: spec holds user settable values for configuration
+              type: object
+              properties:
+                connectionConfig:
+                  description: Required configuration for connecting to the chart repo
+                  type: object
+                  properties:
+                    ca:
+                      description: |-
+                        ca is an optional reference to a config map by name containing the PEM-encoded CA bundle.
+                        It is used as a trust anchor to validate the TLS certificate presented by the remote server.
+                        The key "ca-bundle.crt" is used to locate the data.
+                        If empty, the default system roots are used.
+                        The namespace for this config map is openshift-config.
+                      type: object
+                      required:
+                        - name
+                      properties:
+                        name:
+                          description: name is the metadata.name of the referenced config map
+                          type: string
+                    tlsClientConfig:
+                      description: |-
+                        tlsClientConfig is an optional reference to a secret by name that contains the
+                        PEM-encoded TLS client certificate and private key to present when connecting to the server.
+                        The key "tls.crt" is used to locate the client certificate.
+                        The key "tls.key" is used to locate the private key.
+                        The namespace for this secret is openshift-config.
+                      type: object
+                      required:
+                        - name
+                      properties:
+                        name:
+                          description: name is the metadata.name of the referenced secret
+                          type: string
+                    url:
+                      description: Chart repository URL
+                      type: string
+                      maxLength: 2048
+                      pattern: '^https?:\/\/'
+                description:
+                  description: 'Optional human readable repository description, it can be used by UI for displaying purposes'
+                  type: string
+                  maxLength: 2048
+                  minLength: 1
+                disabled:
+                  description: 'If set to true, disable the repo usage in the cluster/namespace'
+                  type: boolean
+                name:
+                  description: 'Optional associated human readable repository name, it can be used by UI for displaying purposes'
+                  type: string
+                  maxLength: 100
+                  minLength: 1
+            status:
+              description: Observed status of the repository within the cluster..
+              type: object
+              properties:
+                conditions:
+                  description: conditions is a list of conditions and their statuses
+                  type: array
+                  items:
+                    description: Condition contains details for one aspect of the current state of this API Resource.
+                    type: object
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    properties:
+                      lastTransitionTime:
+                        description: |-
+                          lastTransitionTime is the last time the condition transitioned from one status to another.
+                          This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                        type: string
+                        format: date-time
+                      message:
+                        description: |-
+                          message is a human readable message indicating details about the transition.
+                          This may be an empty string.
+                        type: string
+                        maxLength: 32768
+                      observedGeneration:
+                        description: |-
+                          observedGeneration represents the .metadata.generation that the condition was set based upon.
+                          For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                          with respect to the current state of the instance.
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      reason:
+                        description: |-
+                          reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                          Producers of specific condition types may define expected values and meanings for this field,
+                          and whether the values are considered a guaranteed API.
+                          The value should be a CamelCase string.
+                          This field may not be empty.
+                        type: string
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: '^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$'
+                      status:
+                        description: 'status of the condition, one of True, False, Unknown.'
+                        type: string
+                        enum:
+                          - 'True'
+                          - 'False'
+                          - Unknown
+                      type:
+                        description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                        type: string
+                        maxLength: 316
+                        pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$'
+                  x-kubernetes-list-map-keys:
+                    - type
+                  x-kubernetes-list-type: map
+      subresources:
+        status: {}
+  conversion:
+    strategy: None
+---
+kind: CustomResourceDefinition
+apiVersion: apiextensions.k8s.io/v1
+metadata:
+  name: consoleplugins.console.openshift.io
+  annotations:
+    api-approved.openshift.io: 'https://github.com/openshift/api/pull/1186'
+    api.openshift.io/merged-by-featuregates: 'true'
+    capability.openshift.io/name: Console
+    description: Extension for configuring openshift web console plugins.
+    displayName: ConsolePlugin
+    include.release.openshift.io/ibm-cloud-managed: 'true'
+    include.release.openshift.io/self-managed-high-availability: 'true'
+    service.beta.openshift.io/inject-cabundle: 'true'
+spec:
+  group: console.openshift.io
+  names:
+    plural: consoleplugins
+    singular: consoleplugin
+    kind: ConsolePlugin
+    listKind: ConsolePluginList
+  scope: Cluster
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          description: |-
+            ConsolePlugin is an extension for customizing OpenShift web console by
+            dynamically loading code from another service running on the cluster.
+
+            Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
+          type: object
+          required:
+            - metadata
+            - spec
+          properties:
+            apiVersion:
+              description: |-
+                APIVersion defines the versioned schema of this representation of an object.
+                Servers should convert recognized schemas to the latest internal value, and
+                may reject unrecognized values.
+                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              type: string
+            kind:
+              description: |-
+                Kind is a string value representing the REST resource this object represents.
+                Servers may infer this from the endpoint the client submits requests to.
+                Cannot be updated.
+                In CamelCase.
+                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: spec contains the desired configuration for the console plugin.
+              type: object
+              required:
+                - backend
+                - displayName
+              properties:
+                backend:
+                  description: backend holds the configuration of backend which is serving console's plugin .
+                  type: object
+                  required:
+                    - type
+                  properties:
+                    service:
+                      description: |-
+                        service is a Kubernetes Service that exposes the plugin using a
+                        deployment with an HTTP server. The Service must use HTTPS and
+                        Service serving certificate. The console backend will proxy the
+                        plugins assets from the Service using the service CA bundle.
+                      type: object
+                      required:
+                        - name
+                        - namespace
+                        - port
+                      properties:
+                        basePath:
+                          description: |-
+                            basePath is the path to the plugin's assets. The primary asset it the
+                            manifest file called `plugin-manifest.json`, which is a JSON document
+                            that contains metadata about the plugin and the extensions.
+                          type: string
+                          default: /
+                          maxLength: 256
+                          minLength: 1
+                          pattern: '^[a-zA-Z0-9.\-_~!$&''()*+,;=:@\/]*$'
+                        name:
+                          description: name of Service that is serving the plugin assets.
+                          type: string
+                          maxLength: 128
+                          minLength: 1
+                        namespace:
+                          description: namespace of Service that is serving the plugin assets.
+                          type: string
+                          maxLength: 128
+                          minLength: 1
+                        port:
+                          description: port on which the Service that is serving the plugin is listening to.
+                          type: integer
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                    type:
+                      description: |
+                        type is the backend type which servers the console's plugin. Currently only "Service" is supported.
+                      type: string
+                      enum:
+                        - Service
+                contentSecurityPolicy:
+                  description: |-
+                    contentSecurityPolicy is a list of Content-Security-Policy (CSP) directives for the plugin.
+                    Each directive specifies a list of values, appropriate for the given directive type,
+                    for example a list of remote endpoints for fetch directives such as ScriptSrc.
+                    Console web application uses CSP to detect and mitigate certain types of attacks,
+                    such as cross-site scripting (XSS) and data injection attacks.
+                    Dynamic plugins should specify this field if need to load assets from outside
+                    the cluster or if violation reports are observed. Dynamic plugins should always prefer
+                    loading their assets from within the cluster, either by vendoring them, or fetching
+                    from a cluster service.
+                    CSP violation reports can be viewed in the browser's console logs during development and
+                    testing of the plugin in the OpenShift web console.
+                    Available directive types are DefaultSrc, ScriptSrc, StyleSrc, ImgSrc, FontSrc and ConnectSrc.
+                    Each of the available directives may be defined only once in the list.
+                    The value 'self' is automatically included in all fetch directives by the OpenShift web
+                    console's backend.
+                    For more information about the CSP directives, see:
+                    https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy
+
+                    The OpenShift web console server aggregates the CSP directives and values across
+                    its own default values and all enabled ConsolePlugin CRs, merging them into a single
+                    policy string that is sent to the browser via `Content-Security-Policy` HTTP response header.
+
+                    Example:
+                      ConsolePlugin A directives:
+                        script-src: https://script1.com/, https://script2.com/
+                        font-src: https://font1.com/
+
+                      ConsolePlugin B directives:
+                        script-src: https://script2.com/, https://script3.com/
+                        font-src: https://font2.com/
+                        img-src: https://img1.com/
+
+                      Unified set of CSP directives, passed to the OpenShift web console server:
+                        script-src: https://script1.com/, https://script2.com/, https://script3.com/
+                        font-src: https://font1.com/, https://font2.com/
+                        img-src: https://img1.com/
+
+                      OpenShift web console server CSP response header:
+                        Content-Security-Policy: default-src 'self'; base-uri 'self'; script-src 'self' https://script1.com/ https://script2.com/ https://script3.com/; font-src 'self' https://font1.com/ https://font2.com/; img-src 'self' https://img1.com/; style-src 'self'; frame-src 'none'; object-src 'none'
+                  type: array
+                  maxItems: 5
+                  items:
+                    description: ConsolePluginCSP holds configuration for a specific CSP directive
+                    type: object
+                    required:
+                      - directive
+                      - values
+                    properties:
+                      directive:
+                        description: |-
+                          directive specifies which Content-Security-Policy directive to configure.
+                          Available directive types are DefaultSrc, ScriptSrc, StyleSrc, ImgSrc, FontSrc and ConnectSrc.
+                          DefaultSrc directive serves as a fallback for the other CSP fetch directives.
+                          For more information about the DefaultSrc directive, see:
+                          https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/default-src
+                          ScriptSrc directive specifies valid sources for JavaScript.
+                          For more information about the ScriptSrc directive, see:
+                          https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/script-src
+                          StyleSrc directive specifies valid sources for stylesheets.
+                          For more information about the StyleSrc directive, see:
+                          https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/style-src
+                          ImgSrc directive specifies a valid sources of images and favicons.
+                          For more information about the ImgSrc directive, see:
+                          https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/img-src
+                          FontSrc directive specifies valid sources for fonts loaded using @font-face.
+                          For more information about the FontSrc directive, see:
+                          https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/font-src
+                          ConnectSrc directive restricts the URLs which can be loaded using script interfaces.
+                          For more information about the ConnectSrc directive, see:
+                          https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/connect-src
+                        type: string
+                        enum:
+                          - DefaultSrc
+                          - ScriptSrc
+                          - StyleSrc
+                          - ImgSrc
+                          - FontSrc
+                          - ConnectSrc
+                      values:
+                        description: |-
+                          values defines an array of values to append to the console defaults for this directive.
+                          Each ConsolePlugin may define their own directives with their values. These will be set
+                          by the OpenShift web console's backend, as part of its Content-Security-Policy header.
+                          The array can contain at most 16 values. Each directive value must have a maximum length
+                          of 1024 characters and must not contain whitespace, commas (,), semicolons (;) or single
+                          quotes ('). The value '*' is not permitted.
+                          Each value in the array must be unique.
+                        type: array
+                        maxItems: 16
+                        minItems: 1
+                        items:
+                          description: |-
+                            CSPDirectiveValue is single value for a Content-Security-Policy directive.
+                            Each directive value must have a maximum length of 1024 characters and must not contain
+                            whitespace, commas (,), semicolons (;) or single quotes ('). The value '*' is not permitted.
+                          type: string
+                          maxLength: 1024
+                          minLength: 1
+                          x-kubernetes-validations:
+                            - rule: '!self.contains("''")'
+                              message: CSP directive value cannot contain a quote
+                            - rule: '!self.matches(''\\s'')'
+                              message: CSP directive value cannot contain a whitespace
+                            - rule: '!self.contains('','')'
+                              message: CSP directive value cannot contain a comma
+                            - rule: '!self.contains('';'')'
+                              message: CSP directive value cannot contain a semi-colon
+                            - rule: self != '*'
+                              message: CSP directive value cannot be a wildcard
+                        x-kubernetes-list-type: atomic
+                        x-kubernetes-validations:
+                          - rule: 'self.all(x, self.exists_one(y, x == y))'
+                            message: each CSP directive value must be unique
+                  x-kubernetes-list-map-keys:
+                    - directive
+                  x-kubernetes-list-type: map
+                  x-kubernetes-validations:
+                    - rule: 'self.map(x, x.values.map(y, y.size()).sum()).sum() < 8192'
+                      message: the total combined size of values of all directives must not exceed 8192 (8kb)
+                displayName:
+                  description: |-
+                    displayName is the display name of the plugin.
+                    The dispalyName should be between 1 and 128 characters.
+                  type: string
+                  maxLength: 128
+                  minLength: 1
+                i18n:
+                  description: i18n is the configuration of plugin's localization resources.
+                  type: object
+                  required:
+                    - loadType
+                  properties:
+                    loadType:
+                      description: |-
+                        loadType indicates how the plugin's localization resource should be loaded.
+                        Valid values are Preload, Lazy and the empty string.
+                        When set to Preload, all localization resources are fetched when the plugin is loaded.
+                        When set to Lazy, localization resources are lazily loaded as and when they are required by the console.
+                        When omitted or set to the empty string, the behaviour is equivalent to Lazy type.
+                      type: string
+                      enum:
+                        - Preload
+                        - Lazy
+                        - ''
+                proxy:
+                  description: |-
+                    proxy is a list of proxies that describe various service type
+                    to which the plugin needs to connect to.
+                  type: array
+                  items:
+                    description: |-
+                      ConsolePluginProxy holds information on various service types
+                      to which console's backend will proxy the plugin's requests.
+                    type: object
+                    required:
+                      - alias
+                      - endpoint
+                    properties:
+                      alias:
+                        description: |-
+                          alias is a proxy name that identifies the plugin's proxy. An alias name
+                          should be unique per plugin. The console backend exposes following
+                          proxy endpoint:
+
+                          /api/proxy/plugin/<plugin-name>/<proxy-alias>/<request-path>?<optional-query-parameters>
+
+                          Request example path:
+
+                          /api/proxy/plugin/acm/search/pods?namespace=openshift-apiserver
+                        type: string
+                        maxLength: 128
+                        minLength: 1
+                        pattern: '^[A-Za-z0-9-_]+$'
+                      authorization:
+                        description: |-
+                          authorization provides information about authorization type,
+                          which the proxied request should contain
+                        type: string
+                        default: None
+                        enum:
+                          - UserToken
+                          - None
+                      caCertificate:
+                        description: |-
+                          caCertificate provides the cert authority certificate contents,
+                          in case the proxied Service is using custom service CA.
+                          By default, the service CA bundle provided by the service-ca operator is used.
+                        type: string
+                        pattern: '^-----BEGIN CERTIFICATE-----([\s\S]*)-----END CERTIFICATE-----\s?$'
+                      endpoint:
+                        description: endpoint provides information about endpoint to which the request is proxied to.
+                        type: object
+                        required:
+                          - type
+                        properties:
+                          service:
+                            description: |-
+                              service is an in-cluster Service that the plugin will connect to.
+                              The Service must use HTTPS. The console backend exposes an endpoint
+                              in order to proxy communication between the plugin and the Service.
+                              Note: service field is required for now, since currently only "Service"
+                              type is supported.
+                            type: object
+                            required:
+                              - name
+                              - namespace
+                              - port
+                            properties:
+                              name:
+                                description: name of Service that the plugin needs to connect to.
+                                type: string
+                                maxLength: 128
+                                minLength: 1
+                              namespace:
+                                description: namespace of Service that the plugin needs to connect to
+                                type: string
+                                maxLength: 128
+                                minLength: 1
+                              port:
+                                description: |-
+                                  port on which the Service that the plugin needs to connect to
+                                  is listening on.
+                                type: integer
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                          type:
+                            description: |
+                              type is the type of the console plugin's proxy. Currently only "Service" is supported.
+                            type: string
+                            enum:
+                              - Service
+                  x-kubernetes-list-type: atomic
+    - name: v1alpha1
+      served: true
+      storage: false
+      schema:
+        openAPIV3Schema:
+          description: |-
+            ConsolePlugin is an extension for customizing OpenShift web console by dynamically loading code from another service running on the cluster.
+             Compatibility level 4: No compatibility is provided, the API can change at any point for any reason. These capabilities should not be used by applications needing long term support.
+          type: object
+          required:
+            - metadata
+            - spec
+          properties:
+            apiVersion:
+              description: 'APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+              type: string
+            kind:
+              description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: ConsolePluginSpec is the desired plugin configuration.
+              type: object
+              required:
+                - service
+              properties:
+                displayName:
+                  description: displayName is the display name of the plugin.
+                  type: string
+                  minLength: 1
+                proxy:
+                  description: proxy is a list of proxies that describe various service type to which the plugin needs to connect to.
+                  type: array
+                  items:
+                    description: ConsolePluginProxy holds information on various service types to which console's backend will proxy the plugin's requests.
+                    type: object
+                    required:
+                      - alias
+                      - type
+                    properties:
+                      alias:
+                        description: |-
+                          alias is a proxy name that identifies the plugin's proxy. An alias name should be unique per plugin. The console backend exposes following proxy endpoint:
+                           /api/proxy/plugin/<plugin-name>/<proxy-alias>/<request-path>?<optional-query-parameters>
+                           Request example path:
+                           /api/proxy/plugin/acm/search/pods?namespace=openshift-apiserver
+                        type: string
+                        maxLength: 128
+                        minLength: 1
+                        pattern: '^[A-Za-z0-9-_]+$'
+                      authorize:
+                        description: |-
+                          authorize indicates if the proxied request should contain the logged-in user's OpenShift access token in the "Authorization" request header. For example:
+                           Authorization: Bearer sha256~kV46hPnEYhCWFnB85r5NrprAxggzgb6GOeLbgcKNsH0
+                           By default the access token is not part of the proxied request.
+                        type: boolean
+                        default: false
+                      caCertificate:
+                        description: 'caCertificate provides the cert authority certificate contents, in case the proxied Service is using custom service CA. By default, the service CA bundle provided by the service-ca operator is used.'
+                        type: string
+                        pattern: '^-----BEGIN CERTIFICATE-----([\s\S]*)-----END CERTIFICATE-----\s?$'
+                      service:
+                        description: 'service is an in-cluster Service that the plugin will connect to. The Service must use HTTPS. The console backend exposes an endpoint in order to proxy communication between the plugin and the Service. Note: service field is required for now, since currently only "Service" type is supported.'
+                        type: object
+                        required:
+                          - name
+                          - namespace
+                          - port
+                        properties:
+                          name:
+                            description: name of Service that the plugin needs to connect to.
+                            type: string
+                            maxLength: 128
+                            minLength: 1
+                          namespace:
+                            description: namespace of Service that the plugin needs to connect to
+                            type: string
+                            maxLength: 128
+                            minLength: 1
+                          port:
+                            description: port on which the Service that the plugin needs to connect to is listening on.
+                            type: integer
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                      type:
+                        description: type is the type of the console plugin's proxy. Currently only "Service" is supported.
+                        type: string
+                        pattern: ^(Service)$
+                service:
+                  description: service is a Kubernetes Service that exposes the plugin using a deployment with an HTTP server. The Service must use HTTPS and Service serving certificate. The console backend will proxy the plugins assets from the Service using the service CA bundle.
+                  type: object
+                  required:
+                    - basePath
+                    - name
+                    - namespace
+                    - port
+                  properties:
+                    basePath:
+                      description: 'basePath is the path to the plugin''s assets. The primary asset it the manifest file called `plugin-manifest.json`, which is a JSON document that contains metadata about the plugin and the extensions.'
+                      type: string
+                      default: /
+                      minLength: 1
+                      pattern: ^/
+                    name:
+                      description: name of Service that is serving the plugin assets.
+                      type: string
+                      maxLength: 128
+                      minLength: 1
+                    namespace:
+                      description: namespace of Service that is serving the plugin assets.
+                      type: string
+                      maxLength: 128
+                      minLength: 1
+                    port:
+                      description: port on which the Service that is serving the plugin is listening to.
+                      type: integer
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+  conversion:
+    strategy: None
+---

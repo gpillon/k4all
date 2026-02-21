@@ -1,0 +1,17 @@
+[Unit]
+Description=K4All - Setup CNI
+Requires=fck8s-node-ready-and-schedulable.service
+Requires=fck8s-helm-setup.service
+After=fck8s-node-ready-and-schedulable.service fck8s-helm-setup.service
+ConditionPathExists=/etc/kubernetes/admin.conf
+ConditionPathExists=!/opt/k4all/cni-setup.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-cni.sh
+RemainAfterExit=yes
+WorkingDirectory=/root/
+
+[Install]
+WantedBy=multi-user.target
+

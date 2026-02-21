@@ -1,0 +1,16 @@
+[Unit]
+Description=K4All - Install Ingress Controller
+Requires=fck8s-dashboard-setup.service
+After=fck8s-dashboard-setup.service
+ConditionPathExists=/etc/kubernetes/admin.conf
+ConditionPathExists=!/opt/k4all/setup-ingress.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-ingress.sh
+RemainAfterExit=yes
+WorkingDirectory=/root/
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,20 @@
+[Unit]
+Description=K4All - Auto Join Cluster (for control/worker nodes)
+Requires=network-online.target
+Requires=fck8s-role-dispatcher.service
+After=network-online.target fck8s-k8s-setup-ph3.service fck8s-role-dispatcher.service
+ConditionPathExists=!/opt/k4all/auto-join.done
+ConditionPathExists=/etc/k4all-config.json
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/auto-join.sh
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+

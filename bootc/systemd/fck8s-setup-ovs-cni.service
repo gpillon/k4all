@@ -1,0 +1,15 @@
+[Unit]
+Description=K4All - Setup OVS CNI
+Requires=fck8s-node-ready-and-schedulable.service
+After=fck8s-node-ready-and-schedulable.service
+ConditionPathExists=/etc/kubernetes/admin.conf
+ConditionPathExists=!/opt/k4all/ovs-cni-setup.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-ovs-cni.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,6 @@
+[D-BUS Service]
+# See https://dbus.freedesktop.org/doc/system-activation.txt
+Name=org.fedoraproject.Anaconda.Addons.K4All
+Exec=/usr/libexec/anaconda/start-module com_k4all_installer.service
+User=root
+

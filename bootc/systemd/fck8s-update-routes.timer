@@ -1,0 +1,12 @@
+[Unit]
+Description=K4All - Timer to periodically update Kubernetes Ingress for Dashboard
+Requires=fck8s-node-ready-and-schedulable.service
+Requires=fck8s-ingress-setup.service
+After=fck8s-node-ready-and-schedulable.service fck8s-ingress-setup.service
+
+[Timer]
+OnCalendar=*:0/10
+
+[Install]
+WantedBy=multi-user.target
+

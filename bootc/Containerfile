@@ -1,0 +1,101 @@
+# K4All bootc image
+# Base: CentOS Stream 9 bootc
+# This image contains all required packages for Kubernetes nodes (kubeadm, kubelet, kubectl, CRI-O, etc.)
+# The actual cluster configuration is done at install time via Anaconda addon or at first boot.
+
+FROM quay.io/centos-bootc/centos-bootc:stream9
+
+# ============================================================================
+# REPOS
+# ============================================================================
+# Kubernetes repo
+COPY overlay/etc/yum.repos.d/kubernetes.repo /etc/yum.repos.d/kubernetes.repo
+
+# CRI-O repo (from OpenSUSE OBS for EL9)
+RUN cat > /etc/yum.repos.d/cri-o.repo <<'EOF'
+[cri-o]
+name=CRI-O
+baseurl=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.31/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.31/rpm/repodata/repomd.xml.key
+EOF
+
+# ============================================================================
+# PACKAGES
+# ============================================================================
+# Install all required packages in a single layer for efficiency
+# Kubernetes components, CRI-O, networking, LVM, firewall, HA, tools
+RUN dnf install -y \
+    kubeadm kubelet kubectl \
+    cri-o \
+    openvswitch NetworkManager-ovs \
+    lvm2 \
+    jq \
+    firewalld \
+    keepalived \
+    openssl bash-completion tar gzip curl wget git python3 \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+# Install yq (not available in standard repos)
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then YQ_ARCH="amd64"; else YQ_ARCH="arm64"; fi && \
+    curl -L "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${YQ_ARCH}" -o /usr/local/bin/yq && \
+    chmod +x /usr/local/bin/yq
+
+# Install Helm (build-time instead of runtime)
+RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash && \
+    helm completion bash > /etc/bash_completion.d/helm
+
+# ============================================================================
+# SYSCTL CONFIGURATION
+# ============================================================================
+COPY overlay/etc/sysctl.d/k8s.conf /etc/sysctl.d/k8s.conf
+
+# ============================================================================
+# SCRIPTS AND MANIFESTS
+# ============================================================================
+# K4All utility scripts
+COPY overlay/usr/local/bin/ /usr/local/bin/
+RUN find /usr/local/bin -type f \( -name '*.sh' -o -name 'k4all-*' \) -exec chmod +x {} + && \
+    chmod +x /usr/local/bin/k4all-utils /usr/local/bin/control-plane-utils 2>/dev/null || true
+
+# K4All manifests and values
+COPY overlay/usr/local/share/ /usr/local/share/
+
+# Default cluster config (will be overwritten by Anaconda addon or first-boot)
+COPY overlay/etc/k4all-config.json.default /usr/local/share/default-cluster-config.json
+
+# ============================================================================
+# SYSTEMD UNITS
+# ============================================================================
+COPY systemd/*.service /etc/systemd/system/
+COPY systemd/*.timer /etc/systemd/system/
+
+# Enable services that should start at boot
+RUN systemctl enable crio.service && \
+    systemctl enable kubelet.service && \
+    systemctl enable openvswitch.service
+
+# Enable K4All phase services (they are idempotent and check for .done markers)
+RUN for svc in /etc/systemd/system/fck8s-*.service; do \
+        [ -f "$svc" ] && systemctl enable "$(basename "$svc")"; \
+    done || true
+
+# ============================================================================
+# DIRECTORIES
+# ============================================================================
+RUN mkdir -p /opt/k4all && \
+    mkdir -p /root/.kube && \
+    mkdir -p /home/core/.kube && \
+    mkdir -p /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
+
+# ============================================================================
+# BOOTC LABELS
+# ============================================================================
+LABEL com.redhat.bootc.base="quay.io/centos-bootc/centos-bootc:stream9"
+LABEL org.opencontainers.image.title="K4All - Kubernetes for All"
+LABEL org.opencontainers.image.description="Bootc image with Kubernetes (kubeadm/kubelet/kubectl), CRI-O, and K4All tooling"
+LABEL org.opencontainers.image.version="2.0.0-bootc"
+

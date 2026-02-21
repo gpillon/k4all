@@ -1,0 +1,14 @@
+[Unit]
+Description=K4All - Update Kubernetes Ingress Routes for Dashboard
+Requires=fck8s-ingress-setup.service
+After=fck8s-ingress-setup.service
+ConditionPathExists=/etc/kubernetes/admin.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-routes.sh
+WorkingDirectory=/root/
+
+[Install]
+WantedBy=multi-user.target
+

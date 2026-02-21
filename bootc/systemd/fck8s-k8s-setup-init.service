@@ -1,0 +1,20 @@
+[Unit]
+Description=K4All - Kubernetes Cluster Init/Join
+Requires=fck8s-k8s-setup-ph3.service
+Requires=fck8s-role-dispatcher.service
+Requires=crio.service
+After=fck8s-k8s-setup-ph3.service fck8s-role-dispatcher.service crio.service
+ConditionPathExists=!/opt/k4all/k8s-setup-init.done
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-k8s-init.sh
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+

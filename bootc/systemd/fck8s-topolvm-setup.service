@@ -1,0 +1,19 @@
+[Unit]
+Description=K4All - Setup TopoLVM
+Requires=fck8s-node-ready-and-schedulable.service
+Requires=fck8s-lvm-setup.service
+Requires=fck8s-helm-setup.service
+Requires=fck8s-certmanager-setup.service
+After=fck8s-node-ready-and-schedulable.service fck8s-lvm-setup.service fck8s-helm-setup.service fck8s-certmanager-setup.service
+ConditionPathExists=/etc/kubernetes/admin.conf
+ConditionPathExists=!/opt/k4all/topolvm-setup.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-topolvm.sh
+RemainAfterExit=yes
+WorkingDirectory=/root/
+
+[Install]
+WantedBy=multi-user.target
+

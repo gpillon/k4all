@@ -1,0 +1,14 @@
+[Unit]
+Description=K4All - Set Hostname
+Requires=fck8s-set-static-ip.service
+After=fck8s-set-static-ip.service
+ConditionPathExists=!/opt/k4all/setup-hostname.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/set-hostname.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+
