@@ -1,7 +1,7 @@
 // This file is used to configure the device.
 // The device will read this fle and apply the settings during boot.
 {
-  "version": "1.7.1",
+  "version": "1.8.0",
   "networking": {
     //default_cni (calico cilium)
     "cni": {
@@ -68,6 +68,11 @@
     // argocd configuration
     "argocd": {
       // Enable ArgoCD.
+      "enabled": "false"
+    },
+    // gateway API (Kong) configuration
+    "gateway": {
+      // Enable Gateway API with Kong.
       "enabled": "false"
     }
   },

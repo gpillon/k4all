@@ -17,8 +17,10 @@ helm repo update
 
 ARGO_JSON="server.ingress.extraHosts=[{\"name\": \"argo.$(get_fqdn)\", \"path\": \"/\"}]"
 
+ARGO_VERSION="9.4.4" # is argocd version v3.3.2 #https://artifacthub.io/packages/helm/argo/argo-cd
+
 # Use single quotes around the helm command to avoid early variable expansion
-retry_command "helm upgrade --install argocd argo/argo-cd --create-namespace -n $namespace -f /usr/local/share/argocd-values.yaml --set \"global.domain=argo.$(get_ip).nip.io\" --set-json '$ARGO_JSON'" 30 10 
+retry_command "helm upgrade --install argocd argo/argo-cd --version $ARGO_VERSION --create-namespace -n $namespace -f /usr/local/share/argocd-values.yaml --set \"global.domain=argo.$(get_ip).nip.io\" --set-json '$ARGO_JSON'" 30 10 
 
 # Wait for ArgoCD server to be available
 kubectl -n $namespace wait deployment/argocd-server --for condition=Available --timeout=3600s

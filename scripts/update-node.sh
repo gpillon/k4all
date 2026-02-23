@@ -115,6 +115,35 @@ migrate_config() {
         config=$(echo "$config" | jq '.cluster |= (if has("customHostname") then .customApiEndPoint = .customHostname | del(.customHostname) else . end)')
     fi
 
+    # Apply changes for version 1.8.0
+    if version_lt "$old_version" "1.8.0"; then
+        echo "Performing v1.8.0 migration" >&2
+
+        # Fix ovsdb-server ownership (persistent fix is deployed via systemd drop-in)
+        chown openvswitch: /etc/openvswitch/conf.db 2>/dev/null || true
+        chown openvswitch: /etc/openvswitch/.conf.db.~lock~ 2>/dev/null || true
+        chown openvswitch: /etc/openvswitch/.conf.db.tmp.~lock~ 2>/dev/null || true
+        systemctl restart ovsdb-server 2>/dev/null || true
+
+        # Migrate from kubernetes-dashboard to headlamp
+        if helm --kubeconfig=/etc/kubernetes/admin.conf list -n kubernetes-dashboard -q 2>/dev/null | grep -q kubernetes-dashboard; then
+            echo "Uninstalling kubernetes-dashboard..." >&2
+            helm --kubeconfig=/etc/kubernetes/admin.conf uninstall kubernetes-dashboard -n kubernetes-dashboard || true
+            kubectl --kubeconfig=/etc/kubernetes/admin.conf delete namespace kubernetes-dashboard --ignore-not-found || true
+        fi
+        rm -f /opt/k4all/setup-dashboard.done
+        rm -f /opt/k4all/setup-ingress.done
+        rm -f /opt/k4all/setup-headlamp.done
+
+        # Clean old K4ALL HELPER block from bash_profile (new one will be written by setup-headlamp.sh)
+        if grep -q "#### K4ALL HELPER ####" /root/.bash_profile 2>/dev/null; then
+            sed -i '/#### K4ALL HELPER ####/,/#### END K4ALL HELPER ####/d' /root/.bash_profile
+        fi
+
+        # Add gateway feature key for existing configs (disabled by default)
+        config=$(echo "$config" | jq 'if .features.gateway == null then .features.gateway = {"enabled": "false"} else . end')
+    fi
+
     # Return the modified config
     echo "$config"
 }

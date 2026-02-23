@@ -48,6 +48,23 @@ validate_features() {
     return 1
   fi
 
+  # Check for gateway section
+  if ! check_json_value '.features.gateway'; then
+    echo "Missing 'features.gateway' section."
+    return 1
+  fi
+
+  if ! check_json_value '.features.gateway.enabled'; then
+    echo "Missing 'features.gateway.enabled' section."
+    return 1
+  fi
+
+  GATEWAY_ENABLED=$(jq -r '.features.gateway.enabled' "$CONFIG_FILE")
+  if [[ "$GATEWAY_ENABLED" != "true" && "$GATEWAY_ENABLED" != "false" ]]; then
+    echo "Invalid features gateway.enabled' value. Must be 'true' or 'false'."
+    return 1
+  fi
+
   echo "features section is valid."
   return 0
 }
