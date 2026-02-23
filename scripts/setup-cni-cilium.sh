@@ -10,7 +10,7 @@ CILIUM_VERSION="1.19.1"
 KUBECONFIG=/root/.kube/config
 export HOME=/root/
 
-source /usr/local/bin/k4all-utils
+source /usr/local/bin/control-plane-utils
 
 # Install cilium CLI
 retry_command "CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)" 10 30
@@ -21,15 +21,24 @@ sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
 tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
 rm cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
 
-# Install cilium CNI
-cilium install --version $CILIUM_VERSION \
-  --namespace kube-system \
-  --set kubeProxyReplacement=true \
-  --set k8sServiceHost=$(get_cluster_ip) \
-  --set k8sServicePort=6443 \
-  --set l2announcements.enabled=true \
-  --set k8sClientRateLimit.qps=10 \
+CILIUM_OPTS=(
+  --version "$CILIUM_VERSION"
+  --namespace kube-system
+  --set kubeProxyReplacement=true
+  --set "k8sServiceHost=$(get_cluster_ip)"
+  --set k8sServicePort=6443
+  --set l2announcements.enabled=true
+  --set k8sClientRateLimit.qps=10
   --set k8sClientRateLimit.burst=20
+)
+
+if cilium status --wait=false > /dev/null 2>&1; then
+  echo "Cilium already present, upgrading..."
+  cilium upgrade "${CILIUM_OPTS[@]}"
+else
+  echo "Installing Cilium..."
+  cilium install "${CILIUM_OPTS[@]}"
+fi
 
 # Done
 touch /opt/k4all/cilium-setup.done
