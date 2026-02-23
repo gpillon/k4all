@@ -6,7 +6,8 @@ if [ -f "/opt/k4all/feature-gateway-setup.done" ]; then
   exit 0
 fi
 
-HOME=/root/
+export KUBECONFIG=/root/.kube/config
+export HOME=/root/
 source /usr/local/bin/k4all-utils
 
 GWAPI_VERSION=$(curl -sL https://api.github.com/repos/kubernetes-sigs/gateway-api/releases/latest | jq -r '.tag_name')

@@ -85,6 +85,7 @@ migrate_config() {
     local new_version="$2"
     local config="$3"
 
+    export HOME=/root/
     echo "Migrating config from version $old_version to $new_version" >&2
 
     # Examples of migration steps
@@ -364,6 +365,15 @@ setup_services() {
     done
 }
 
+# Re-exec'd with updated script: run only config migration, then finish
+if [ "${K4ALL_UPDATE_PHASE:-}" = "migrate" ]; then
+    trap cleanup EXIT
+    update_config
+    cleanup
+    /usr/local/bin/reinstall.sh --yes
+    exit 0
+fi
+
 # Trap to perform cleanup at the end of the script
 trap cleanup EXIT
 
@@ -385,33 +395,38 @@ podman create --name "$CONTAINER_NAME" --replace "$CONTAINER_IMAGE"
 podman cp "$CONTAINER_NAME:/src" "$UPDATE_TMP_DIR_K4ALL"
 
 check_repos
-update_config
 
-# Add call to handle_directories function for both Butane files
+# Deploy files BEFORE config migration so updated migration code is available
 handle_directories "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
 handle_directories "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 
-# Extract names and contents of services and copy necessary files
 extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
 extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 
 chmod +x /usr/local/bin/*
 
-# Extract and copy files
 extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
 extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 
 chmod +x /usr/local/bin/*
 
-# Extract names and contents of services from both files
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu" "$DEST_FOLDER"
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu" "$DEST_FOLDER"
 
-# Removal of services starting with 'fck8s'
 setup_services
+
+# If the newly deployed update-node.sh differs from the running one,
+# re-exec it so that updated migrate_config code is used.
+if [ -f "/usr/local/bin/update-node.sh" ] && ! diff -q "$0" "/usr/local/bin/update-node.sh" > /dev/null 2>&1; then
+    echo "update-node.sh has been updated. Re-executing for config migration..."
+    cp "/usr/local/bin/update-node.sh" "$TMP_UPDATED_SCRIPT_PATH"
+    export K4ALL_UPDATE_PHASE=migrate
+    exec bash "$TMP_UPDATED_SCRIPT_PATH" "$IMAGE_TAG"
+fi
+
+update_config
 
 #cleanup updated Data
 cleanup
 
-# Uncomment if you have a reinstall script to run
 /usr/local/bin/reinstall.sh --yes
