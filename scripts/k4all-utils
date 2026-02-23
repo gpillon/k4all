@@ -241,3 +241,46 @@ set_cli_arch() {
     echo "CLI_ARCH is set to: ${CLI_ARCH}"
     export CLI_ARCH
 }
+
+patch_deployment_image_registry() {
+    local ns="$1"
+    local deploy="$2"
+    local container_index="${3:-0}"
+    local registry="${4:-docker.io}"
+
+    # recupera immagine attuale
+    local image
+    image=$(kubectl -n "$ns" get deploy "$deploy" -o jsonpath="{.spec.template.spec.containers[$container_index].image}")
+
+    if [[ -z "$image" ]]; then
+        echo "❌ Impossibile recuperare l'immagine del deployment $deploy nel namespace $ns"
+        return 1
+    fi
+
+    # Controlla se ha già un registry (un punto nel primo token prima dello slash)
+    local first_token="${image%%/*}"
+    if [[ "$first_token" == *.* ]]; then
+        echo "✅ Nessuna patch necessaria, immagine già con registry: $image"
+        return 0
+    fi
+
+    local new_image=""
+    if [[ "$image" == */* ]]; then
+        # Caso org/repo[:tag]
+        new_image="${registry}/${image}"
+    else
+        # Caso solo nome immagine
+        if [[ "$registry" == "docker.io" ]]; then
+            new_image="${registry}/library/${image}"
+        else
+            # per gli altri registry aggiungo l'org = nome immagine
+            local repo="${image%%:*}"
+            new_image="${registry}/${repo}/${image}"
+        fi
+    fi
+
+    echo "⚙️  Patching $deploy (ns=$ns, container=$container_index): $image -> $new_image"
+    kubectl -n "$ns" patch deployment "$deploy" \
+      --type='json' \
+      -p="[ {\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/$container_index/image\", \"value\": \"$new_image\"} ]"
+}

@@ -1,0 +1,14 @@
+config:
+  oidc:
+    clientID: ""
+    clientSecret: ""
+    issuerURL: ""
+    scopes: ""
+  pluginsDir: /headlamp/plugins
+
+service:
+  type: ClusterIP
+  port: 4466
+
+ingress:
+  enabled: false

@@ -6,9 +6,21 @@ if [ -f "/opt/k4all/metallb-setup.done" ]; then
   exit 0
 fi
 
+source /usr/local/bin/k4all-utils
+
+# Skip MetalLB when Cilium is the CNI (Cilium provides its own L2 announcements)
+if [ -f "$K4ALL_CONFIG_FILE" ]; then
+  cni_type=$(jq -r '.networking.cni.type // "calico"' "$K4ALL_CONFIG_FILE")
+  if [ "$cni_type" = "cilium" ]; then
+    echo "Cilium CNI detected, skipping MetalLB installation."
+    touch /opt/k4all/metallb-setup.done
+    exit 0
+  fi
+fi
+
 # https://metallb.universe.tf/installation/
 
-METALLB_VERSION="v0.14.5"
+METALLB_VERSION="v0.15.3"
 HOME=/root/
 
 kubectl --kubeconfig=/etc/kubernetes/admin.conf get configmap kube-proxy -n kube-system -o yaml | \
@@ -38,4 +50,4 @@ done
 # https://metallb.universe.tf/troubleshooting/#metallb-is-not-advertising-my-service-from-my-control-plane-nodes-or-from-my-single-node-cluster
 kubectl --kubeconfig=/etc/kubernetes/admin.conf patch daemonset speaker -n metallb-system --type=json -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--ignore-exclude-lb"}]'
 
-touch /opt/k4all/metal-lb-setup.done
+touch /opt/k4all/metallb-setup.done

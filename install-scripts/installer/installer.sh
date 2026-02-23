@@ -196,6 +196,7 @@ menu_features() {
     local out
     out=$(ui_prompt_menu "Features" 1 0 \
       "Argo CD" \
+      "Gateway API (Kong)" \
       "CNI" \
       "Virtualization" \
       "Firewall" \
@@ -207,6 +208,13 @@ menu_features() {
           logic_set_json '.features.argocd.enabled=$v' "true"
         else
           logic_set_json '.features.argocd.enabled=$v' "false"
+        fi
+        ;;
+      "Gateway API (Kong)")
+        if ui_prompt_yesno "Enable Gateway API (Kong)?" no 0; then
+          logic_set_json '.features.gateway.enabled=$v' "true"
+        else
+          logic_set_json '.features.gateway.enabled=$v' "false"
         fi
         ;;
       "CNI")

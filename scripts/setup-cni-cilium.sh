@@ -6,7 +6,7 @@ if [ -f "/opt/k4all/cilium-setup.done" ]; then
   exit 0
 fi
 
-CILIUM_VERSION="1.16.1"
+CILIUM_VERSION="1.19.1"
 KUBECONFIG=/root/.kube/config
 export HOME=/root/
 
@@ -22,7 +22,14 @@ tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
 rm cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
 
 # Install cilium CNI
-cilium install --version $CILIUM_VERSION
+cilium install --version $CILIUM_VERSION \
+  --namespace kube-system \
+  --set kubeProxyReplacement=true \
+  --set k8sServiceHost=$(get_cluster_ip) \
+  --set k8sServicePort=6443 \
+  --set l2announcements.enabled=true \
+  --set k8sClientRateLimit.qps=10 \
+  --set k8sClientRateLimit.burst=20
 
 # Done
 touch /opt/k4all/cilium-setup.done

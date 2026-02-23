@@ -17,11 +17,14 @@ systemd:
         Requires=network-online.target
         Requires=fck8s-setup-proxy.service
         After=network-online.target fck8s-setup-proxy.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-helm.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -32,11 +35,14 @@ systemd:
         Description=Wait for a node ready and schedulable
         Requires=fck8s-k8s-setup-init.service
         After=fck8s-k8s-setup-init.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/node-ready-and-schedulable.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -48,11 +54,14 @@ systemd:
         Requires=fck8s-k8s-setup-init.service
         After=fck8s-k8s-setup-init.service
         PartOf=fck8s-k8s-setup-init.service
+        StartLimitIntervalSec=0
 
         [Service]
         Type=oneshot
         ExecStart=setup-taint-master-scheduleable.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -63,27 +72,33 @@ systemd:
         Description=Install Metric Server
         Requires=fck8s-node-ready-and-schedulable.service
         After=fck8s-node-ready-and-schedulable.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-metrics.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
-    - name: fck8s-dashboard-setup.service
+    - name: fck8s-headlamp-setup.service
       enabled: true
       contents: |
         [Unit]
-        Description=Install Dashboard
+        Description=Install Headlamp
         Requires=fck8s-node-ready-and-schedulable.service
         Requires=fck8s-helm-setup.service
         After=fck8s-node-ready-and-schedulable.service fck8s-helm-setup.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
-        ExecStart=/usr/local/bin/setup-dashboard.sh
+        ExecStart=/usr/local/bin/setup-headlamp.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         WorkingDirectory=/root/
         
         [Install]
@@ -92,14 +107,17 @@ systemd:
       enabled: true
       contents: |
         [Unit]
-        Description=Install Dashboard
-        Requires=fck8s-dashboard-setup.service
-        After=fck8s-dashboard-setup.service
+        Description=Install Ingress
+        Requires=fck8s-headlamp-setup.service
+        After=fck8s-headlamp-setup.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-ingress.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         WorkingDirectory=/root/
         
         [Install]
@@ -112,11 +130,14 @@ systemd:
         Requires=fck8s-node-ready-and-schedulable.service
         Requires=fck8s-helm-setup.service
         After=fck8s-node-ready-and-schedulable.service fck8s-helm-setup.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-certmanager.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         WorkingDirectory=/root/
         
         [Install]
@@ -131,11 +152,14 @@ systemd:
         Requires=fck8s-helm-setup.service
         Requires=fck8s-certmanager-setup.service
         After=fck8s-node-ready-and-schedulable.service fck8s-lvm-setup.service fck8s-helm-setup.service fck8s-certmanager-setup.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-topolvm.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         WorkingDirectory=/root/
         
         [Install]
@@ -148,11 +172,14 @@ systemd:
         Requires=fck8s-node-ready-and-schedulable.service
         Requires=fck8s-helm-setup.service
         After=fck8s-node-ready-and-schedulable.service fck8s-helm-setup.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-cni.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         WorkingDirectory=/root/
         
         [Install]
@@ -164,11 +191,14 @@ systemd:
         Description=Wait default service account creation
         Requires=fck8s-node-ready-and-schedulable.service
         After=fck8s-node-ready-and-schedulable.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/wait-default-service-account.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -179,11 +209,14 @@ systemd:
         Description=Setup ovs cni
         Requires=fck8s-node-ready-and-schedulable.service
         After=fck8s-node-ready-and-schedulable.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-ovs-cni.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -194,11 +227,14 @@ systemd:
         Description=Setup MetalLB
         Requires=fck8s-node-ready-and-schedulable.service
         After=fck8s-node-ready-and-schedulable.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-metallb.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -209,11 +245,14 @@ systemd:
         Description=Setup Additional Features
         Requires=fck8s-node-ready-and-schedulable.service
         After=fck8s-node-ready-and-schedulable.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-features.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -224,11 +263,14 @@ systemd:
         Description=Install Custom Manifests
         Requires=fck8s-wait-default-service-account.service
         After=fck8s-wait-default-service-account.service
+        StartLimitIntervalSec=0
          
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-custom-manifests.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -236,13 +278,16 @@ systemd:
       enabled: true
       contents: |
         [Unit]
-        Description=Update Kubernetes Ingress Routes for the Dashboard
+        Description=Update Kubernetes Ingress Routes
         Requires=fck8s-ingress-setup.service
         After=fck8s-ingress-setup.service
+        StartLimitIntervalSec=0
         
         [Service]
-        ExecStart=/usr/local/bin/update-routes.sh
         Type=oneshot
+        ExecStart=/usr/local/bin/update-routes.sh
+        Restart=on-failure
+        RestartSec=30
         WorkingDirectory=/root/
 
         [Install]
@@ -251,7 +296,7 @@ systemd:
       enabled: true
       contents: |
         [Unit]
-        Description=Timer to periodically update Kubernetes Ingress for the Dashboard
+        Description=Timer to periodically update Kubernetes Ingress Routes
         Requires=fck8s-node-ready-and-schedulable.service
         Requires=fck8s-ingress-setup.service
         After=fck8s-node-ready-and-schedulable.service fck8s-ingress-setup.service

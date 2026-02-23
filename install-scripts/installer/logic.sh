@@ -65,6 +65,9 @@ logic_menu_features() {
   local argocd
   argocd=$(logic_get_json '.features.argocd.enabled // "false"')
   echo "argocd=$argocd"
+  local gateway
+  gateway=$(logic_get_json '.features.gateway.enabled // "false"')
+  echo "gateway=$gateway"
 }
 
 logic_detect_node_type() {

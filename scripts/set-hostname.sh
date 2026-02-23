@@ -40,7 +40,7 @@ function get_domain() {
 
     while [[ $retry_count -lt $max_retries ]]; do
         # Capture the output of systemd-resolve
-        domain=$(systemd-resolve --status 2>/dev/null | grep "DNS Domain:" | awk '{print $3}' || echo "")
+        domain=$(systemd-resolve --status 2>/dev/null | grep "DNS Domain:" | head -n 1 | awk '{print $3}' || echo "")
 
         if [[ -n "$domain" ]]; then
             echo "$domain"

@@ -187,10 +187,10 @@ echo "Welcome! Connect to the dashboard using those addresses: "
 if [ -f /etc/login_data ]; then
     cat /etc/login_data
 fi
-echo " - Nodeport Fallback Route: https://$HOST_IP:32323"
+echo " - Nodeport Fallback Route: http://$HOST_IP:32323"
 echo ""
 echo "Using this token"
-echo "$(kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath={".data.token"} | base64 -d)"
+echo "$(kubectl get secret admin-user -n headlamp -o jsonpath={".data.token"} | base64 -d)"
 echo ""
 #### END K4ALL HELPER ####
 ' >> /root/.bash_profile

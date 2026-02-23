@@ -85,6 +85,7 @@ migrate_config() {
     local new_version="$2"
     local config="$3"
 
+    export HOME=/root/
     echo "Migrating config from version $old_version to $new_version" >&2
 
     # Examples of migration steps
@@ -115,6 +116,35 @@ migrate_config() {
         config=$(echo "$config" | jq '.cluster |= (if has("customHostname") then .customApiEndPoint = .customHostname | del(.customHostname) else . end)')
     fi
 
+    # Apply changes for version 1.8.0
+    if version_lt "$old_version" "1.8.0"; then
+        echo "Performing v1.8.0 migration" >&2
+
+        # Fix ovsdb-server ownership (persistent fix is deployed via systemd drop-in)
+        chown openvswitch: /etc/openvswitch/conf.db 2>/dev/null || true
+        chown openvswitch: /etc/openvswitch/.conf.db.~lock~ 2>/dev/null || true
+        chown openvswitch: /etc/openvswitch/.conf.db.tmp.~lock~ 2>/dev/null || true
+        systemctl restart ovsdb-server 2>/dev/null || true
+
+        # Migrate from kubernetes-dashboard to headlamp
+        if helm --kubeconfig=/etc/kubernetes/admin.conf list -n kubernetes-dashboard -q 2>/dev/null | grep -q kubernetes-dashboard; then
+            echo "Uninstalling kubernetes-dashboard..." >&2
+            helm --kubeconfig=/etc/kubernetes/admin.conf uninstall kubernetes-dashboard -n kubernetes-dashboard || true
+            kubectl --kubeconfig=/etc/kubernetes/admin.conf delete namespace kubernetes-dashboard --ignore-not-found || true
+        fi
+        rm -f /opt/k4all/setup-dashboard.done
+        rm -f /opt/k4all/setup-ingress.done
+        rm -f /opt/k4all/setup-headlamp.done
+
+        # Clean old K4ALL HELPER block from bash_profile (new one will be written by setup-headlamp.sh)
+        if grep -q "#### K4ALL HELPER ####" /root/.bash_profile 2>/dev/null; then
+            sed -i '/#### K4ALL HELPER ####/,/#### END K4ALL HELPER ####/d' /root/.bash_profile
+        fi
+
+        # Add gateway feature key for existing configs (disabled by default)
+        config=$(echo "$config" | jq 'if .features.gateway == null then .features.gateway = {"enabled": "false"} else . end')
+    fi
+
     # Return the modified config
     echo "$config"
 }
@@ -130,6 +160,7 @@ check_repos() {
         if [ -f "$HOST_REPO_FOLDER/$base_repo_file" ]; then
             if ! diff -Z "$repo_file" "$HOST_REPO_FOLDER/$base_repo_file" > /dev/null; then
                 echo "Differences found in $base_repo_file. Exiting script. You probably need to update the cluster to a newer version. Use the --force flag if you want to update anyway."
+                echo "Please visit https://github.com/gpillon/k4all/wiki/Kubernetes-updates to update the cluster to a newer version."
                 diff -Z "$repo_file" "$HOST_REPO_FOLDER/$base_repo_file"
                 exit 1
             else
@@ -334,6 +365,15 @@ setup_services() {
     done
 }
 
+# Re-exec'd with updated script: run only config migration, then finish
+if [ "${K4ALL_UPDATE_PHASE:-}" = "migrate" ]; then
+    trap cleanup EXIT
+    update_config
+    cleanup
+    /usr/local/bin/reinstall.sh --yes
+    exit 0
+fi
+
 # Trap to perform cleanup at the end of the script
 trap cleanup EXIT
 
@@ -355,33 +395,38 @@ podman create --name "$CONTAINER_NAME" --replace "$CONTAINER_IMAGE"
 podman cp "$CONTAINER_NAME:/src" "$UPDATE_TMP_DIR_K4ALL"
 
 check_repos
-update_config
 
-# Add call to handle_directories function for both Butane files
+# Deploy files BEFORE config migration so updated migration code is available
 handle_directories "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
 handle_directories "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 
-# Extract names and contents of services and copy necessary files
 extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
 extract_and_copy_trees "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 
 chmod +x /usr/local/bin/*
 
-# Extract and copy files
 extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu"
 extract_and_copy_files "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu"
 
 chmod +x /usr/local/bin/*
 
-# Extract names and contents of services from both files
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-base.bu" "$DEST_FOLDER"
 extract_services "$UPDATE_TMP_DIR_K4ALL_SRC/k8s-$NODE_TYPE.bu" "$DEST_FOLDER"
 
-# Removal of services starting with 'fck8s'
 setup_services
+
+# If the newly deployed update-node.sh differs from the running one,
+# re-exec it so that updated migrate_config code is used.
+if [ -f "/usr/local/bin/update-node.sh" ] && ! diff -q "$0" "/usr/local/bin/update-node.sh" > /dev/null 2>&1; then
+    echo "update-node.sh has been updated. Re-executing for config migration..."
+    cp "/usr/local/bin/update-node.sh" "$TMP_UPDATED_SCRIPT_PATH"
+    export K4ALL_UPDATE_PHASE=migrate
+    exec bash "$TMP_UPDATED_SCRIPT_PATH" "$IMAGE_TAG"
+fi
+
+update_config
 
 #cleanup updated Data
 cleanup
 
-# Uncomment if you have a reinstall script to run
 /usr/local/bin/reinstall.sh --yes

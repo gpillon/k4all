@@ -71,17 +71,17 @@ While Waiting you could listen a nice kubernetes song:
 [![NCS - Kubernetes - Virtual Realms](https://img.youtube.com/vi/UMqWNKWYwd8/0.jpg)](https://www.youtube.com/watch?v=UMqWNKWYwd8)
 
 ## Post-Install
-- **Access Dashboard and Token**:
+- **Access Headlamp and Token**:
   - `ssh` in your newly installed machine with `ssh core@<MACHINE IP>` (default password: core)
   - Access the system with `sudo -i` (if credentials are not shown, wait for the end of the installation process).
-  - if credentials are not show, you can connect to the k8s dashboard, at https://\<your-ip\>:32323/ using the token retrived by `kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath={".data.token"} | base64 -d)` (remember to `sudo -i`)
+  - if credentials are not show, you can connect to Headlamp at https://\<your-ip\>:32323/ using the token retrived by `kubectl get secret admin-user -n headlamp -o jsonpath={".data.token"} | base64 -d)` (remember to `sudo -i`)
 
 - **Default Password**: The default password is `core`. **Change it immediately upon login.**
   - After login, use `passwd` to set a new password for the `core` user.
 ## Post-Installation Notes
 
 - **Sample Pod**: A sample pod will be created in the `default` namespace if the LVM setup is successful. You can safely delete this pod.
-- **Dashboard**: Access the Kubernetes dashboard via the URL and token you obtain from the system.
+- **Headlamp**: Access the Headlamp web UI via the URL and token you obtain from the system.
    
 ## Debugging Failed Installation
 

@@ -68,7 +68,7 @@ fi
 
 if [[ $unattended -eq 1 ]]; then
     echo "${JOIN_COMMAND}"
-if [[ $debug -eq 1 ]]; then
+elif [[ $debug -eq 1 ]]; then
     # Output in clear text if --debug is specified
     echo "Clear text join command:"
     echo "${JOIN_COMMAND}"

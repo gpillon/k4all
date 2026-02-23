@@ -91,7 +91,7 @@ ask_for_confirmation
 # Delete all other *.done files except the ones specifically handled by flags
 if [ "$base" = true ]; then
   for file in /opt/k4all/*.done; do
-    if [[ "$file" != "/opt/k4all/setup-ph3.done"  && "$file" != "/opt/k4all/setup-ph2.done" && "$file" != "/opt/k4all/k8s-setup-init.done"  && "$file" != "/opt/k4all/setup-hostname.done" && "$file" != "/opt/k4all/setup-ph3-reset-kube.done" ]]; then
+    if [[ "$file" != "/opt/k4all/setup-ph3.done"  && "$file" != "/opt/k4all/setup-ph2.done" && "$file" != "/opt/k4all/k8s-setup-init.done"  && "$file" != "/opt/k4all/setup-hostname.done" && "$file" != "/opt/k4all/setup-ph3-reset-kube.done" && "$file" != "/opt/k4all/setup-proxy.done" ]]; then
       delete_file "$file"
     fi
   done
@@ -101,6 +101,7 @@ fi
 if [ "$network_flag" = true ]; then
   delete_file /opt/k4all/setup-ph2.done
   delete_file /opt/k4all/setup-ph3.done
+  delete_file /opt/k4all/setup-proxy.done
 fi
 
 if [ "$kubernetes_flag" = true ]; then

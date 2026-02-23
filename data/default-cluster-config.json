@@ -1,7 +1,7 @@
 // This file is used to configure the device.
 // The device will read this fle and apply the settings during boot.
 {
-  "version": "1.7.0",
+  "version": "1.8.0",
   "networking": {
     //default_cni (calico cilium)
     "cni": {
@@ -69,12 +69,17 @@
     "argocd": {
       // Enable ArgoCD.
       "enabled": "false"
+    },
+    // gateway API (Kong) configuration
+    "gateway": {
+      // Enable Gateway API with Kong.
+      "enabled": "false"
     }
   },
 
   "cluster": {
     // set to false, if you want to use the IP address to solve the control plane endpoint. set to "short" to use the hostname without the domain part.
-    "apiEndPointUseHostName": "true",
+    "apiEndPointUseHostName": "false",
 
     // set a custom hostname for the controlplane (in this case "useHostname" is ignored)
     "customApiEndPoint": "",
@@ -103,6 +108,11 @@
     // No Proxy
     "no_proxy": ""
   }
+
+  // autojoin configuration
+  // to autojoin the node to cluster, paste here the join command generated on master/bootstrap node with "generate_join.sh worker | control" 
+  //"autoJoin": "<Base 64 string>"
+
 }
 
 // not used now; but ideas for future

@@ -48,6 +48,8 @@ kubectl patch cdi cdi --patch '{"spec": {"config": {"podResourceRequirements": {
 #Install Kubevirt-manager
 kubectl apply -f https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/main/kubernetes/bundled.yaml
 kubectl apply -f https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/main/kubernetes/crd.yaml
+# Patch deployment image if needed
+patch_deployment_image_registry kubevirt-manager kubevirt-manager 0 docker.io
 
 #Apply Kubevirt-manager Ingress And Patch Routes
 kubectl apply -f /usr/local/share/virt-ingress-routes.yaml

@@ -20,11 +20,14 @@ systemd:
       contents: |
         [Unit]
         Description=Setup LVM
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-lvm.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -35,11 +38,14 @@ systemd:
         Description=Setup Proxy
         Requires=network-online.target
         After=network-online.target
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-proxy.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -50,11 +56,14 @@ systemd:
         Description=Set Static Ip Address
         Requires=network-online.target
         After=network-online.target
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/set-static-ip.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -64,12 +73,15 @@ systemd:
         [Unit]
         Description=Set Hostname
         Requires=fck8s-set-static-ip.service
-        After=fck8s-set-static-ip.service 
+        After=fck8s-set-static-ip.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/set-hostname.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -81,11 +93,14 @@ systemd:
         Requires=fck8s-set-hostname.service
         Requires=fck8s-setup-proxy.service
         After=fck8s-set-hostname.service fck8s-setup-proxy.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-k8s-ph1.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -95,12 +110,15 @@ systemd:
         [Unit]
         Description=Set up Kubernetes
         Requires=fck8s-k8s-setup-ph1.service
-        After=fck8s-k8s-setup-ph1.service       
+        After=fck8s-k8s-setup-ph1.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-k8s-ph2.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -110,12 +128,15 @@ systemd:
         [Unit]
         Description=Set up Kubernetes
         Requires=fck8s-k8s-setup-ph2.service
-        After=fck8s-k8s-setup-ph2.service       
+        After=fck8s-k8s-setup-ph2.service
+        StartLimitIntervalSec=0
         
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-k8s-ph3.sh
         RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -127,12 +148,14 @@ systemd:
         Requires=fck8s-k8s-setup-ph3.service
         Requires=crio.service
         After=fck8s-k8s-setup-ph3.service crio.service
+        StartLimitIntervalSec=0
 
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/setup-k8s-init.sh
         RemainAfterExit=yes
         Restart=on-failure
+        RestartSec=30
         
         [Install]
         WantedBy=multi-user.target
@@ -196,6 +219,12 @@ storage:
           # Enable it.
           # This file must sort before 40-disable-passwords.conf.
           PasswordAuthentication yes
+    - path: "/etc/systemd/system/ovsdb-server.service.d/fix-ownership.conf"
+      mode: 0644
+      contents:
+        inline: |
+          [Service]
+          ExecStartPre=/bin/bash -c 'chown openvswitch: /etc/openvswitch/conf.db 2>/dev/null || true; chown openvswitch: /etc/openvswitch/.conf.db.~lock~ 2>/dev/null || true; chown openvswitch: /etc/openvswitch/.conf.db.tmp.~lock~ 2>/dev/null || true'
     - path: /etc/zincati/config.d/10-update-periodic.toml
       mode: 0644
       user:
