@@ -28,7 +28,7 @@ helm upgrade --kubeconfig=/etc/kubernetes/admin.conf --install ingress-nginx ing
   $HA_INGRESS_PARAMS
 
 while true; do
-  if kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /usr/local/share/dashboard-ingress-routes.yaml; then
+  if kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /usr/local/share/headlamp-ingress-routes.yaml; then
     break
   else
     echo "Failed to apply Ingress routes configuration. Retrying in 10 seconds..."

@@ -53,12 +53,14 @@ systemd:
         Description=K4All Auto Join Cluster
         Requires=network-online.target
         After=network-online.target fck8s-k8s-setup-ph3.service
+        StartLimitIntervalSec=0
 
         [Service]
         Type=oneshot
         ExecStart=/usr/local/bin/auto-join.sh
         RemainAfterExit=yes
         Restart=on-failure
+        RestartSec=30
 
         [Install]
         WantedBy=multi-user.target

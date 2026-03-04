@@ -1,20 +1,24 @@
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
 networking:
   podSubnet: "10.100.0.1/18"
   serviceSubnet: "10.96.0.0/16"
 controllerManager:
   extraArgs:
-    flex-volume-plugin-dir: "/opt/libexec/kubernetes/kubelet-plugins/volume/exec/"
+  - name: flex-volume-plugin-dir
+    value: "/opt/libexec/kubernetes/kubelet-plugins/volume/exec/"
 apiServer: {}
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 nodeRegistration:
   kubeletExtraArgs:
-    volume-plugin-dir: "/opt/libexec/kubernetes/kubelet-plugins/volume/exec/"
+  - name: volume-plugin-dir
+    value: "/opt/libexec/kubernetes/kubelet-plugins/volume/exec/"
 
+# --- Full v1beta4 reference for future use ---
 # apiVersion: kubeadm.k8s.io/v1beta4
+# kind: InitConfiguration
 # bootstrapTokens:
 # - groups:
 #   - system:bootstrappers:kubeadm:default-node-token
@@ -23,7 +27,6 @@ nodeRegistration:
 #   usages:
 #   - signing
 #   - authentication
-# kind: InitConfiguration
 # localAPIEndpoint:
 #   advertiseAddress: 192.168.5.98
 #   bindPort: 6443
@@ -47,8 +50,9 @@ nodeRegistration:
 #   tlsBootstrap: 5m0s
 #   upgradeManifests: 5m0s
 # ---
-# apiServer: {}
 # apiVersion: kubeadm.k8s.io/v1beta4
+# kind: ClusterConfiguration
+# apiServer: {}
 # caCertificateValidityPeriod: 87600h0m0s
 # certificateValidityPeriod: 8760h0m0s
 # certificatesDir: /etc/kubernetes/pki
@@ -63,8 +67,7 @@ nodeRegistration:
 #   local:
 #     dataDir: /var/lib/etcd
 # imageRepository: registry.k8s.io
-# kind: ClusterConfiguration
-# kubernetesVersion: v1.31.3
+# kubernetesVersion: v1.35.0
 # networking:
 #   dnsDomain: cluster.local
 #   podSubnet: 10.100.0.1/18

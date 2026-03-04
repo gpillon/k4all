@@ -46,6 +46,8 @@ rpm-ostree install --idempotent $PACKAGES
 #   echo "No pending changes."
 # fi
 
+systemctl enable zincati
+
 touch /opt/k4all/k8s-setup-ph1.done
 systemctl reboot
 while true; do sleep 1000; done

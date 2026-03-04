@@ -11,6 +11,7 @@ show_help() {
   echo "  --network       Delete the files related to network configuration."
   echo "  --kubernetes    Delete the files related to Kubernetes initialization."
   echo "  --hostname      Delete the files related to Hostname."
+  echo "  --storage       Delete the files related to storage (LVM)."
   echo "  --no-base       Skip Base Reinstallation."  
   echo "  --yes           Dont ask confirmation."
   echo "  --help          Show this help message and exit."
@@ -47,6 +48,7 @@ delete_file() {
 network_flag=false
 kubernetes_flag=false
 hostname_flag=false
+storage_flag=false
 yes_flag=false
 base=true
 
@@ -67,6 +69,10 @@ for arg in "$@"; do
       ;;
     --hostname)
       hostname_flag=true
+      shift
+      ;;
+    --storage)
+      storage_flag=true
       shift
       ;;
     --no-base)
@@ -91,7 +97,13 @@ ask_for_confirmation
 # Delete all other *.done files except the ones specifically handled by flags
 if [ "$base" = true ]; then
   for file in /opt/k4all/*.done; do
-    if [[ "$file" != "/opt/k4all/setup-ph3.done"  && "$file" != "/opt/k4all/setup-ph2.done" && "$file" != "/opt/k4all/k8s-setup-init.done"  && "$file" != "/opt/k4all/setup-hostname.done" && "$file" != "/opt/k4all/setup-ph3-reset-kube.done" && "$file" != "/opt/k4all/setup-proxy.done" ]]; then
+    if [[ "$file" != "/opt/k4all/setup-ph3.done" \
+       && "$file" != "/opt/k4all/setup-ph2.done" \
+       && "$file" != "/opt/k4all/k8s-setup-init.done" \
+       && "$file" != "/opt/k4all/setup-hostname.done" \
+       && "$file" != "/opt/k4all/setup-ph3-reset-kube.done" \
+       && "$file" != "/opt/k4all/setup-proxy.done" \
+       && "$file" != "/opt/k4all/lvm-setup.done" ]]; then
       delete_file "$file"
     fi
   done
@@ -111,6 +123,10 @@ fi
 
 if [ "$hostname_flag" = true ]; then
   delete_file "/opt/k4all/setup-hostname.done"
+fi
+
+if [ "$storage_flag" = true ]; then
+  delete_file "/opt/k4all/lvm-setup.done"
 fi
 
 # Reboot the system

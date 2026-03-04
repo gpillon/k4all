@@ -1,0 +1,21 @@
+controller:
+  ingressController:
+    image:
+      repository: docker.io/kong/kubernetes-ingress-controller
+    enabled: true
+    gatewayDiscovery:
+      enabled: true
+
+gateway:
+  enabled: true
+  image:
+    repository: docker.io/kong/kong-gateway
+  proxy:
+    type: LoadBalancer
+    http:
+      enabled: true
+      containerPort: 8000
+    tls:
+      enabled: true
+      containerPort: 8443
+

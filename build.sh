@@ -73,7 +73,7 @@ for role in "${roles[@]}"; do
     $CONTAINER_TOOL run --interactive -v $(pwd):/data/ --rm quay.io/coreos/butane:release --pretty --strict -d /data/ < install.bu > install.ign
 
     # Remove old ISO if it exists
-    rm -rf "$FCOS_PATH/fcos42-k8s-$role.iso"
+    rm -rf "$FCOS_PATH/fcos43-k8s-$role.iso"
 
     # Generate the customized Fedora CoreOS ISO
     echo "Creating customized ISO for $role..."
@@ -85,7 +85,7 @@ for role in "${roles[@]}"; do
       quay.io/coreos/coreos-installer:release \
       iso ignition embed \
       -i "/data/install.ign" \
-      -o "/fcos/fcos42-k8s-$role.iso" \
+      -o "/fcos/fcos43-k8s-$role.iso" \
       "/fcos/$FCOS_IMAGE"
 
     # Modify kernel arguments for the ISO
@@ -95,7 +95,7 @@ for role in "${roles[@]}"; do
      quay.io/coreos/coreos-installer:release \
      iso kargs modify \
      -a coreos.liveiso.fromram \
-     "/fcos/fcos42-k8s-$role.iso"
+     "/fcos/fcos43-k8s-$role.iso"
 
      mv ./k8s.ign k8s-$role.ign
      mv ./install.ign install-$role.ign
