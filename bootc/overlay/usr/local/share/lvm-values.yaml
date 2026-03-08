@@ -7,6 +7,10 @@ lvmd:
       volume-group: vg_data
       default: true
       spare-gb: 5
+      type: thin
+      thin-pool:
+        name: thin-pool
+        overprovision-ratio: 4.0
 
 
 cert-manager:

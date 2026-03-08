@@ -15,7 +15,7 @@ if [ -f "/opt/k4all/setup-ph3.done" ]; then
   exit 0
 fi
 
-source /usr/local/bin/control-plane-utils
+source /var/opt/k4all/bin/control-plane-utils
 
 function setup_k8s_for_vip()  {
   
@@ -61,10 +61,10 @@ spec:
     - name: vip_nodename
       valueFrom:
         fieldRef:
-          fieldPath: spec.clusterName
+          fieldPath: spec.nodeName
     - name: vip_interface
       value: \"$vip_interface\"
-    - name: vip_cidr
+    - name: vip_subnet
       value: \"32\"
     - name: dns_mode
       value: first
@@ -81,17 +81,15 @@ spec:
     - name: vip_leasename
       value: plndr-cp-lock
     - name: vip_leaseduration
-      value: \"5\"
+      value: \"15\"
     - name: vip_renewdeadline
-      value: \"3\"
+      value: \"10\"
     - name: vip_retryperiod
-      value: \"1\"
+      value: \"2\"
     - name: address
       value: \"$haEndpoint\"
     - name: prometheus_server
       value: :2112
-    - name: lb_class_only
-      value: \"true\"
     image: ghcr.io/kube-vip/kube-vip:$KVVERSION
     imagePullPolicy: IfNotPresent
     name: kube-vip
@@ -101,6 +99,8 @@ spec:
         add:
         - NET_ADMIN
         - NET_RAW
+        drop:
+        - ALL
     volumeMounts:
     - mountPath: /etc/kubernetes/admin.conf
       name: kubeconfig
@@ -111,7 +111,7 @@ spec:
   hostNetwork: true
   volumes:
   - hostPath:
-      path: /etc/kubernetes/super-admin.conf
+      path: /etc/kubernetes/super-admin.conf # else the leader election will not work.
     name: kubeconfig
 status: {}
 " > /etc/kubernetes/manifests/kube-vip.yaml
@@ -169,7 +169,7 @@ if ! grep -q "#### K4ALL ADVERTISE CHECK ####" /root/.bash_profile; then
   printf '\n
 #### K4ALL ADVERTISE CHECK ####
 #### pls, DO NOT REMOVE "K4ALL HELPER" tags, or you could mess up updates :) ###
-sh /usr/local/bin/check-advertise-address.sh
+sh /var/opt/k4all/bin/check-advertise-address.sh
 #### END K4ALL ADVERTISE CHECK ####
 ' >> /root/.bash_profile
 fi

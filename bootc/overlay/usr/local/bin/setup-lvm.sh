@@ -58,9 +58,11 @@ for num in 5 6 7 4; do
 done
 
 if [ -z "$partition_name" ]; then
-    echo "ERROR: No suitable partition found for vg_data"
-    echo "Please ensure a partition is available for LVM storage"
-    exit 1
+    echo "WARNING: No partition available for vg_data - skipping LVM setup"
+    echo "To use TopoLVM storage, create a partition and rerun this service"
+    mkdir -p /opt/k4all
+    touch "$DONE_FILE"
+    exit 0
 fi
 
 echo "Using partition: ${partition_name}"

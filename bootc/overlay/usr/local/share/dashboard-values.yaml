@@ -1,3 +1,0 @@
-kong:
-  image:
-    repository: docker.io/library/kong

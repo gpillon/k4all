@@ -9,14 +9,26 @@ fi
 
 source /usr/local/bin/k4all-utils
 
+K4ALL_CONFIG="/etc/k4all-config.json"
+K8S_CONFIG="/etc/k8s-config.yaml"
+
+if [ -f "$K4ALL_CONFIG" ]; then
+  POD_NET=$(jq -r '.cluster.podNetwork // "10.100.0.1/18"' "$K4ALL_CONFIG")
+  SVC_NET=$(jq -r '.cluster.serviceNetwork // "10.96.0.0/16"' "$K4ALL_CONFIG")
+
+  echo "Setting pod network to $POD_NET and service network to $SVC_NET"
+  yq e '(select(.kind == "ClusterConfiguration") | .networking.podSubnet) = "'"$POD_NET"'"' -i "$K8S_CONFIG"
+  yq e '(select(.kind == "ClusterConfiguration") | .networking.serviceSubnet) = "'"$SVC_NET"'"' -i "$K8S_CONFIG"
+fi
+
 # Initialize Kubernetes cluster
 kubeadm init --config /etc/k8s-config.yaml
 
 
-if [ -f "/etc/kubernetes/manifests/kube-vip.yaml" ]; then
-  # Setting to /etc/kubernetes/admin.conf, the super-admin.conf maybe too much....
-  yq e '.spec.volumes[] |= select(.name == "kubeconfig") | .spec.volumes[0].hostPath.path = "/etc/kubernetes/admin.conf"' -i /etc/kubernetes/manifests/kube-vip.yaml
-fi
+# if [ -f "/etc/kubernetes/manifests/kube-vip.yaml" ]; then
+#   # Setting to /etc/kubernetes/super-admin.conf, else the leader election will not work.
+#   yq e '.spec.volumes[] |= select(.name == "kubeconfig") | .spec.volumes[0].hostPath.path = "/etc/kubernetes/super-admin.conf"' -i /etc/kubernetes/manifests/kube-vip.yaml
+# fi
 
 setup_kubeconfig_for_user "root" "/root"
 setup_kubeconfig_for_user "core" "/home/core"

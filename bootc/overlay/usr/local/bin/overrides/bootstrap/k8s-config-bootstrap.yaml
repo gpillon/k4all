@@ -1,18 +1,37 @@
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
 networking:
   podSubnet: "10.100.0.1/18"
   serviceSubnet: "10.96.0.0/16"
 controllerManager:
   extraArgs:
-    flex-volume-plugin-dir: "/opt/libexec/kubernetes/kubelet-plugins/volume/exec/"
+  - name: flex-volume-plugin-dir
+    value: /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
 apiServer: {}
+caCertificateValidityPeriod: 87600h0m0s
+certificateValidityPeriod: 8760h0m0s
+certificatesDir: /etc/kubernetes/pki
+clusterName: kubernetes
+# controlPlaneEndpoint: 192.168.221.234:6443 - must be set in the bootstrap-control/setup-k8s-ph3.sh script when using ha (like, keepalived or kubevip).
+dns: {}
+imageRepository: registry.k8s.io
+proxy: 
+  disabled: false
+scheduler: {}
+
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
+localAPIEndpoint:
+  # advertiseAddress: 192.168.221.161 - must be set in the bootstrap-control/setup-k8s-ph3.sh script when using ha (like, keepalived or kubevip).
+  bindPort: 6443
 nodeRegistration:
+  criSocket: unix:///var/run/crio/crio.sock
+  imagePullPolicy: IfNotPresent
+  imagePullSerial: true
   kubeletExtraArgs:
-    volume-plugin-dir: "/opt/libexec/kubernetes/kubelet-plugins/volume/exec/"
+  - name: volume-plugin-dir
+    value: /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
 
 # apiVersion: kubeadm.k8s.io/v1beta4
 # bootstrapTokens:

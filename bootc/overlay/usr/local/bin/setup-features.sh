@@ -36,9 +36,9 @@ function install_argocd() {
 
 
 if [ ! -f "$K4ALL_CONFIG_FILE" ]; then
-    # Configuration file does not exist
-    echo "Warining: no config file not found, Skipping Features"
-    return
+    echo "Warning: config file not found, skipping features"
+    touch /opt/k4all/features-setup.done
+    exit 0
 fi
 
 install_virt

@@ -11,6 +11,11 @@ if [ -f "$DONE_FILE" ]; then
     exit 0
 fi
 
+echo "Creating /var/opt/ directories..."
+mkdir -p /var/opt/libexec/
+mkdir -p /var/opt/cni/
+mkdir -p /var/opt/k4all/
+
 echo "Verifying pre-installed packages..."
 
 REQUIRED_COMMANDS=(kubeadm kubelet kubectl crio jq)

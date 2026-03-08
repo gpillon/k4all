@@ -4,13 +4,13 @@ set -euxo pipefail
 
 # Run the IP availability check script
 check-ip.sh
-generate-kubelet-config.sh
+/var/opt/k4all/bin/generate-kubelet-config.sh
 
 # Check the exit status of the IP check script
 if [ $? -eq 0 ]; then
     echo "At least one IP is available. Proceeding with LoadBalancer Service and ConfigMap update..."
 
-    source /usr/local/bin/control-plane-utils
+    source /var/opt/k4all/bin/control-plane-utils
 
     # Check if the service already exists
     if ! kubectl get svc kube-api-server-lb -n kube-system > /dev/null 2>&1; then

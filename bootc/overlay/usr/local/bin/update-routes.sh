@@ -1,13 +1,14 @@
 #!/bin/bash
 
-source /usr/local/bin/control-plane-utils
+set -euo pipefail
+
+source /opt/k4all/bin/control-plane-utils
 
 # Function to update the MOTD
 update_motd() {
     local fqdn_host=$1
     local nip_host=$2
 
-    #echo "Kubernetes Dashboard Routes:" | sudo tee /etc/motd
     truncate -s 0 /etc/login_data
     echo " - FQDN Route: https://dashboard.$fqdn_host/" | sudo tee -a /etc/login_data
     echo " - nip.io Route: https://dashboard.$nip_host/" | sudo tee -a /etc/login_data
@@ -28,10 +29,10 @@ nip_host="$ip.nip.io"
 # fi
 
 # Patch the ingress with the FQDN route first
-patch_ingress "$fqdn" 1 "dashboard" "kubernetes-dashboard" "kubernetes-dashboard"
+patch_ingress "$fqdn" 1 "dashboard" "headlamp" "headlamp"
 
 # Patch the ingress with the nip.io route
-patch_ingress "$nip_host" 0 "dashboard" "kubernetes-dashboard" "kubernetes-dashboard"
+patch_ingress "$nip_host" 0 "dashboard" "headlamp" "headlamp"
 
 # Update the MOTD with both routes
 update_motd "$fqdn" "$nip_host"

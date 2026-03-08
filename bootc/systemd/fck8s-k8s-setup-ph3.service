@@ -3,11 +3,12 @@ Description=K4All - Kubernetes Setup Phase 3 (HA/Endpoint)
 Requires=fck8s-k8s-setup-ph2.service
 Requires=fck8s-role-dispatcher.service
 After=fck8s-k8s-setup-ph2.service fck8s-role-dispatcher.service
-ConditionPathExists=!/opt/k4all/setup-ph3.done
+# ConditionPathExists=!/opt/k4all/setup-ph3.done
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/setup-k8s-ph3.sh
+ExecStart=/bin/bash -c '[ -x /var/opt/k4all/bin/setup-k8s-ph3.sh ] && exec /var/opt/k4all/bin/setup-k8s-ph3.sh; exec /usr/local/bin/setup-k8s-ph3.sh'
+ExecCondition=/bin/bash -c '[ ! -f /opt/k4all/setup-ph3.done ] || [ ! -f /opt/k4all/setup-ph3-reset-kube.done ]'
 RemainAfterExit=yes
 
 [Install]

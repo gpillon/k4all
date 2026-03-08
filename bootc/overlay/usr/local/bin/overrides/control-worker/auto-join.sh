@@ -66,14 +66,14 @@ if ! printf "%s\n" "$DECODED" | grep -q ' --discovery-token-ca-cert-hash sha256:
 fi
 
 # Execute node-type specific join wrapper installed at /usr/local/bin/join_cluster.sh
-if [ ! -x "/usr/local/bin/join_cluster.sh" ]; then
-  log "/usr/local/bin/join_cluster.sh not found; cannot join."
+if [ ! -x "/var/opt/k4all/bin/join_cluster.sh" ]; then
+  log "/var/opt/k4all/bin/join_cluster.sh not found; cannot join."
   exit 0
 fi
 
 log "Attempting to join cluster..."
 # Retry join a few times in case the control plane isn't ready yet
-if retry_command "/usr/local/bin/join_cluster.sh '$AUTOJOIN'" 5 15; then
+if retry_command "/var/opt/k4all/bin/join_cluster.sh '$AUTOJOIN'" 5 15; then
   log "Join successful."
   touch "$DONE_FILE"
   exit 0

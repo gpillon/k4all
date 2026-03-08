@@ -1,11 +1,12 @@
 #!/bin/bash
 # K4All Role Dispatcher
-# Copies the correct role-specific scripts from /usr/local/bin/overrides/ to /usr/local/bin/
+# Copies role-specific scripts to /var/opt/k4all/bin/ (writable under bootc composefs)
 # based on the node type defined in /etc/node-type
 
 set -euo pipefail
 
 DONE_FILE="/opt/k4all/role-dispatcher.done"
+K4ALL_BIN="/var/opt/k4all/bin"
 
 if [ -f "$DONE_FILE" ]; then
     echo "Role dispatcher already completed."
@@ -23,16 +24,25 @@ fi
 NODE_TYPE=$(cat "$NODE_TYPE_FILE" | tr -d '[:space:]')
 echo "Node type: $NODE_TYPE"
 
-# Function to copy overrides from a directory
+mkdir -p "$K4ALL_BIN"
+
+# Scripts go to /var/opt/k4all/bin/, config files (k8s-config-*.yaml) go to /etc/k8s-config.yaml
 copy_overrides() {
     local src_dir="$1"
     if [ -d "$src_dir" ]; then
         echo "Copying overrides from $src_dir..."
         for file in "$src_dir"/*; do
             if [ -f "$file" ]; then
-                cp -f "$file" /usr/local/bin/
-                chmod +x "/usr/local/bin/$(basename "$file")"
-                echo "  - $(basename "$file")"
+                local base
+                base=$(basename "$file")
+                if [[ "$base" == k8s-config-*.yaml ]]; then
+                    cp -f "$file" /etc/k8s-config.yaml
+                    echo "  - $base → /etc/k8s-config.yaml"
+                else
+                    cp -f "$file" "$K4ALL_BIN/"
+                    chmod +x "$K4ALL_BIN/$base"
+                    echo "  - $base → $K4ALL_BIN/$base"
+                fi
             fi
         done
     fi

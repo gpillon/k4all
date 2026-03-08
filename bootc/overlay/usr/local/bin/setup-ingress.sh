@@ -8,12 +8,12 @@ if [ -f "/opt/k4all/setup-ingress.done" ]; then
   exit 0
 fi
 
-source /usr/local/bin/control-plane-utils
+source /var/opt/k4all/bin/control-plane-utils
 
 HOME=/root/
 HA_INGRESS_PARAMS=""
 
-# Check if the configuration is static and edit the Ignition file accordingly
+# Check if the configuration is static and edit the Ignition file accordingly, and cilum must nob be enabled
 if jq -e '.cluster.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "kubevip"; then
   HA_INGRESS_PARAMS="--set \"controller.service.loadBalancerClass=kube-vip.io/kube-vip-class\" " 
 fi
@@ -28,7 +28,7 @@ helm upgrade --kubeconfig=/etc/kubernetes/admin.conf --install ingress-nginx ing
   $HA_INGRESS_PARAMS
 
 while true; do
-  if kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /usr/local/share/dashboard-ingress-routes.yaml; then
+  if kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /usr/local/share/headlamp-ingress-routes.yaml; then
     break
   else
     echo "Failed to apply Ingress routes configuration. Retrying in 10 seconds..."

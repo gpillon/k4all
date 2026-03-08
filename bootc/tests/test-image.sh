@@ -16,8 +16,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOOTC_DIR="$(dirname "$SCRIPT_DIR")"
 
-IMAGE_NAME="${IMAGE_NAME:-k4all-bootc-test}"
-IMAGE_TAG="${IMAGE_TAG:-test}"
+IMAGE_NAME="${IMAGE_NAME:-ghcr.io/gpillon/k4all-bootc}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
 FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
 SKIP_BUILD="${1:-}"
 
@@ -31,9 +31,9 @@ PASS=0
 FAIL=0
 WARN=0
 
-pass() { ((PASS++)); echo -e "  ${GREEN}✓ PASS${NC}: $1"; }
-fail() { ((FAIL++)); echo -e "  ${RED}✗ FAIL${NC}: $1"; }
-warn() { ((WARN++)); echo -e "  ${YELLOW}⚠ WARN${NC}: $1"; }
+pass() { PASS=$((PASS + 1)); echo -e "  ${GREEN}✓ PASS${NC}: $1"; }
+fail() { FAIL=$((FAIL + 1)); echo -e "  ${RED}✗ FAIL${NC}: $1"; }
+warn() { WARN=$((WARN + 1)); echo -e "  ${YELLOW}⚠ WARN${NC}: $1"; }
 info() { echo -e "${CYAN}▸ $1${NC}"; }
 
 # Run a command inside the test container
@@ -204,6 +204,7 @@ CORE_SCRIPTS=(
     install-status.sh
     check-ip.sh
     disk-helper.sh
+    k4all-first-boot.sh
 )
 
 for script in "${CORE_SCRIPTS[@]}"; do
@@ -263,6 +264,7 @@ UNITS=(
     fck8s-auto-join.service
     fck8s-update-routes.service
     fck8s-update-routes.timer
+    fck8s-first-boot.service
 )
 
 for unit in "${UNITS[@]}"; do
@@ -343,7 +345,6 @@ info "13. DIRECTORIES"
 # =============================================================================
 check_dir "/opt/k4all"       "/opt/k4all directory exists"
 check_dir "/root/.kube"      "/root/.kube directory exists"
-check_dir "/home/core/.kube" "/home/core/.kube directory exists"
 
 # =============================================================================
 echo ""

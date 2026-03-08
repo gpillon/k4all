@@ -55,9 +55,9 @@ function set_proxy_if_present() {
         ensure_proxy_conf_ready
         upsert_default_env "$var_name" "$value"
     else
-        # remove the line from the conf file if present
-        sed -i "/^DefaultEnvironment=\"${var_name}=/d" "$CONF_FILE"
-        echo "Warning: $var_name not found in $K4ALL_CONFIG_FILE, removed from $CONF_FILE"
+        if [ -f "$CONF_FILE" ]; then
+            sed -i "/^DefaultEnvironment=\"${var_name}=/d" "$CONF_FILE"
+        fi
     fi
 }
 
@@ -78,9 +78,9 @@ function setup_proxy() {
 }
 
 if [ ! -f "$K4ALL_CONFIG_FILE" ]; then
-    # Configuration file does not exist
-    echo "Warining: no config file not found, Skipping Features"
-    return
+    echo "Warning: config file not found, skipping proxy setup"
+    touch /opt/k4all/setup-proxy.done
+    exit 0
 fi
 
 setup_proxy

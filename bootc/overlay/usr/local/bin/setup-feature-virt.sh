@@ -20,10 +20,11 @@ kubectl -n kubevirt wait kubevirt kubevirt --for condition=Available --timeout=3
 
 set_cli_arch
 # Install virtctl
-retry_command "curl -L https://github.com/kubevirt/kubevirt/releases/download/${RELEASE}/virtctl-${RELEASE}-linux-${CLI_ARCH} -o /usr/local/bin/virtctl-${RELEASE}-linux-${CLI_ARCH}" 10 30
-chmod +x /usr/local/bin/virtctl-${RELEASE}-linux-${CLI_ARCH}
-ln -sf /usr/local/bin/virtctl-${RELEASE}-linux-${CLI_ARCH} /usr/local/bin/virtctl
-chmod +x /usr/local/bin/virtctl
+K4ALL_BIN="/var/opt/k4all/bin"
+retry_command "curl -L https://github.com/kubevirt/kubevirt/releases/download/${RELEASE}/virtctl-${RELEASE}-linux-${CLI_ARCH} -o ${K4ALL_BIN}/virtctl-${RELEASE}-linux-${CLI_ARCH}" 10 30
+chmod +x ${K4ALL_BIN}/virtctl-${RELEASE}-linux-${CLI_ARCH}
+ln -sf ${K4ALL_BIN}/virtctl-${RELEASE}-linux-${CLI_ARCH} ${K4ALL_BIN}/virtctl
+chmod +x ${K4ALL_BIN}/virtctl
 
 virtctl completion bash > /etc/bash_completion.d/virtctl_bash_completion
 

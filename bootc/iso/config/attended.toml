@@ -1,0 +1,75 @@
+# K4All bootc-image-builder config — Attended (Interactive) Install
+# Builds an anaconda-iso with full Anaconda GUI.
+# The K4All addon spoke will be visible for interactive configuration.
+# Storage is NOT preconfigured — user MUST use the Storage spoke.
+
+[customizations.iso]
+volume_id = "K4all"
+application_id = "K4all"
+publisher = "gpillon"
+
+[customizations.installer.kickstart]
+contents = """
+lang en_US.UTF-8
+keyboard us
+timezone UTC --utc
+graphical
+
+rootpw --lock
+user --name=core --groups=wheel --password=core --plaintext
+
+network --bootproto=dhcp --device=link --activate --onboot=on
+services --enabled=sshd
+
+reboot --eject
+
+%addon com_k4all_installer --cni=calico --ha=none
+%end
+
+zerombr
+clearpart --all --initlabel --disklabel=gpt
+
+part /boot/efi --fstype=efi  --size=600
+part /boot     --fstype=xfs  --size=1024
+part pv.01     --size=51200
+part pv.02     --size=1 --grow
+
+volgroup rootvg pv.01
+logvol /    --vgname=rootvg --size=1 --grow --fstype=xfs --name=rootlv
+
+volgroup vg_data pv.02
+logvol none --vgname=vg_data --size=1 --grow --thinpool --name=thin-pool
+
+%pre --interpreter=/bin/bash --log=/tmp/pre.log
+vgchange -an 2>/dev/null || true
+for vg in $(vgs --noheadings -o vg_name 2>/dev/null | tr -d ' '); do
+    vgremove -f "$vg" 2>/dev/null || true
+done
+for pv in $(pvs --noheadings -o pv_name 2>/dev/null | tr -d ' '); do
+    pvremove -ff "$pv" 2>/dev/null || true
+done
+DISK=$(lsblk -ndo NAME,TYPE | awk '/disk/{print $1; exit}')
+wipefs -af /dev/$DISK 2>/dev/null || true
+%end
+
+%post --nochroot
+cp /etc/resolv.conf /mnt/sysimage/etc/resolv.conf
+%end
+
+%post
+echo "core ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/core
+%end
+"""
+
+[customizations.installer.modules]
+enable = [
+  "org.fedoraproject.Anaconda.Modules.Localization",
+  "org.fedoraproject.Anaconda.Modules.Network",
+  "org.fedoraproject.Anaconda.Modules.Payloads",
+  "org.fedoraproject.Anaconda.Modules.Security",
+  "org.fedoraproject.Anaconda.Modules.Services",
+  "org.fedoraproject.Anaconda.Modules.Storage",
+  "org.fedoraproject.Anaconda.Modules.Timezone",
+  "org.fedoraproject.Anaconda.Modules.Users",
+  "org.fedoraproject.Anaconda.Addons.*"
+]

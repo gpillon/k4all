@@ -1,23 +1,30 @@
-# K4All Kickstart - Bootstrap Node
-# Standalone kickstart for manual use (e.g. PXE boot).
-# For ISO builds, the config is embedded via bootc-image-builder config.toml.
-#
-# Disk layout: 20% OS (rootvg) / remaining for vg_data
+# K4All bootc-image-builder config — Unattended Worker Node
+# Builds an anaconda-iso that auto-installs a worker K4All node.
+# Disk layout: 20% OS (rootvg) / remaining 80% for vg_data (K4All storage).
+# Note: customizations.user CANNOT coexist with customizations.installer.kickstart
 
+[customizations.iso]
+volume_id = "K4all"
+application_id = "K4all"
+publisher = "gpillon"
+
+[customizations.installer.kickstart]
+contents = """
+text --non-interactive
+
+rootpw --lock
+user --name=core --groups=wheel --password=core --plaintext
 lang en_US.UTF-8
 keyboard us
 timezone UTC --utc
 
-rootpw --plaintext k4all
-user --name=core --groups=wheel --password=k4all --plaintext
-
 network --bootproto=dhcp --device=link --activate --onboot=on
 services --enabled=sshd
 
-# Dynamic 20/80 partitioning
+# Dynamic 20/80 partitioning — calculated in %pre
 %include /tmp/part-include
 
-%addon com_k4all_installer --role=bootstrap --cni=calico --ha=none
+%addon com_k4all_installer --role=worker --cni=calico
 {
   "networking": {
     "cni": { "type": "calico" },
@@ -26,14 +33,6 @@ services --enabled=sshd
   },
   "storage": {
     "vg_data": { "enabled": "true", "disk": "auto" }
-  },
-  "cluster": {
-    "apiEndPointUseHostName": "false",
-    "ha": { "type": "none" }
-  },
-  "features": {
-    "virt": { "enabled": "false", "emulation": "auto" },
-    "argocd": { "enabled": "false" }
   }
 }
 %end
@@ -72,4 +71,5 @@ cp /etc/resolv.conf /mnt/sysimage/etc/resolv.conf
 echo "core ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/core
 %end
 
-reboot
+reboot --eject
+"""

@@ -10,7 +10,8 @@ StartLimitBurst=10
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/auto-join.sh
+ExecStart=/bin/bash -c '[ -x /var/opt/k4all/bin/auto-join.sh ] && exec /var/opt/k4all/bin/auto-join.sh; exec /usr/local/bin/auto-join.sh'
+ExecCondition=/bin/bash -c '! grep -q "^bootstrap$" /etc/node-type'
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=30

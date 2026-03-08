@@ -3,7 +3,8 @@
 # This image contains all required packages for Kubernetes nodes (kubeadm, kubelet, kubectl, CRI-O, etc.)
 # The actual cluster configuration is done at install time via Anaconda addon or at first boot.
 
-FROM quay.io/centos-bootc/centos-bootc:stream9
+#FROM quay.io/centos-bootc/centos-bootc:stream9
+FROM quay.io/fedora/fedora-bootc:43
 
 # ============================================================================
 # REPOS
@@ -11,21 +12,22 @@ FROM quay.io/centos-bootc/centos-bootc:stream9
 # Kubernetes repo
 COPY overlay/etc/yum.repos.d/kubernetes.repo /etc/yum.repos.d/kubernetes.repo
 
-# CRI-O repo (from OpenSUSE OBS for EL9)
-RUN cat > /etc/yum.repos.d/cri-o.repo <<'EOF'
-[cri-o]
-name=CRI-O
-baseurl=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.31/rpm/
-enabled=1
-gpgcheck=1
-gpgkey=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.31/rpm/repodata/repomd.xml.key
-EOF
+# # CRI-O repo (from OpenSUSE OBS for EL9)
+# RUN cat > /etc/yum.repos.d/cri-o.repo <<'EOF'
+# [cri-o]
+# name=CRI-O
+# baseurl=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.31/rpm/
+# enabled=1
+# gpgcheck=1
+# gpgkey=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.31/rpm/repodata/repomd.xml.key
+# EOF
 
 # ============================================================================
 # PACKAGES
 # ============================================================================
 # Install all required packages in a single layer for efficiency
 # Kubernetes components, CRI-O, networking, LVM, firewall, HA, tools
+
 RUN dnf install -y \
     kubeadm kubelet kubectl \
     cri-o \
@@ -59,7 +61,7 @@ COPY overlay/etc/sysctl.d/k8s.conf /etc/sysctl.d/k8s.conf
 # K4All utility scripts
 COPY overlay/usr/local/bin/ /usr/local/bin/
 RUN find /usr/local/bin -type f \( -name '*.sh' -o -name 'k4all-*' \) -exec chmod +x {} + && \
-    chmod +x /usr/local/bin/k4all-utils /usr/local/bin/control-plane-utils 2>/dev/null || true
+    chmod +x /usr/local/bin/k4all-utils 2>/dev/null || true
 
 # K4All manifests and values
 COPY overlay/usr/local/share/ /usr/local/share/
@@ -78,24 +80,44 @@ RUN systemctl enable crio.service && \
     systemctl enable kubelet.service && \
     systemctl enable openvswitch.service
 
-# Enable K4All phase services (they are idempotent and check for .done markers)
-RUN for svc in /etc/systemd/system/fck8s-*.service; do \
-        [ -f "$svc" ] && systemctl enable "$(basename "$svc")"; \
+# Enable K4All phase services and timers (they are idempotent and check for .done markers)
+RUN for unit in /etc/systemd/system/fck8s-*.service /etc/systemd/system/fck8s-*.timer; do \
+        [ -f "$unit" ] && systemctl enable "$(basename "$unit")"; \
     done || true
 
 # ============================================================================
-# DIRECTORIES
+# DIRECTORIES (bootc composefs makes / read-only; use /var for writable paths)
 # ============================================================================
-RUN mkdir -p /opt/k4all && \
-    mkdir -p /root/.kube && \
-    mkdir -p /home/core/.kube && \
-    mkdir -p /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
+RUN mkdir -p /var/opt/k4all /var/opt/k4all/bin /var/opt/cni/bin /var/opt/libexec/kubernetes/kubelet-plugins/volume/exec/ && \
+    rm -rf /opt/k4all /opt/cni /opt/libexec && \
+    ln -sf /var/opt/k4all /opt/k4all && \
+    ln -sf /var/opt/cni /opt/cni && \
+    ln -sf /var/opt/libexec /opt/libexec && \
+    mkdir -p /var/roothome/.kube
+
+# PATH for systemd services: include /var/opt/k4all/bin for runtime overrides/binaries
+RUN mkdir -p /etc/systemd/system.conf.d && \
+    printf '[Manager]\nDefaultEnvironment=PATH=/var/opt/k4all/bin:/usr/local/bin:/usr/bin:/bin\n' \
+    > /etc/systemd/system.conf.d/k4all-path.conf
+
+# PATH for interactive shells
+RUN printf 'export PATH="/var/opt/k4all/bin:$PATH"\n' > /etc/profile.d/k4all-path.sh
+
+# CRI-O drop-in: ensure plugin_dirs resolve through the /opt/cni symlink
+RUN mkdir -p /etc/crio/crio.conf.d && \
+    printf '[crio.network]\nplugin_dirs = [\n\t"/opt/cni/bin",\n\t"/usr/libexec/cni",\n]\n' \
+    > /etc/crio/crio.conf.d/10-k4all-cni-dirs.conf
+
+RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
+    echo "core ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/core && \
+    mkdir -p /var/home/core/.kube /var/roothome/.kube && \
+    echo 'core:core' | chpasswd
 
 # ============================================================================
 # BOOTC LABELS
 # ============================================================================
-LABEL com.redhat.bootc.base="quay.io/centos-bootc/centos-bootc:stream9"
+LABEL com.redhat.bootc.base="quay.io/fedora/fedora-bootc:43"
 LABEL org.opencontainers.image.title="K4All - Kubernetes for All"
 LABEL org.opencontainers.image.description="Bootc image with Kubernetes (kubeadm/kubelet/kubectl), CRI-O, and K4All tooling"
 LABEL org.opencontainers.image.version="2.0.0-bootc"
-
+LABEL org.opencontainers.image.source https://github.com/gpillon/k4all

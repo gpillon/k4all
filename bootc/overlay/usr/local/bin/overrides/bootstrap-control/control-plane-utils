@@ -2,7 +2,7 @@
 
 source /usr/local/bin/k4all-utils
 
-CURRENT_IP=$(ip addr show ovs-bridge | grep -v secondary | grep -Po 'inet \K[\d.]+')
+CURRENT_IP=$(ip addr show ovs-bridge 2>/dev/null | grep -v secondary | grep -Po 'inet \K[\d.]+' || hostname -I | awk '{print $1}')
 K8S_CONFIG_FILE="/etc/k8s-config.yaml"
 
 # Function to add an IP to certSANs if it does not already exist
@@ -38,7 +38,8 @@ function get_cluster_ip() {
      if [[ "$HA_TYPE" == "keepalived" ||  "$HA_TYPE" == "kubevip" ]]; then
         ip=$(get_ha_ep_ip)
      else 
-        ip=$(ip addr show ovs-bridge | grep -v secondary | grep -Po 'inet \K[\d.]+' | head -n 1)
+        ip=$(ip addr show ovs-bridge 2>/dev/null | grep -v secondary | grep -Po 'inet \K[\d.]+' | head -n 1)
+        [ -z "$ip" ] && ip=$(hostname -I | awk '{print $1}')
      fi
 
      echo $ip

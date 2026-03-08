@@ -27,7 +27,7 @@ echo "WARNING: Helm not found in image, installing from internet..."
 HOME=/root/
 helm_install_url="https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
 
-retry_command "curl -fsSL $helm_install_url | bash" 10 5
+retry_command "curl -fsSL $helm_install_url | HELM_INSTALL_DIR=/var/opt/k4all/bin bash" 10 5
 helm completion bash > /etc/bash_completion.d/helm
 
 mkdir -p /opt/k4all
