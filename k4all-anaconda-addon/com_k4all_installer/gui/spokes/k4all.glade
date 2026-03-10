@@ -1,196 +1,772 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk+" version="3.24"/>
-  <object class="GtkBox" id="k4allSpokeWindow">
-    <property name="visible">True</property>
-    <property name="can-focus">False</property>
-    <property name="orientation">vertical</property>
-    <property name="spacing">12</property>
-    <property name="margin-start">24</property>
-    <property name="margin-end">24</property>
-    <property name="margin-top">24</property>
-    <property name="margin-bottom">24</property>
-    
-    <!-- Title -->
-    <child>
-      <object class="GtkLabel">
-        <property name="visible">True</property>
-        <property name="can-focus">False</property>
-        <property name="label" translatable="yes">K4All Kubernetes Configuration</property>
-        <attributes>
-          <attribute name="weight" value="bold"/>
-          <attribute name="scale" value="1.5"/>
-        </attributes>
-      </object>
-    </child>
-    
-    <!-- Description -->
-    <child>
-      <object class="GtkLabel">
-        <property name="visible">True</property>
-        <property name="can-focus">False</property>
-        <property name="label" translatable="yes">Configure the Kubernetes cluster node settings for this installation.</property>
-        <property name="wrap">True</property>
-      </object>
-    </child>
-    
-    <!-- Main Grid -->
-    <child>
-      <object class="GtkGrid">
-        <property name="visible">True</property>
-        <property name="can-focus">False</property>
-        <property name="row-spacing">12</property>
-        <property name="column-spacing">12</property>
-        <property name="margin-top">12</property>
-        
-        <!-- Node Role -->
-        <child>
-          <object class="GtkLabel">
-            <property name="visible">True</property>
-            <property name="can-focus">False</property>
-            <property name="label" translatable="yes">Node Role:</property>
-            <property name="halign">end</property>
-          </object>
-          <packing>
-            <property name="left-attach">0</property>
-            <property name="top-attach">0</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkComboBoxText" id="roleComboBox">
-            <property name="visible">True</property>
-            <property name="can-focus">False</property>
-            <items>
-              <item translatable="yes">Bootstrap (first node)</item>
-              <item translatable="yes">Control Plane</item>
-              <item translatable="yes">Worker</item>
-            </items>
-            <property name="active">0</property>
-          </object>
-          <packing>
-            <property name="left-attach">1</property>
-            <property name="top-attach">0</property>
-          </packing>
-        </child>
-        
-        <!-- CNI Plugin -->
-        <child>
-          <object class="GtkLabel">
-            <property name="visible">True</property>
-            <property name="can-focus">False</property>
-            <property name="label" translatable="yes">CNI Plugin:</property>
-            <property name="halign">end</property>
-          </object>
-          <packing>
-            <property name="left-attach">0</property>
-            <property name="top-attach">1</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkComboBoxText" id="cniComboBox">
-            <property name="visible">True</property>
-            <property name="can-focus">False</property>
-            <items>
-              <item translatable="yes">Calico</item>
-              <item translatable="yes">Cilium</item>
-            </items>
-            <property name="active">0</property>
-          </object>
-          <packing>
-            <property name="left-attach">1</property>
-            <property name="top-attach">1</property>
-          </packing>
-        </child>
-        
-        <!-- HA Type -->
-        <child>
-          <object class="GtkLabel">
-            <property name="visible">True</property>
-            <property name="can-focus">False</property>
-            <property name="label" translatable="yes">High Availability:</property>
-            <property name="halign">end</property>
-          </object>
-          <packing>
-            <property name="left-attach">0</property>
-            <property name="top-attach">2</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkComboBoxText" id="haComboBox">
-            <property name="visible">True</property>
-            <property name="can-focus">False</property>
-            <items>
-              <item translatable="yes">None (single node)</item>
-              <item translatable="yes">Keepalived</item>
-              <item translatable="yes">KubeVIP</item>
-            </items>
-            <property name="active">0</property>
-          </object>
-          <packing>
-            <property name="left-attach">1</property>
-            <property name="top-attach">2</property>
-          </packing>
-        </child>
-        
-      </object>
-    </child>
-    
-    <!-- Features Section -->
-    <child>
-      <object class="GtkFrame">
-        <property name="visible">True</property>
-        <property name="can-focus">False</property>
-        <property name="label" translatable="yes">Optional Features</property>
-        <property name="margin-top">12</property>
-        <child>
-          <object class="GtkBox">
-            <property name="visible">True</property>
-            <property name="can-focus">False</property>
-            <property name="orientation">vertical</property>
-            <property name="spacing">6</property>
-            <property name="margin-start">12</property>
-            <property name="margin-end">12</property>
-            <property name="margin-top">12</property>
-            <property name="margin-bottom">12</property>
-            
-            <child>
-              <object class="GtkCheckButton" id="virtCheckButton">
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="label" translatable="yes">Enable KubeVirt (virtualization)</property>
+  <requires lib="AnacondaWidgets" version="3.4"/>
+  <object class="AnacondaSpokeWindow" id="k4allSpokeWindow">
+    <property name="can_focus">False</property>
+    <property name="hexpand">True</property>
+    <property name="vexpand">True</property>
+    <property name="window_name" translatable="yes">K4ALL KUBERNETES</property>
+    <signal name="button-clicked" handler="on_back_clicked" swapped="no"/>
+    <child internal-child="main_box">
+      <object class="GtkBox" id="AnacondaSpokeWindow-main_box">
+        <property name="can_focus">False</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">6</property>
+        <child internal-child="nav_box">
+          <object class="GtkEventBox" id="AnacondaSpokeWindow-nav_box">
+            <property name="can_focus">False</property>
+            <child internal-child="nav_area">
+              <object class="GtkGrid" id="AnacondaSpokeWindow-nav_area">
+                <property name="can_focus">False</property>
+                <property name="margin_left">6</property>
+                <property name="margin_right">6</property>
+                <property name="margin_top">6</property>
               </object>
             </child>
-            
-            <child>
-              <object class="GtkCheckButton" id="argocdCheckButton">
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="label" translatable="yes">Enable ArgoCD (GitOps)</property>
-              </object>
-            </child>
-            
-            <child>
-              <object class="GtkCheckButton" id="firewalldCheckButton">
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="label" translatable="yes">Enable firewalld</property>
-              </object>
-            </child>
-            
           </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">False</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child internal-child="alignment">
+          <object class="GtkAlignment" id="AnacondaSpokeWindow-alignment">
+            <property name="can_focus">False</property>
+            <property name="yalign">0</property>
+            <property name="xscale">1</property>
+            <property name="yscale">1</property>
+            <child internal-child="action_area">
+              <object class="GtkBox" id="AnacondaSpokeWindow-action_area">
+                <property name="can_focus">False</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+
+                <child>
+                  <object class="GtkScrolledWindow" id="k4allScrolledWindow">
+                    <property name="visible">True</property>
+                    <property name="can_focus">True</property>
+                    <property name="hscrollbar_policy">never</property>
+                    <property name="vscrollbar_policy">automatic</property>
+                    <property name="shadow_type">none</property>
+                    <property name="min_content_height">400</property>
+                    <child>
+                      <object class="GtkViewport">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="shadow_type">none</property>
+                        <child>
+                  <object class="GtkBox" id="k4allContentBox">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">12</property>
+                    <property name="margin_start">24</property>
+                    <property name="margin_end">24</property>
+                    <property name="margin_top">12</property>
+                    <property name="margin_bottom">12</property>
+
+                    <!-- Description -->
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">Configure the Kubernetes cluster node settings for this installation.</property>
+                        <property name="halign">start</property>
+                        <property name="wrap">True</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">0</property>
+                      </packing>
+                    </child>
+
+                    <!-- Main Grid -->
+                    <child>
+                      <object class="GtkGrid" id="settingsGrid">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="row_spacing">12</property>
+                        <property name="column_spacing">12</property>
+
+                        <!-- Node Role (row 0) -->
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="label" translatable="yes">Node Role:</property>
+                            <property name="halign">end</property>
+                          </object>
+                          <packing>
+                            <property name="left_attach">0</property>
+                            <property name="top_attach">0</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkComboBoxText" id="roleComboBox">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <items>
+                              <item translatable="yes">-- Select role --</item>
+                              <item translatable="yes">Bootstrap (first node)</item>
+                              <item translatable="yes">Control Plane</item>
+                              <item translatable="yes">Worker</item>
+                            </items>
+                            <property name="active">0</property>
+                          </object>
+                          <packing>
+                            <property name="left_attach">1</property>
+                            <property name="top_attach">0</property>
+                          </packing>
+                        </child>
+
+                        <!-- CNI Plugin (row 1) -->
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="label" translatable="yes">CNI Plugin:</property>
+                            <property name="halign">end</property>
+                          </object>
+                          <packing>
+                            <property name="left_attach">0</property>
+                            <property name="top_attach">1</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkComboBoxText" id="cniComboBox">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <items>
+                              <item translatable="yes">Calico</item>
+                              <item translatable="yes">Cilium</item>
+                            </items>
+                            <property name="active">0</property>
+                          </object>
+                          <packing>
+                            <property name="left_attach">1</property>
+                            <property name="top_attach">1</property>
+                          </packing>
+                        </child>
+
+                        <!-- HA Type (row 2) -->
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="label" translatable="yes">High Availability:</property>
+                            <property name="halign">end</property>
+                          </object>
+                          <packing>
+                            <property name="left_attach">0</property>
+                            <property name="top_attach">2</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkComboBoxText" id="haComboBox">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <items>
+                              <item translatable="yes">None (single node)</item>
+                              <item translatable="yes">Keepalived</item>
+                              <item translatable="yes">KubeVIP</item>
+                            </items>
+                            <property name="active">0</property>
+                          </object>
+                          <packing>
+                            <property name="left_attach">1</property>
+                            <property name="top_attach">2</property>
+                          </packing>
+                        </child>
+
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">1</property>
+                      </packing>
+                    </child>
+
+                    <!-- Cluster Settings (bootstrap/control only) -->
+                    <child>
+                      <object class="GtkFrame" id="clusterSettingsFrame">
+                        <property name="visible">False</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">Cluster Settings (Bootstrap / Control only)</property>
+                        <child>
+                          <object class="GtkGrid">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="row_spacing">8</property>
+                            <property name="column_spacing">12</property>
+                            <property name="margin_start">12</property>
+                            <property name="margin_end">12</property>
+                            <property name="margin_top">12</property>
+                            <property name="margin_bottom">12</property>
+
+                            <!-- API endpoint use hostname (row 0) -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">API Endpoint hostname:</property>
+                                <property name="halign">end</property>
+                                <property name="tooltip_text" translatable="yes">Use hostname instead of IP for the control plane endpoint. "short" uses hostname without domain.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">0</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkComboBoxText" id="apiHostnameComboBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <items>
+                                  <item translatable="yes">Use IP address (false)</item>
+                                  <item translatable="yes">Use FQDN hostname (true)</item>
+                                  <item translatable="yes">Use short hostname (short)</item>
+                                </items>
+                                <property name="active">0</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">0</property>
+                              </packing>
+                            </child>
+
+                            <!-- Custom API endpoint (row 1) -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Custom API endpoint:</property>
+                                <property name="halign">end</property>
+                                <property name="tooltip_text" translatable="yes">Override the control plane endpoint with a custom hostname or IP. Leave empty for auto-detection.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">1</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkEntry" id="customEndpointEntry">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="placeholder_text" translatable="yes">Leave empty for auto-detection</property>
+                                <property name="hexpand">True</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">1</property>
+                              </packing>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">2</property>
+                      </packing>
+                    </child>
+
+                    <!-- HA Settings (visible only when HA != none) -->
+                    <child>
+                      <object class="GtkFrame" id="haSettingsFrame">
+                        <property name="visible">False</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">HA Settings (required when HA is enabled)</property>
+                        <child>
+                          <object class="GtkGrid">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="row_spacing">8</property>
+                            <property name="column_spacing">12</property>
+                            <property name="margin_start">12</property>
+                            <property name="margin_end">12</property>
+                            <property name="margin_top">12</property>
+                            <property name="margin_bottom">12</property>
+
+                            <!-- Control Plane VIP (row 0) -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Control Plane VIP:</property>
+                                <property name="halign">end</property>
+                                <property name="tooltip_text" translatable="yes">Virtual IP address for the HA control plane endpoint. Must be a free IP on the same subnet.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">0</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkEntry" id="apiControlEndpointEntry">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="placeholder_text" translatable="yes">e.g. 192.168.1.200</property>
+                                <property name="hexpand">True</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">0</property>
+                              </packing>
+                            </child>
+
+                            <!-- VIP Subnet Size (row 1) -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">VIP Subnet Size:</property>
+                                <property name="halign">end</property>
+                                <property name="tooltip_text" translatable="yes">Subnet prefix length for the VIP address (e.g. 24 for /24 = 255.255.255.0).</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">1</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkEntry" id="apiControlEndpointSubnetEntry">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="placeholder_text" translatable="yes">e.g. 24</property>
+                                <property name="hexpand">True</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">1</property>
+                              </packing>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">3</property>
+                      </packing>
+                    </child>
+
+                    <!-- Network CIDR Settings (bootstrap only) -->
+                    <child>
+                      <object class="GtkFrame" id="networkSettingsFrame">
+                        <property name="visible">False</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">Network Settings (Bootstrap only)</property>
+                        <child>
+                          <object class="GtkGrid">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="row_spacing">8</property>
+                            <property name="column_spacing">12</property>
+                            <property name="margin_start">12</property>
+                            <property name="margin_end">12</property>
+                            <property name="margin_top">12</property>
+                            <property name="margin_bottom">12</property>
+
+                            <!-- Pod Network CIDR (row 0) -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Pod Network CIDR:</property>
+                                <property name="halign">end</property>
+                                <property name="tooltip_text" translatable="yes">CIDR range for pod IP addresses (e.g. 10.100.0.1/18). This is passed to kubeadm init --pod-network-cidr.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">0</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkEntry" id="podNetworkEntry">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="text">10.100.0.1/18</property>
+                                <property name="placeholder_text" translatable="yes">e.g. 10.100.0.1/18</property>
+                                <property name="hexpand">True</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">0</property>
+                              </packing>
+                            </child>
+
+                            <!-- Service Network CIDR (row 1) -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Service Network CIDR:</property>
+                                <property name="halign">end</property>
+                                <property name="tooltip_text" translatable="yes">CIDR range for Kubernetes service ClusterIPs (e.g. 10.96.0.0/16). This is passed to kubeadm init --service-cidr.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">1</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkEntry" id="serviceNetworkEntry">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="text">10.96.0.0/16</property>
+                                <property name="placeholder_text" translatable="yes">e.g. 10.96.0.0/16</property>
+                                <property name="hexpand">True</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">1</property>
+                              </packing>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">4</property>
+                      </packing>
+                    </child>
+
+                    <!-- Cilium Options (bootstrap + CNI=cilium only) -->
+                    <child>
+                      <object class="GtkFrame" id="ciliumOptionsFrame">
+                        <property name="visible">False</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">Cilium Options (Bootstrap only)</property>
+                        <child>
+                          <object class="GtkGrid">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="row_spacing">8</property>
+                            <property name="column_spacing">12</property>
+                            <property name="margin_start">12</property>
+                            <property name="margin_end">12</property>
+                            <property name="margin_top">12</property>
+                            <property name="margin_bottom">12</property>
+
+                            <!-- Additional Devices (row 0) -->
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Additional Devices:</property>
+                                <property name="halign">end</property>
+                                <property name="tooltip_text" translatable="yes">Extra network devices for Cilium (comma-separated, e.g. eth1,bond0). Leave empty to use only the OVS bridge.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">0</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkEntry" id="ciliumDevicesEntry">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="placeholder_text" translatable="yes">e.g. eth1,bond0 (optional)</property>
+                                <property name="hexpand">True</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">0</property>
+                              </packing>
+                            </child>
+
+                            <!-- Gateway API (row 1) -->
+                            <child>
+                              <object class="GtkCheckButton" id="ciliumGatewayApiCheck">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">Enable Gateway API</property>
+                                <property name="tooltip_text" translatable="yes">Install Kubernetes Gateway API CRDs and enable Cilium's Gateway API support.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">1</property>
+                                <property name="width">2</property>
+                              </packing>
+                            </child>
+
+                            <!-- L2 Announcements (row 2) -->
+                            <child>
+                              <object class="GtkCheckButton" id="ciliumL2AnnouncementsCheck">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">Enable L2 Announcements</property>
+                                <property name="tooltip_text" translatable="yes">Enable Cilium L2 Announcements for LoadBalancer services (ARP/NDP-based).</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">2</property>
+                                <property name="width">2</property>
+                              </packing>
+                            </child>
+
+                            <!-- Hubble (row 3) -->
+                            <child>
+                              <object class="GtkCheckButton" id="ciliumHubbleCheck">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">Enable Hubble (observability UI)</property>
+                                <property name="tooltip_text" translatable="yes">Enable Hubble relay and UI for network flow observability.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">3</property>
+                                <property name="width">2</property>
+                              </packing>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">5</property>
+                      </packing>
+                    </child>
+
+                    <!-- Ingress Configuration (bootstrap only) -->
+                    <child>
+                      <object class="GtkFrame" id="ingressFrame">
+                        <property name="visible">False</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">Ingress &amp; Load Balancing (Bootstrap only)</property>
+                        <child>
+                          <object class="GtkGrid">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="row_spacing">8</property>
+                            <property name="column_spacing">12</property>
+                            <property name="margin_start">12</property>
+                            <property name="margin_end">12</property>
+                            <property name="margin_top">12</property>
+                            <property name="margin_bottom">12</property>
+
+                            <!-- NGINX Ingress (row 0) -->
+                            <child>
+                              <object class="GtkCheckButton" id="ingressNginxCheck">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">NGINX Ingress Controller</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">0</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkEntry" id="ingressNginxIpEntry">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="placeholder_text" translatable="yes">Dedicated IP (empty = cluster IP)</property>
+                                <property name="hexpand">True</property>
+                                <property name="tooltip_text" translatable="yes">Leave empty to bind on cluster IP (KubeVIP or node IP). Set a dedicated IP to be announced via L2 (MetalLB or Cilium).</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">0</property>
+                              </packing>
+                            </child>
+
+                            <!-- Cilium Ingress (row 1) -->
+                            <child>
+                              <object class="GtkCheckButton" id="ingressCiliumCheck">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">Cilium Ingress Controller</property>
+                                <property name="tooltip_text" translatable="yes">Only available when CNI = Cilium. Uses Cilium's built-in Envoy-based ingress.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">1</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkEntry" id="ingressCiliumIpEntry">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="placeholder_text" translatable="yes">Dedicated IP (empty = cluster IP)</property>
+                                <property name="hexpand">True</property>
+                                <property name="tooltip_text" translatable="yes">Leave empty to bind on cluster IP. Set a dedicated IP to be announced via L2.</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">1</property>
+                              </packing>
+                            </child>
+
+                            <!-- Default controller (row 2) -->
+                            <child>
+                              <object class="GtkLabel" id="ingressDefaultLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Default Controller:</property>
+                                <property name="halign">end</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">2</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <object class="GtkComboBoxText" id="ingressDefaultCombo">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <items>
+                                  <item translatable="yes">NGINX</item>
+                                  <item translatable="yes">Cilium</item>
+                                </items>
+                                <property name="active">0</property>
+                              </object>
+                              <packing>
+                                <property name="left_attach">1</property>
+                                <property name="top_attach">2</property>
+                              </packing>
+                            </child>
+
+                            <!-- L2 info label (row 3) -->
+                            <child>
+                              <object class="GtkLabel" id="ingressL2InfoLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">L2 Announcer: MetalLB (auto-installed when needed)</property>
+                                <property name="halign">start</property>
+                                <property name="wrap">True</property>
+                                <attributes>
+                                  <attribute name="style" value="italic"/>
+                                  <attribute name="scale" value="0.9"/>
+                                </attributes>
+                              </object>
+                              <packing>
+                                <property name="left_attach">0</property>
+                                <property name="top_attach">3</property>
+                                <property name="width">2</property>
+                              </packing>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">6</property>
+                      </packing>
+                    </child>
+
+                    <!-- Features Section -->
+                    <child>
+                      <object class="GtkFrame">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">Optional Features</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">6</property>
+                            <property name="margin_start">12</property>
+                            <property name="margin_end">12</property>
+                            <property name="margin_top">12</property>
+                            <property name="margin_bottom">12</property>
+
+                            <child>
+                              <object class="GtkCheckButton" id="virtCheckButton">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">Enable KubeVirt (virtualization)</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">0</property>
+                              </packing>
+                            </child>
+
+                            <child>
+                              <object class="GtkCheckButton" id="argocdCheckButton">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">Enable ArgoCD (GitOps)</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">1</property>
+                              </packing>
+                            </child>
+
+                            <child>
+                              <object class="GtkCheckButton" id="firewalldCheckButton">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">Enable firewalld</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">2</property>
+                              </packing>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">7</property>
+                      </packing>
+                    </child>
+
+                    <!-- Bottom padding for scroll -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">False</property>
+                        <property name="position">8</property>
+                      </packing>
+                    </child>
+
+                  </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                    <property name="position">0</property>
+                  </packing>
+                </child>
+
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">True</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
+          </packing>
         </child>
       </object>
     </child>
-    
-    <!-- Spacer -->
-    <child>
-      <object class="GtkBox">
-        <property name="visible">True</property>
-        <property name="can-focus">False</property>
-        <property name="vexpand">True</property>
-      </object>
-    </child>
-    
   </object>
 </interface>
-

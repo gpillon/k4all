@@ -6,3 +6,13 @@ install-*.ign
 manifests/private-*
 
 TODO.txt
+.DS_Store
+bootc/.cache/
+bootc/.pytest_cache/
+bootc/iso/images/
+bootc/output/
+bootc/tests/__pycache__/
+
+k4all-anaconda-addon/k4all_addon_updates.img
+k4all-anaconda-addon/tests/__pycache__/
+k4all-anaconda-addon/test-results.xml

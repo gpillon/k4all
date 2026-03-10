@@ -7,11 +7,12 @@ PYTHON ?= $(shell command -v python3 2>/dev/null)
 
 # Temporary build directory
 TMPDIR := $(shell mktemp -d)
-ADDONDIR = $(TMPDIR)/usr/share/anaconda/addons
-SERVICESDIR = $(TMPDIR)/usr/share/dbus-1/services
-CONFDIR = $(TMPDIR)/etc/dbus-1/system.d
+BASEDIR = $(TMPDIR)/usr/share/anaconda
+ADDONDIR = $(BASEDIR)/addons
+SERVICESDIR = $(BASEDIR)/dbus/services
+CONFDIR = $(BASEDIR)/dbus/confs
 
-.PHONY: all updates clean test help
+.PHONY: all updates clean test help quick-remaster serve
 
 _default: updates
 
@@ -20,8 +21,11 @@ all: updates
 updates:
 	@echo "=== Building K4All Anaconda addon updates.img ==="
 	@echo -n "Working..."
+	@find $(ADDON_NAME) -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 	@mkdir -p $(ADDONDIR)
 	@cp -par $(ADDON_NAME) $(ADDONDIR)/
+	@find $(ADDONDIR) -name '*.pyc' -delete 2>/dev/null || true
+	@find $(ADDONDIR) -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 	@mkdir -p $(SERVICESDIR)
 	@cp -pa data/org.fedoraproject.Anaconda.Addons.K4All.service $(SERVICESDIR)/
 	@mkdir -p $(CONFDIR)
@@ -67,13 +71,34 @@ test-full:
 	@echo "=== Running K4All Addon Integration Tests ==="
 	./tests/run-tests.sh full
 
+# Quick remaster: rebuild addon + remaster an existing ISO (~30s total)
+# Usage: make quick-remaster ISO=/mnt/f/fcos/k4all-attended-new.iso
+quick-remaster: install-bootc
+	@if [ -z "$(ISO)" ]; then \
+		echo "Usage: make quick-remaster ISO=path/to/k4all.iso"; \
+		exit 1; \
+	fi
+	../bootc/scripts/remaster-iso.sh $(ISO)
+
+# Serve addon over HTTP for live testing (no remaster needed)
+# Boot ISO, edit GRUB: replace inst.updates=hd:... with inst.updates=http://<host-ip>:8080/k4all_addon_updates.img
+serve: updates
+	@echo "=== Serving addon on http://0.0.0.0:8080/ ==="
+	@echo "At GRUB menu, press 'e' and change inst.updates to:"
+	@echo "  inst.updates=http://<this-host-ip>:8080/k4all_addon_updates.img"
+	@echo ""
+	$(PYTHON) -m http.server 8080
+
 help:
 	@echo "K4All Anaconda Addon Makefile"
 	@echo ""
 	@echo "Targets:"
-	@echo "  updates       - Build k4all_addon_updates.img (default)"
-	@echo "  install-bootc - Build and copy to ../bootc/iso/images/"
-	@echo "  test          - Run unit tests + syntax checks (fast)"
-	@echo "  test-full     - Run integration tests in Anaconda container"
-	@echo "  clean         - Remove built files"
-	@echo "  help          - Show this help"
+	@echo "  updates         - Build k4all_addon_updates.img (default)"
+	@echo "  install-bootc   - Build and copy to ../bootc/iso/images/"
+	@echo "  test            - Run unit tests + syntax checks (fast)"
+	@echo "  test-full       - Run integration tests in Anaconda container"
+	@echo "  quick-remaster  - Rebuild addon + remaster ISO (30s)"
+	@echo "                    Usage: make quick-remaster ISO=path/to/iso"
+	@echo "  serve           - Serve addon via HTTP for live VM testing"
+	@echo "  clean           - Remove built files"
+	@echo "  help            - Show this help"

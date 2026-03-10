@@ -33,8 +33,8 @@ class K4All(KickstartService):
     def __init__(self):
         super().__init__()
         
-        # Node role
-        self._role = "bootstrap"
+        # Node role (empty = not yet configured)
+        self._role = ""
         
         # Full configuration dict
         self._config = copy.deepcopy(DEFAULT_CONFIG)
@@ -138,6 +138,139 @@ class K4All(KickstartService):
 
     def set_firewalld_enabled(self, enabled):
         self._config["networking"]["firewalld"]["enabled"] = "true" if enabled else "false"
+        self.config_changed.emit()
+
+    @property
+    def api_endpoint_use_hostname(self):
+        return self._config["cluster"].get("apiEndPointUseHostName", "false")
+
+    def set_api_endpoint_use_hostname(self, value):
+        self._config["cluster"]["apiEndPointUseHostName"] = value
+        self.config_changed.emit()
+
+    @property
+    def custom_api_endpoint(self):
+        return self._config["cluster"].get("customApiEndPoint", "")
+
+    def set_custom_api_endpoint(self, value):
+        self._config["cluster"]["customApiEndPoint"] = value
+        self.config_changed.emit()
+
+    @property
+    def pod_network(self):
+        return self._config["cluster"].get("podNetwork", "10.100.0.1/18")
+
+    def set_pod_network(self, value):
+        self._config["cluster"]["podNetwork"] = value
+        self.config_changed.emit()
+
+    @property
+    def service_network(self):
+        return self._config["cluster"].get("serviceNetwork", "10.96.0.0/16")
+
+    def set_service_network(self, value):
+        self._config["cluster"]["serviceNetwork"] = value
+        self.config_changed.emit()
+
+    @property
+    def api_control_endpoint(self):
+        return self._config["cluster"]["ha"].get("apiControlEndpoint", "")
+
+    def set_api_control_endpoint(self, value):
+        self._config["cluster"]["ha"]["apiControlEndpoint"] = value
+        self.config_changed.emit()
+
+    @property
+    def api_control_endpoint_subnet_size(self):
+        return self._config["cluster"]["ha"].get("apiControlEndpointSubnetSize", "")
+
+    def set_api_control_endpoint_subnet_size(self, value):
+        self._config["cluster"]["ha"]["apiControlEndpointSubnetSize"] = value
+        self.config_changed.emit()
+
+    @property
+    def cilium_additional_devices(self):
+        return self._config.get("cni", {}).get("cilium", {}).get("additionalDevices", "")
+
+    def set_cilium_additional_devices(self, value):
+        self._config.setdefault("cni", {}).setdefault("cilium", {})["additionalDevices"] = value
+        self.config_changed.emit()
+
+    @property
+    def cilium_gateway_api(self):
+        return self._config.get("cni", {}).get("cilium", {}).get("gatewayApi", "false") == "true"
+
+    def set_cilium_gateway_api(self, enabled):
+        self._config.setdefault("cni", {}).setdefault("cilium", {})["gatewayApi"] = "true" if enabled else "false"
+        self.config_changed.emit()
+
+    @property
+    def cilium_l2_announcements(self):
+        return self._config.get("cni", {}).get("cilium", {}).get("l2announcements", "false") == "true"
+
+    def set_cilium_l2_announcements(self, enabled):
+        self._config.setdefault("cni", {}).setdefault("cilium", {})["l2announcements"] = "true" if enabled else "false"
+        self.config_changed.emit()
+
+    @property
+    def cilium_hubble(self):
+        return self._config.get("cni", {}).get("cilium", {}).get("hubble", "false") == "true"
+
+    def set_cilium_hubble(self, enabled):
+        self._config.setdefault("cni", {}).setdefault("cilium", {})["hubble"] = "true" if enabled else "false"
+        self.config_changed.emit()
+
+    # --- Ingress configuration ---
+
+    def _ingress(self):
+        return self._config.setdefault("ingress", {})
+
+    @property
+    def ingress_nginx_enabled(self):
+        return self._config.get("ingress", {}).get("nginx", {}).get("enabled", "true") == "true"
+
+    def set_ingress_nginx_enabled(self, enabled):
+        self._ingress().setdefault("nginx", {})["enabled"] = "true" if enabled else "false"
+        self.config_changed.emit()
+
+    @property
+    def ingress_nginx_default(self):
+        return self._config.get("ingress", {}).get("nginx", {}).get("isDefault", "true") == "true"
+
+    def set_ingress_nginx_default(self, is_default):
+        self._ingress().setdefault("nginx", {})["isDefault"] = "true" if is_default else "false"
+        self.config_changed.emit()
+
+    @property
+    def ingress_nginx_dedicated_ip(self):
+        return self._config.get("ingress", {}).get("nginx", {}).get("dedicatedIP", "")
+
+    def set_ingress_nginx_dedicated_ip(self, value):
+        self._ingress().setdefault("nginx", {})["dedicatedIP"] = value
+        self.config_changed.emit()
+
+    @property
+    def ingress_cilium_enabled(self):
+        return self._config.get("ingress", {}).get("cilium", {}).get("enabled", "false") == "true"
+
+    def set_ingress_cilium_enabled(self, enabled):
+        self._ingress().setdefault("cilium", {})["enabled"] = "true" if enabled else "false"
+        self.config_changed.emit()
+
+    @property
+    def ingress_cilium_default(self):
+        return self._config.get("ingress", {}).get("cilium", {}).get("isDefault", "false") == "true"
+
+    def set_ingress_cilium_default(self, is_default):
+        self._ingress().setdefault("cilium", {})["isDefault"] = "true" if is_default else "false"
+        self.config_changed.emit()
+
+    @property
+    def ingress_cilium_dedicated_ip(self):
+        return self._config.get("ingress", {}).get("cilium", {}).get("dedicatedIP", "")
+
+    def set_ingress_cilium_dedicated_ip(self, value):
+        self._ingress().setdefault("cilium", {})["dedicatedIP"] = value
         self.config_changed.emit()
 
     def configure_with_tasks(self):

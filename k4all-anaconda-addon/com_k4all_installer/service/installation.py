@@ -6,6 +6,7 @@
 
 import logging
 import json
+import os
 import subprocess
 from os.path import normpath, join as joinpath, dirname
 from os import makedirs
@@ -73,14 +74,15 @@ class K4AllInstallationTask(Task):
             f.write(self._role)
             f.write("\n")
 
-        # Create K4All directories
-        k4all_dir = normpath(joinpath(self._sysroot, "opt/k4all"))
-        makedirs(k4all_dir, exist_ok=True)
-
-        # Create .kube directories
-        for user_dir in ["root", "home/core"]:
-            kube_dir = normpath(joinpath(self._sysroot, user_dir, ".kube"))
-            makedirs(kube_dir, exist_ok=True)
+        # Ensure writable directories exist inside sysroot.
+        # bootc images use symlinks (e.g. /opt/k4all -> /var/opt/k4all) so we
+        # must create the *target* dirs rather than overwriting the symlinks.
+        for d in [
+            "var/opt/k4all",
+            "var/home/core/.kube",
+            "var/roothome/.kube",
+        ]:
+            makedirs(joinpath(self._sysroot, d), exist_ok=True)
 
         log.info("K4All configuration written successfully (role=%s)", self._role)
 

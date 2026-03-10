@@ -1,0 +1,276 @@
+name: Build K4All ISOs and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version override (e.g. v2.0.0-beta)"
+        required: false
+        default: ""
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/k4all-bootc
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1. Build the bootc OCI image (per arch)
+  # ------------------------------------------------------------------
+  build-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="${GITHUB_REF_NAME//\//-}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc) ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: bootc
+          file: bootc/Containerfile
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=iso-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=iso-${{ matrix.arch }}
+
+  # ------------------------------------------------------------------
+  # 2. Create multi-arch manifest
+  # ------------------------------------------------------------------
+  push-manifest:
+    needs: build-image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest
+        run: |
+          VERSION="${{ needs.build-image.outputs.version }}"
+          docker manifest create "${{ env.IMAGE_NAME }}:${VERSION}" \
+            "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
+            "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
+          docker manifest push "${{ env.IMAGE_NAME }}:${VERSION}"
+          docker manifest create "${{ env.IMAGE_NAME }}:latest" \
+            "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
+            "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
+          docker manifest push "${{ env.IMAGE_NAME }}:latest"
+
+  # ------------------------------------------------------------------
+  # 3. Build ISOs (per arch, all variants)
+  # ------------------------------------------------------------------
+  build-iso:
+    needs: [build-image, push-manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    env:
+      VERSION: ${{ needs.build-image.outputs.version }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get clean
+          df -h /
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set platform for bootc-image-builder
+        id: platform
+        run: |
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            echo "bib_arch=x86_64" >> "$GITHUB_OUTPUT"
+          else
+            echo "bib_arch=aarch64" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU (for cross-arch)
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build K4All Anaconda addon
+        run: |
+          cd k4all-anaconda-addon && make updates
+          mkdir -p bootc/iso/images
+          cp k4all_addon_updates.img bootc/iso/images/k4all_updates.img
+
+      - name: Install xorriso
+        run: sudo apt-get update && sudo apt-get install -y xorriso
+
+      - name: Build all ISO variants
+        run: |
+          BIB_ARCH="${{ steps.platform.outputs.bib_arch }}"
+          OCI_IMAGE="${{ env.IMAGE_NAME }}:${{ env.VERSION }}-${{ matrix.arch }}"
+
+          for MODE in attended unattended-bootstrap unattended-control unattended-worker; do
+            echo ""
+            echo "========================================"
+            echo "Building ISO: ${MODE} (${{ matrix.arch }})"
+            echo "========================================"
+
+            case "$MODE" in
+              attended)               SUFFIX="attended" ;;
+              unattended-bootstrap)   SUFFIX="bootstrap" ;;
+              unattended-control)     SUFFIX="control" ;;
+              unattended-worker)      SUFFIX="worker" ;;
+            esac
+
+            CONFIG="bootc/iso/config/${MODE/attended/attended}.toml"
+            if [ "$MODE" = "attended" ]; then
+              CONFIG="bootc/iso/config/attended.toml"
+            else
+              CONFIG="bootc/iso/config/${MODE}.toml"
+            fi
+
+            OUTPUT_DIR="$(pwd)/output"
+            mkdir -p "$OUTPUT_DIR"
+            STORE_DIR="$(pwd)/.cache/osbuild-store"
+            RPMMD_DIR="$(pwd)/.cache/rpmmd"
+            mkdir -p "$STORE_DIR" "$RPMMD_DIR"
+
+            sudo podman run --rm --privileged --pull=newer \
+              --security-opt label=type:unconfined_t \
+              --platform linux/${{ matrix.arch }} \
+              -v "${CONFIG}":/config.toml:ro \
+              -v "${OUTPUT_DIR}":/output \
+              -v "${STORE_DIR}":/store \
+              -v "${RPMMD_DIR}":/rpmmd \
+              -v /var/lib/containers/storage:/var/lib/containers/storage \
+              quay.io/centos-bootc/bootc-image-builder:latest \
+              --type anaconda-iso \
+              --rootfs xfs \
+              --use-librepo=True \
+              "${OCI_IMAGE}"
+
+            BIB_OUT="${OUTPUT_DIR}/bootiso/install.iso"
+            FINAL="${OUTPUT_DIR}/k4all-${SUFFIX}.iso"
+            if [ -f "$BIB_OUT" ]; then
+              mv "$BIB_OUT" "$FINAL"
+              rmdir "${OUTPUT_DIR}/bootiso" 2>/dev/null || true
+            fi
+
+            # Remaster to include addon
+            cd bootc && ./scripts/remaster-iso.sh "$FINAL" && cd ..
+
+            # Rename to versioned filename
+            VERSIONED="${OUTPUT_DIR}/k4all-${SUFFIX}-${{ env.VERSION }}-${{ steps.platform.outputs.bib_arch }}.iso"
+            mv "$FINAL" "$VERSIONED"
+            echo "Built: $VERSIONED"
+          done
+
+          ls -lh output/*.iso
+
+      - name: Upload ISO artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: isos-${{ matrix.arch }}
+          path: output/*.iso
+          retention-days: 3
+
+  # ------------------------------------------------------------------
+  # 4. Create GitHub Release with all ISOs
+  # ------------------------------------------------------------------
+  release:
+    needs: [build-image, build-iso]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all ISO artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: isos
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh isos/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-image.outputs.version }}
+          name: "K4All ${{ needs.build-image.outputs.version }}"
+          prerelease: ${{ needs.build-image.outputs.prerelease }}
+          generate_release_notes: true
+          body: |
+            ## K4All ${{ needs.build-image.outputs.version }}
+
+            ### Bootc OCI Image
+            ```
+            ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.build-image.outputs.version }}
+            ```
+
+            ### ISO Downloads
+            | Variant | x86_64 | aarch64 |
+            |---------|--------|---------|
+            | **Attended** (interactive GUI) | `k4all-attended-*-x86_64.iso` | `k4all-attended-*-aarch64.iso` |
+            | **Bootstrap** (unattended, first node) | `k4all-bootstrap-*-x86_64.iso` | `k4all-bootstrap-*-aarch64.iso` |
+            | **Control** (unattended, control plane) | `k4all-control-*-x86_64.iso` | `k4all-control-*-aarch64.iso` |
+            | **Worker** (unattended, worker node) | `k4all-worker-*-x86_64.iso` | `k4all-worker-*-aarch64.iso` |
+
+            ### Update existing systems
+            ```bash
+            bootc switch ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.build-image.outputs.version }}
+            ```
+          files: isos/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

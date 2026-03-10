@@ -1,0 +1,90 @@
+---
+description: Guide for modifying the K4All Anaconda addon (add/edit/remove features)
+globs: k4all-anaconda-addon/**
+alwaysApply: false
+---
+
+# K4All Anaconda Addon Architecture
+
+The addon lives in `k4all-anaconda-addon/com_k4all_installer/` and follows Anaconda's D-Bus addon pattern. Every feature change requires edits to **6 files** in a specific order.
+
+## Module Map
+
+| File | Role |
+|------|------|
+| `constants.py` | `DEFAULT_CONFIG` dict, valid-value tuples, D-Bus identifiers |
+| `service/k4all.py` | D-Bus service: `@property` getters + `set_*()` methods for each config field |
+| `service/k4all_interface.py` | D-Bus interface: exposes properties to UI via `@dbus_interface` decorators |
+| `service/kickstart.py` | `KSOptionParser` args + `handle_header()` storage + `__str__()` serialization |
+| `gui/spokes/k4all.py` | GTK spoke: `initialize()` wires widgets, `refresh()` loads, `apply()` saves, `completed` validates |
+| `gui/spokes/k4all.glade` | Glade XML: widgets, frames, combo boxes. Conditional frames start `visible="False"` |
+| `tui/spokes/k4all.py` | TUI spoke: `setup()` loads, `refresh()` builds widgets, `apply()` saves |
+| `service/installation.py` | `K4AllInstallationTask.run()` writes `/etc/k4all-config.json` and `/etc/node-type` to sysroot |
+| `categories/k4all.py` | Spoke category (section in Anaconda hub). Uses static `get_title()`/`get_sort_order()` |
+
+## Adding a New Feature (checklist)
+
+### 1. `constants.py`
+- Add default value to `DEFAULT_CONFIG` dict under the correct section
+- Add validation tuple if it's an enum (e.g. `VALID_FOO_TYPES = (...)`)
+
+### 2. `service/k4all.py`
+- Add `@property` + `set_*()` pair that reads/writes `self._config[...][key]`
+- Call `self.config_changed.emit()` in the setter
+
+### 3. `service/k4all_interface.py`
+- Add `@property` returning `self.implementation.<property_name>` with type hint (`Str`, `Bool`)
+- Add `@emits_properties_changed` setter method calling `self.implementation.set_*(value)`
+
+### 4. `service/kickstart.py`
+- In `handle_header()`: add `op.add_argument("--flag", ..., version=VERSION)` — **`version=VERSION` is mandatory**
+- After `parse_args`: store `ns.flag` into `self.config[...]`
+- In `__str__()`: emit the flag when value differs from default
+
+### 5. GUI Spoke (`gui/spokes/k4all.py` + `k4all.glade`)
+- **Glade**: Add widget inside the appropriate `GtkFrame`. Conditional frames use `visible="False"`
+- **Python**: In `initialize()` get widget via `self.builder.get_object("id")`
+- In `refresh()`: load value from D-Bus, set widget state
+- In `apply()`: read widget, call D-Bus setter
+- In `_update_role_dependent_widgets()`: control visibility/sensitivity based on role
+- If feature needs validation: update `completed` property to return `False` when incomplete
+
+### 6. TUI Spoke (`tui/spokes/k4all.py`)
+- Add `self._field = default` in `__init__`
+- Load from D-Bus in `setup()`
+- Add `EntryWidget`/`CheckboxWidget` in `refresh()` (conditionally, based on role/other state)
+- Save via D-Bus in `apply()`
+- Add `_change_*` or `_toggle_*` callback
+
+## Conditional Visibility Rules
+
+Widgets are shown/hidden based on role and other selections:
+
+- **bootstrap only**: CNI combo, HA combo, Network Settings frame, Cilium Options frame
+- **bootstrap + control**: Cluster Settings frame (API endpoint, custom endpoint)
+- **bootstrap + HA != none**: HA Settings frame (VIP, subnet)
+- **bootstrap + CNI == cilium**: Cilium Options frame
+
+`_update_role_dependent_widgets(role)` handles this. Also connect combo `"changed"` signals (e.g. `_on_ha_changed`, `_on_cni_changed`) for dynamic show/hide.
+
+Call `_update_role_dependent_widgets("")` at the end of `initialize()` so the spoke starts with correct initial state.
+
+## Build & Test
+
+```bash
+cd k4all-anaconda-addon && make updates     # builds k4all_addon_updates.img
+cd ../bootc && bash scripts/remaster-iso.sh <input.iso> <output.iso>  # remasters ISO
+```
+
+The Makefile cleans `__pycache__` automatically. Always bump the output ISO filename to avoid file-lock issues.
+
+## Kickstart Integration
+
+The `%addon com_k4all_installer` line in `bootc/iso/config/attended.toml` controls defaults. Omitting `--role` keeps the spoke incomplete (mandatory), blocking auto-install.
+
+## Key Constraints
+
+- All `add_argument()` calls **must** include `version=VERSION` (pykickstart requirement)
+- Bootc filesystem is immutable: writable paths go under `/var/` (symlinked from `/opt/k4all` etc.)
+- Config JSON path: `/etc/k4all-config.json` (written by `K4AllInstallationTask`)
+- Node type path: `/etc/node-type`

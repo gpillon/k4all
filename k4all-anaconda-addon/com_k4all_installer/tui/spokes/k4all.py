@@ -24,203 +24,363 @@ __all__ = ["K4AllSpoke"]
 _ = lambda x: x
 N_ = lambda x: x
 
+_API_HOST_VALUES = ("false", "true", "short")
+
 
 class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
-    """K4All configuration spoke for the text installer.
-    
-    This spoke allows users to configure:
-    - Node role (bootstrap/control/worker)
-    - CNI plugin (calico/cilium)  
-    - HA type (none/keepalived/kubevip)
-    - Features (virt, argocd)
-    - Firewall settings
-    """
+    """K4All configuration spoke for the text installer."""
 
     category = K4AllCategory
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.title = N_("K4All Kubernetes")
-        self._k4all_module = K4ALL.get_proxy()
+        self._k4all_module = None
+        try:
+            self._k4all_module = K4ALL.get_proxy()
+            log.info("K4All TUI spoke: D-Bus proxy acquired")
+        except Exception:
+            log.error("K4All TUI spoke: failed to get D-Bus proxy", exc_info=True)
         self._container = None
-        
-        # Local state
-        self._role = "bootstrap"
+
+        self._role = ""
         self._cni = "calico"
         self._ha = "none"
         self._virt = False
         self._argocd = False
         self._firewalld = False
+        self._api_hostname = "false"
+        self._custom_endpoint = ""
+        self._api_control_ep = ""
+        self._api_control_subnet = ""
+        self._pod_network = "10.100.0.1/18"
+        self._service_network = "10.96.0.0/16"
+        self._cilium_devices = ""
+        self._cilium_gateway = False
+        self._cilium_l2 = False
+        self._cilium_hubble = False
+        # Ingress
+        self._ingress_nginx = True
+        self._ingress_nginx_ip = ""
+        self._ingress_cilium = False
+        self._ingress_cilium_ip = ""
+        self._ingress_default = "nginx"
 
     def initialize(self):
-        """Initialize the spoke."""
         super().initialize()
+        log.info("K4All TUI spoke: initialized")
 
     def setup(self, args=None):
-        """Set up the spoke with current values from D-Bus module."""
         super().setup(args)
-        
-        self._role = self._k4all_module.Role
-        self._cni = self._k4all_module.CniType
-        self._ha = self._k4all_module.HaType
-        self._virt = self._k4all_module.VirtEnabled
-        self._argocd = self._k4all_module.ArgocdEnabled
-        self._firewalld = self._k4all_module.FirewalldEnabled
-        
+        if self._k4all_module is None:
+            return True
+        try:
+            self._role = self._k4all_module.Role
+            self._cni = self._k4all_module.CniType
+            self._ha = self._k4all_module.HaType
+            self._virt = self._k4all_module.VirtEnabled
+            self._argocd = self._k4all_module.ArgocdEnabled
+            self._firewalld = self._k4all_module.FirewalldEnabled
+            self._api_hostname = self._k4all_module.ApiEndPointUseHostName
+            self._custom_endpoint = self._k4all_module.CustomApiEndPoint
+            self._api_control_ep = self._k4all_module.ApiControlEndpoint
+            self._api_control_subnet = self._k4all_module.ApiControlEndpointSubnetSize
+            self._pod_network = self._k4all_module.PodNetwork
+            self._service_network = self._k4all_module.ServiceNetwork
+            self._cilium_devices = self._k4all_module.CiliumAdditionalDevices
+            self._cilium_gateway = self._k4all_module.CiliumGatewayApi
+            self._cilium_l2 = self._k4all_module.CiliumL2Announcements
+            self._cilium_hubble = self._k4all_module.CiliumHubble
+            self._ingress_nginx = self._k4all_module.IngressNginxEnabled
+            self._ingress_nginx_ip = self._k4all_module.IngressNginxDedicatedIP
+            self._ingress_cilium = self._k4all_module.IngressCiliumEnabled
+            self._ingress_cilium_ip = self._k4all_module.IngressCiliumDedicatedIP
+            self._ingress_default = "cilium" if self._k4all_module.IngressCiliumDefault else "nginx"
+        except Exception:
+            log.error("K4All TUI spoke: error during setup", exc_info=True)
         return True
 
     def refresh(self, args=None):
-        """Refresh the spoke UI."""
         super().refresh(args)
-
         self._container = ListColumnContainer(columns=1)
-        
-        # Node Role selection
+
         self._container.add(
-            EntryWidget(
-                title=_("Node Role"),
-                value=self._role
-            ),
-            callback=self._change_role
-        )
-        
-        # CNI selection
-        self._container.add(
-            EntryWidget(
-                title=_("CNI Plugin"),
-                value=self._cni
-            ),
-            callback=self._change_cni
-        )
-        
-        # HA selection
-        self._container.add(
-            EntryWidget(
-                title=_("High Availability"),
-                value=self._ha
-            ),
-            callback=self._change_ha
-        )
-        
+            EntryWidget(title=_("Node Role"),
+                        value=self._role if self._role else _("(not configured)")),
+            callback=self._change_role)
+
+        if self._role == "bootstrap":
+            self._container.add(
+                EntryWidget(title=_("CNI Plugin"), value=self._cni),
+                callback=self._change_cni)
+            self._container.add(
+                EntryWidget(title=_("High Availability"), value=self._ha),
+                callback=self._change_ha)
+
+        if self._role == "bootstrap" and self._ha != "none":
+            self._container.add(
+                EntryWidget(title=_("Control Plane VIP"),
+                            value=self._api_control_ep if self._api_control_ep else _("(required!)")),
+                callback=self._change_api_control_ep)
+            self._container.add(
+                EntryWidget(title=_("VIP Subnet Size"),
+                            value=self._api_control_subnet if self._api_control_subnet else _("(required!)")),
+                callback=self._change_api_control_subnet)
+
+        if self._role == "bootstrap":
+            self._container.add(
+                EntryWidget(title=_("Pod Network CIDR"), value=self._pod_network),
+                callback=self._change_pod_network)
+            self._container.add(
+                EntryWidget(title=_("Service Network CIDR"), value=self._service_network),
+                callback=self._change_service_network)
+
+        if self._role == "bootstrap" and self._cni == "cilium":
+            self._container.add(
+                EntryWidget(title=_("Cilium Additional Devices"),
+                            value=self._cilium_devices if self._cilium_devices else _("(none)")),
+                callback=self._change_cilium_devices)
+            self._container.add(
+                CheckboxWidget(title=_("Cilium Gateway API"), completed=self._cilium_gateway),
+                callback=self._toggle_cilium_gateway)
+            self._container.add(
+                CheckboxWidget(title=_("Cilium L2 Announcements"), completed=self._cilium_l2),
+                callback=self._toggle_cilium_l2)
+            self._container.add(
+                CheckboxWidget(title=_("Cilium Hubble (observability)"), completed=self._cilium_hubble),
+                callback=self._toggle_cilium_hubble)
+
+        # Ingress section (bootstrap only)
+        if self._role == "bootstrap":
+            self._container.add(
+                CheckboxWidget(title=_("NGINX Ingress Controller"), completed=self._ingress_nginx),
+                callback=self._toggle_ingress_nginx)
+            if self._ingress_nginx:
+                self._container.add(
+                    EntryWidget(title=_("  NGINX Dedicated IP"),
+                                value=self._ingress_nginx_ip if self._ingress_nginx_ip else _("(cluster IP)")),
+                    callback=self._change_ingress_nginx_ip)
+
+            if self._cni == "cilium":
+                self._container.add(
+                    CheckboxWidget(title=_("Cilium Ingress Controller"), completed=self._ingress_cilium),
+                    callback=self._toggle_ingress_cilium)
+                if self._ingress_cilium:
+                    self._container.add(
+                        EntryWidget(title=_("  Cilium Dedicated IP"),
+                                    value=self._ingress_cilium_ip if self._ingress_cilium_ip else _("(cluster IP)")),
+                        callback=self._change_ingress_cilium_ip)
+
+            if self._ingress_nginx and self._ingress_cilium:
+                self._container.add(
+                    EntryWidget(title=_("Default Controller"), value=self._ingress_default),
+                    callback=self._change_ingress_default)
+
+        if self._role in ("bootstrap", "control"):
+            self._container.add(
+                EntryWidget(title=_("API endpoint hostname"), value=self._api_hostname),
+                callback=self._change_api_hostname)
+            self._container.add(
+                EntryWidget(title=_("Custom API endpoint"),
+                            value=self._custom_endpoint if self._custom_endpoint else _("(auto-detect)")),
+                callback=self._change_custom_endpoint)
+
         # Features
         self._container.add(
-            CheckboxWidget(
-                title=_("Enable KubeVirt (virtualization)"),
-                completed=self._virt
-            ),
-            callback=self._toggle_virt
-        )
-        
+            CheckboxWidget(title=_("Enable KubeVirt (virtualization)"), completed=self._virt),
+            callback=self._toggle_virt)
         self._container.add(
-            CheckboxWidget(
-                title=_("Enable ArgoCD (GitOps)"),
-                completed=self._argocd
-            ),
-            callback=self._toggle_argocd
-        )
-        
-        self._container.add(
-            CheckboxWidget(
-                title=_("Enable firewalld"),
-                completed=self._firewalld
-            ),
-            callback=self._toggle_firewalld
-        )
+            CheckboxWidget(title=_("Enable ArgoCD (GitOps)"), completed=self._argocd),
+            callback=self._toggle_argocd)
+        if self._cni != "cilium":
+            self._container.add(
+                CheckboxWidget(title=_("Enable firewalld"), completed=self._firewalld),
+                callback=self._toggle_firewalld)
 
         self.window.add_with_separator(self._container)
 
     def apply(self):
-        """Apply values to D-Bus module."""
-        self._k4all_module.SetRole(self._role)
-        self._k4all_module.SetCniType(self._cni)
-        self._k4all_module.SetHaType(self._ha)
-        self._k4all_module.SetVirtEnabled(self._virt)
-        self._k4all_module.SetArgocdEnabled(self._argocd)
-        self._k4all_module.SetFirewalldEnabled(self._firewalld)
+        if self._k4all_module is None:
+            return
+        try:
+            self._k4all_module.SetRole(self._role)
+            self._k4all_module.SetCniType(self._cni)
+            self._k4all_module.SetHaType(self._ha)
+            self._k4all_module.SetVirtEnabled(self._virt)
+            self._k4all_module.SetArgocdEnabled(self._argocd)
+            self._k4all_module.SetFirewalldEnabled(self._firewalld)
+            self._k4all_module.SetApiEndPointUseHostName(self._api_hostname)
+            self._k4all_module.SetCustomApiEndPoint(self._custom_endpoint)
+            self._k4all_module.SetApiControlEndpoint(self._api_control_ep)
+            self._k4all_module.SetApiControlEndpointSubnetSize(self._api_control_subnet)
+            self._k4all_module.SetPodNetwork(self._pod_network)
+            self._k4all_module.SetServiceNetwork(self._service_network)
+            self._k4all_module.SetCiliumAdditionalDevices(self._cilium_devices)
+            self._k4all_module.SetCiliumGatewayApi(self._cilium_gateway)
+            self._k4all_module.SetCiliumL2Announcements(self._cilium_l2)
+            self._k4all_module.SetCiliumHubble(self._cilium_hubble)
+            # Ingress
+            self._k4all_module.SetIngressNginxEnabled(self._ingress_nginx)
+            self._k4all_module.SetIngressNginxDedicatedIP(self._ingress_nginx_ip)
+            self._k4all_module.SetIngressCiliumEnabled(self._ingress_cilium)
+            self._k4all_module.SetIngressCiliumDedicatedIP(self._ingress_cilium_ip)
+            is_cilium_default = self._ingress_default == "cilium"
+            self._k4all_module.SetIngressNginxDefault(not is_cilium_default)
+            self._k4all_module.SetIngressCiliumDefault(is_cilium_default)
+        except Exception:
+            log.error("K4All TUI spoke: error during apply", exc_info=True)
 
     def execute(self):
-        """Execute runtime changes (not needed)."""
         pass
 
     @property
     def completed(self):
-        """Spoke is completed when role is set."""
-        return bool(self._k4all_module.Role)
+        role = self._get_role()
+        if role not in ("bootstrap", "control", "worker"):
+            return False
+        if self._k4all_module:
+            try:
+                ha = self._k4all_module.HaType
+                if ha != "none":
+                    if not self._k4all_module.ApiControlEndpoint or not self._k4all_module.ApiControlEndpointSubnetSize:
+                        return False
+                if role == "bootstrap":
+                    nginx_on = self._k4all_module.IngressNginxEnabled
+                    cilium_on = self._k4all_module.IngressCiliumEnabled
+                    if not nginx_on and not cilium_on:
+                        return False
+                    if nginx_on and cilium_on:
+                        n_ip = self._k4all_module.IngressNginxDedicatedIP
+                        c_ip = self._k4all_module.IngressCiliumDedicatedIP
+                        if not n_ip and not c_ip:
+                            return False
+                        if n_ip and c_ip and n_ip == c_ip:
+                            return False
+            except Exception:
+                pass
+        return True
+
+    def _get_role(self):
+        if self._k4all_module is None:
+            return ""
+        try:
+            return self._k4all_module.Role
+        except Exception:
+            return ""
 
     @property
     def status(self):
-        """Brief status string."""
-        role = self._k4all_module.Role
-        cni = self._k4all_module.CniType
-        ha = self._k4all_module.HaType
-        
-        status = f"Role: {role}, CNI: {cni}"
-        if ha != "none":
-            status += f", HA: {ha}"
-        
-        features = []
-        if self._k4all_module.VirtEnabled:
-            features.append("virt")
-        if self._k4all_module.ArgocdEnabled:
-            features.append("argocd")
-        if features:
-            status += f", Features: {', '.join(features)}"
-        
-        return status
+        role = self._get_role()
+        if not role or role not in ("bootstrap", "control", "worker"):
+            return _("Not configured — select a node role")
+        try:
+            cni = self._k4all_module.CniType
+            ha = self._k4all_module.HaType
+            status = f"Role: {role}, CNI: {cni}"
+            if ha != "none":
+                vip = self._k4all_module.ApiControlEndpoint
+                subnet = self._k4all_module.ApiControlEndpointSubnetSize
+                if vip and subnet:
+                    status += f", HA: {ha} (VIP: {vip}/{subnet})"
+                else:
+                    status += f", HA: {ha} — VIP required!"
+            return status
+        except Exception:
+            return f"Role: {role} (details unavailable)"
 
     @property
     def mandatory(self):
-        """The spoke is mandatory."""
         return True
 
     def input(self, args, key):
-        """Handle user input."""
         if self._container.process_user_input(key):
             return InputState.PROCESSED_AND_REDRAW
-
         if key.lower() == Prompt.CONTINUE:
             self.apply()
             self.execute()
             return InputState.PROCESSED_AND_CLOSE
-
         return super().input(args, key)
 
+    # --- Callbacks ---
+
     def _change_role(self, data):
-        """Cycle through roles."""
-        roles = list(VALID_ROLES)
+        all_roles = [""] + list(VALID_ROLES)
         try:
-            idx = roles.index(self._role)
-            self._role = roles[(idx + 1) % len(roles)]
+            idx = all_roles.index(self._role)
+            self._role = all_roles[(idx + 1) % len(all_roles)]
         except ValueError:
-            self._role = roles[0]
+            self._role = all_roles[0]
 
     def _change_cni(self, data):
-        """Cycle through CNI options."""
         cnis = list(VALID_CNI_TYPES)
         try:
-            idx = cnis.index(self._cni)
-            self._cni = cnis[(idx + 1) % len(cnis)]
+            self._cni = cnis[(cnis.index(self._cni) + 1) % len(cnis)]
         except ValueError:
             self._cni = cnis[0]
+        if self._cni == "cilium":
+            self._firewalld = False
 
     def _change_ha(self, data):
-        """Cycle through HA options."""
         has = list(VALID_HA_TYPES)
         try:
-            idx = has.index(self._ha)
-            self._ha = has[(idx + 1) % len(has)]
+            self._ha = has[(has.index(self._ha) + 1) % len(has)]
         except ValueError:
             self._ha = has[0]
 
+    def _change_api_hostname(self, data):
+        vals = list(_API_HOST_VALUES)
+        try:
+            self._api_hostname = vals[(vals.index(self._api_hostname) + 1) % len(vals)]
+        except ValueError:
+            self._api_hostname = vals[0]
+
+    def _change_custom_endpoint(self, data):
+        self._custom_endpoint = ""
+
+    def _change_api_control_ep(self, data):
+        self._api_control_ep = ""
+
+    def _change_api_control_subnet(self, data):
+        self._api_control_subnet = ""
+
+    def _change_pod_network(self, data):
+        self._pod_network = "10.100.0.1/18"
+
+    def _change_service_network(self, data):
+        self._service_network = "10.96.0.0/16"
+
+    def _change_cilium_devices(self, data):
+        self._cilium_devices = ""
+
+    def _toggle_cilium_gateway(self, data):
+        self._cilium_gateway = not self._cilium_gateway
+
+    def _toggle_cilium_l2(self, data):
+        self._cilium_l2 = not self._cilium_l2
+
+    def _toggle_cilium_hubble(self, data):
+        self._cilium_hubble = not self._cilium_hubble
+
+    def _toggle_ingress_nginx(self, data):
+        self._ingress_nginx = not self._ingress_nginx
+
+    def _change_ingress_nginx_ip(self, data):
+        self._ingress_nginx_ip = ""
+
+    def _toggle_ingress_cilium(self, data):
+        self._ingress_cilium = not self._ingress_cilium
+
+    def _change_ingress_cilium_ip(self, data):
+        self._ingress_cilium_ip = ""
+
+    def _change_ingress_default(self, data):
+        self._ingress_default = "cilium" if self._ingress_default == "nginx" else "nginx"
+
     def _toggle_virt(self, data):
-        """Toggle virt checkbox."""
         self._virt = not self._virt
 
     def _toggle_argocd(self, data):
-        """Toggle argocd checkbox."""
         self._argocd = not self._argocd
 
     def _toggle_firewalld(self, data):
-        """Toggle firewalld checkbox."""
         self._firewalld = not self._firewalld
-

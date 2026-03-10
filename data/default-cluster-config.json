@@ -84,6 +84,12 @@
     // set a custom hostname for the controlplane (in this case "useHostname" is ignored)
     "customApiEndPoint": "",
 
+    // Pod network CIDR for kubeadm init (networking.podSubnet)
+    "podNetwork": "10.100.0.1/18",
+
+    // Service network CIDR for kubeadm init (networking.serviceSubnet)
+    "serviceNetwork": "10.96.0.0/16",
+
     "ha": {
       //interface: the network interface to use for the virtual IP; use auto to automatically select the interface with the default route"
       "interface": "auto",
@@ -98,6 +104,37 @@
       
       //  Control plane endpoint subnet size for the API server, ignored in "none" mode
       // "apiControlEndpointSubnetSize": 24
+    }
+  },
+  "cni": {
+    "cilium": {
+      // Additional network devices for Cilium (comma-separated, besides ovs-bridge)
+      "additionalDevices": "",
+      // Enable Kubernetes Gateway API support
+      "gatewayApi": "false",
+      // Enable L2 Announcements for LoadBalancer services (replaces MetalLB when enabled)
+      "l2announcements": "false",
+      // Enable Hubble relay and UI (network observability)
+      "hubble": "false"
+    }
+  },
+  // Ingress controller configuration (bootstrap only).
+  // At least one controller must be enabled.
+  // If both are enabled, they MUST use different IPs (one can be cluster IP, other dedicated).
+  // dedicatedIP requires L2 announcement: Cilium L2 (if enabled) or MetalLB (auto-installed).
+  // MetalLB is NOT installed when Cilium L2 Announcements are enabled.
+  "ingress": {
+    "nginx": {
+      "enabled": "true",
+      "isDefault": "true",
+      // "" = use cluster IP (kubevip VIP or node IP); set an IP like "192.168.1.50" for L2-announced dedicated IP
+      "dedicatedIP": ""
+    },
+    "cilium": {
+      // Only available when networking.cni.type = "cilium"
+      "enabled": "false",
+      "isDefault": "false",
+      "dedicatedIP": ""
     }
   },
   "proxy": {

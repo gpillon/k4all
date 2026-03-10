@@ -1,0 +1,99 @@
+name: Build K4All Bootc Image
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - dev/bootc*
+      - main
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/k4all-bootc
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for cross-arch builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version tag
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="${GITHUB_REF_NAME//\//-}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: bootc
+          file: bootc/Containerfile
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+  create-manifest:
+    needs: build-image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version tag
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="${GITHUB_REF_NAME//\//-}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push multi-arch manifest
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          docker manifest create "${{ env.IMAGE_NAME }}:${VERSION}" \
+            "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
+            "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
+          docker manifest push "${{ env.IMAGE_NAME }}:${VERSION}"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            docker manifest create "${{ env.IMAGE_NAME }}:latest" \
+              "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
+              "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
+            docker manifest push "${{ env.IMAGE_NAME }}:latest"
+          fi

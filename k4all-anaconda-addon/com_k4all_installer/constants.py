@@ -25,6 +25,8 @@ VALID_ROLES = ("bootstrap", "control", "worker")
 VALID_CNI_TYPES = ("calico", "cilium")
 VALID_HA_TYPES = ("none", "keepalived", "kubevip")
 VALID_EMULATION_VALUES = ("true", "false", "auto")
+VALID_INGRESS_CONTROLLERS = ("nginx", "cilium", "both")
+VALID_INGRESS_IP_MODES = ("auto", "dedicated")
 
 # Default configuration
 DEFAULT_CONFIG = {
@@ -52,7 +54,34 @@ DEFAULT_CONFIG = {
     "cluster": {
         "apiEndPointUseHostName": "false",
         "customApiEndPoint": "",
-        "ha": {"interface": "auto", "type": "none"}
+        "podNetwork": "10.100.0.1/18",
+        "serviceNetwork": "10.96.0.0/16",
+        "ha": {
+            "interface": "auto",
+            "type": "none",
+            "apiControlEndpoint": "",
+            "apiControlEndpointSubnetSize": ""
+        }
+    },
+    "cni": {
+        "cilium": {
+            "additionalDevices": "",
+            "gatewayApi": "false",
+            "l2announcements": "false",
+            "hubble": "false"
+        }
+    },
+    "ingress": {
+        "nginx": {
+            "enabled": "true",
+            "isDefault": "true",
+            "dedicatedIP": ""
+        },
+        "cilium": {
+            "enabled": "false",
+            "isDefault": "false",
+            "dedicatedIP": ""
+        }
     },
     "proxy": {
         "http_proxy": "",

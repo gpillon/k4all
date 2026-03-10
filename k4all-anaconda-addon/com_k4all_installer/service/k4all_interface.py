@@ -104,3 +104,154 @@ class K4AllInterface(KickstartModuleInterface):
         """Enable or disable firewalld."""
         self.implementation.set_firewalld_enabled(enabled)
 
+    @property
+    def ApiEndPointUseHostName(self) -> Str:
+        """API endpoint hostname mode (false/true/short)."""
+        return self.implementation.api_endpoint_use_hostname
+
+    @emits_properties_changed
+    def SetApiEndPointUseHostName(self, value: Str):
+        """Set API endpoint hostname mode."""
+        self.implementation.set_api_endpoint_use_hostname(value)
+
+    @property
+    def CustomApiEndPoint(self) -> Str:
+        """Custom API endpoint."""
+        return self.implementation.custom_api_endpoint
+
+    @emits_properties_changed
+    def SetCustomApiEndPoint(self, value: Str):
+        """Set custom API endpoint."""
+        self.implementation.set_custom_api_endpoint(value)
+
+    @property
+    def PodNetwork(self) -> Str:
+        """Pod network CIDR (e.g. 10.100.0.1/18)."""
+        return self.implementation.pod_network
+
+    @emits_properties_changed
+    def SetPodNetwork(self, value: Str):
+        """Set the pod network CIDR."""
+        self.implementation.set_pod_network(value)
+
+    @property
+    def ServiceNetwork(self) -> Str:
+        """Service network CIDR (e.g. 10.96.0.0/16)."""
+        return self.implementation.service_network
+
+    @emits_properties_changed
+    def SetServiceNetwork(self, value: Str):
+        """Set the service network CIDR."""
+        self.implementation.set_service_network(value)
+
+    @property
+    def ApiControlEndpoint(self) -> Str:
+        """HA control plane VIP address."""
+        return self.implementation.api_control_endpoint
+
+    @emits_properties_changed
+    def SetApiControlEndpoint(self, value: Str):
+        """Set HA control plane VIP address."""
+        self.implementation.set_api_control_endpoint(value)
+
+    @property
+    def ApiControlEndpointSubnetSize(self) -> Str:
+        """HA control plane VIP subnet size (e.g. 24)."""
+        return self.implementation.api_control_endpoint_subnet_size
+
+    @emits_properties_changed
+    def SetApiControlEndpointSubnetSize(self, value: Str):
+        """Set HA control plane VIP subnet size."""
+        self.implementation.set_api_control_endpoint_subnet_size(value)
+
+    # Cilium-specific options (bootstrap only, when CNI == cilium)
+    @property
+    def CiliumAdditionalDevices(self) -> Str:
+        """Additional network devices for Cilium (comma-separated)."""
+        return self.implementation.cilium_additional_devices
+
+    @emits_properties_changed
+    def SetCiliumAdditionalDevices(self, value: Str):
+        """Set additional Cilium devices."""
+        self.implementation.set_cilium_additional_devices(value)
+
+    @property
+    def CiliumGatewayApi(self) -> Bool:
+        """Whether Cilium Gateway API is enabled."""
+        return self.implementation.cilium_gateway_api
+
+    @emits_properties_changed
+    def SetCiliumGatewayApi(self, enabled: Bool):
+        """Enable or disable Cilium Gateway API."""
+        self.implementation.set_cilium_gateway_api(enabled)
+
+    @property
+    def CiliumL2Announcements(self) -> Bool:
+        """Whether Cilium L2 Announcements are enabled."""
+        return self.implementation.cilium_l2_announcements
+
+    @emits_properties_changed
+    def SetCiliumL2Announcements(self, enabled: Bool):
+        """Enable or disable Cilium L2 Announcements."""
+        self.implementation.set_cilium_l2_announcements(enabled)
+
+    @property
+    def CiliumHubble(self) -> Bool:
+        """Whether Cilium Hubble UI is enabled."""
+        return self.implementation.cilium_hubble
+
+    @emits_properties_changed
+    def SetCiliumHubble(self, enabled: Bool):
+        """Enable or disable Cilium Hubble."""
+        self.implementation.set_cilium_hubble(enabled)
+
+    # --- Ingress configuration ---
+
+    @property
+    def IngressNginxEnabled(self) -> Bool:
+        return self.implementation.ingress_nginx_enabled
+
+    @emits_properties_changed
+    def SetIngressNginxEnabled(self, enabled: Bool):
+        self.implementation.set_ingress_nginx_enabled(enabled)
+
+    @property
+    def IngressNginxDefault(self) -> Bool:
+        return self.implementation.ingress_nginx_default
+
+    @emits_properties_changed
+    def SetIngressNginxDefault(self, is_default: Bool):
+        self.implementation.set_ingress_nginx_default(is_default)
+
+    @property
+    def IngressNginxDedicatedIP(self) -> Str:
+        return self.implementation.ingress_nginx_dedicated_ip
+
+    @emits_properties_changed
+    def SetIngressNginxDedicatedIP(self, value: Str):
+        self.implementation.set_ingress_nginx_dedicated_ip(value)
+
+    @property
+    def IngressCiliumEnabled(self) -> Bool:
+        return self.implementation.ingress_cilium_enabled
+
+    @emits_properties_changed
+    def SetIngressCiliumEnabled(self, enabled: Bool):
+        self.implementation.set_ingress_cilium_enabled(enabled)
+
+    @property
+    def IngressCiliumDefault(self) -> Bool:
+        return self.implementation.ingress_cilium_default
+
+    @emits_properties_changed
+    def SetIngressCiliumDefault(self, is_default: Bool):
+        self.implementation.set_ingress_cilium_default(is_default)
+
+    @property
+    def IngressCiliumDedicatedIP(self) -> Str:
+        return self.implementation.ingress_cilium_dedicated_ip
+
+    @emits_properties_changed
+    def SetIngressCiliumDedicatedIP(self, value: Str):
+        self.implementation.set_ingress_cilium_dedicated_ip(value)
+
