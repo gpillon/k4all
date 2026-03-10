@@ -182,6 +182,12 @@ jobs:
       - name: Install xorriso
         run: sudo apt-get update && sudo apt-get install -y xorriso
 
+      - name: Pull bootc image for BIB
+        run: |
+          OCI_IMAGE="${{ env.IMAGE_NAME }}:${{ env.VERSION }}-${{ matrix.arch }}"
+          echo "Pulling ${OCI_IMAGE}..."
+          sudo podman pull "${OCI_IMAGE}"
+
       - name: Build all ISO variants
         run: |
           OCI_IMAGE="${{ env.IMAGE_NAME }}:${{ env.VERSION }}-${{ matrix.arch }}"
@@ -207,7 +213,6 @@ jobs:
 
             sudo podman run --rm --privileged --pull=newer \
               --security-opt label=type:unconfined_t \
-              --platform linux/${{ matrix.arch }} \
               -v "${CONFIG}":/config.toml:ro \
               -v "${OUTPUT_DIR}":/output \
               -v "${STORE_DIR}":/store \
@@ -216,7 +221,7 @@ jobs:
               quay.io/centos-bootc/bootc-image-builder:latest \
               --type anaconda-iso \
               --rootfs xfs \
-              --use-librepo=True \
+              --local \
               "${OCI_IMAGE}"
 
             BIB_OUT="${OUTPUT_DIR}/bootiso/install.iso"
