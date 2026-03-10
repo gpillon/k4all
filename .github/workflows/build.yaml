@@ -85,6 +85,7 @@ jobs:
           file: bootc/Containerfile
           platforms: linux/${{ matrix.arch }}
           push: true
+          provenance: false
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-${{ matrix.arch }}
           cache-from: type=gha,scope=${{ matrix.arch }}
