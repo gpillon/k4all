@@ -148,12 +148,17 @@ jobs:
           sudo apt-get clean
           df -h /
 
-      - name: Log in to GHCR
+      - name: Log in to GHCR (docker)
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Log in to GHCR (podman/root for BIB)
+        run: |
+          echo "${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}" | \
+            sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Set platform
         id: platform
@@ -170,9 +175,9 @@ jobs:
 
       - name: Build K4All Anaconda addon
         run: |
-          cd k4all-anaconda-addon && make updates
+          make -C k4all-anaconda-addon updates
           mkdir -p bootc/iso/images
-          cp k4all_addon_updates.img bootc/iso/images/k4all_updates.img
+          cp k4all-anaconda-addon/k4all_addon_updates.img bootc/iso/images/k4all_updates.img
 
       - name: Install xorriso
         run: sudo apt-get update && sudo apt-get install -y xorriso
@@ -198,7 +203,7 @@ jobs:
               unattended-worker)      SUFFIX="worker" ;;
             esac
 
-            CONFIG="bootc/iso/config/${MODE}.toml"
+            CONFIG="$(pwd)/bootc/iso/config/${MODE}.toml"
 
             sudo podman run --rm --privileged --pull=newer \
               --security-opt label=type:unconfined_t \
@@ -221,7 +226,7 @@ jobs:
               rmdir "${OUTPUT_DIR}/bootiso" 2>/dev/null || true
             fi
 
-            cd bootc && ./scripts/remaster-iso.sh "$FINAL" && cd ..
+            ./bootc/scripts/remaster-iso.sh "$FINAL"
 
             VERSIONED="${OUTPUT_DIR}/k4all-${SUFFIX}-${{ env.VERSION }}-${{ steps.platform.outputs.bib_arch }}.iso"
             mv "$FINAL" "$VERSIONED"
