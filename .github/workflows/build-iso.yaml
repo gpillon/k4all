@@ -14,6 +14,10 @@ on:
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/k4all-bootc
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   # ------------------------------------------------------------------
   # 1. Build the bootc OCI image (per arch)
@@ -274,4 +278,4 @@ jobs:
           files: isos/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
+
