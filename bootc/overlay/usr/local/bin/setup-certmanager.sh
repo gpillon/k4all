@@ -16,7 +16,10 @@ fi
 # Deploy cert-manager
 $h repo add jetstack https://charts.jetstack.io
 $h repo update
-$h upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --version v1.14.5 --set installCRDs=true
+$h upgrade --install cert-manager jetstack/cert-manager --version v1.14.5 \ 
+   --namespace cert-manager --create-namespace \ 
+   --set installCRDs=true \
+   --wait --timeout=30m
 
 echo "Waiting for Cert-Manager pods to be up and running..."
 

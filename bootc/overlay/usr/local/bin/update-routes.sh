@@ -14,25 +14,31 @@ update_motd() {
     echo " - nip.io Route: https://dashboard.$nip_host/" | sudo tee -a /etc/login_data
 }
 
-# Main logic
-ip=$(get_cluster_ip)
-fqdn=$(get_fqdn)
+NGINX_INGRESS_ENABLED=$(jq -r '.ingress.nginx.enabled // "true"' "$K4ALL_CONFIG_FILE")
+NGINX_IS_DEFAULT=$(jq -r '.ingress.nginx.isDefault // "true"' "$K4ALL_CONFIG_FILE")
+NGINX_INGRESS_DEDICATED_IP=$(jq -r '.ingress.nginx.dedicatedIP // ""' "$K4ALL_CONFIG_FILE")
+
+CILIUM_INGRESS_ENABLED=$(jq -r '.ingress.cilium.enabled // "false"' "$K4ALL_CONFIG_FILE")
+CILIUM_INGRESS_DEDICATED_IP=$(jq -r '.ingress.cilium.dedicatedIP // ""' "$K4ALL_CONFIG_FILE")
+CILIUM_INGRESS_IS_DEFAULT=$(jq -r '.ingress.cilium.isDefault // "false"' "$K4ALL_CONFIG_FILE")
+
+FQDN=$(get_fqdn)
+
+INGRESS_IP=$(get_cluster_ip)
+if [ "$NGINX_INGRESS_ENABLED" = "true" ] && [ "$NGINX_INGRESS_DEDICATED_IP" != "true" ]; then
+    INGRESS_IP="$NGINX_INGRESS_DEDICATED_IP"
+elif [ "$CILIUM_INGRESS_ENABLED" = "true" ] && [ "$CILIUM_INGRESS_DEDICATED_IP" != "true" ]; then
+    INGRESS_IP="$CILIUM_INGRESS_DEDICATED_IP"
+fi
 
 # Create the nip.io route
-nip_host="$ip.nip.io"
-
-# # Check if the FQDN has a domain part
-# if has_domain "$fqdn"; then
-#     fqdn_host=$fqdn
-# else
-#     fqdn_host="kube-control-01.local"  # Fallback FQDN
-# fi
+NIP_HOST="$INGRESS_IP.nip.io"
 
 # Patch the ingress with the FQDN route first
-patch_ingress "$fqdn" 1 "dashboard" "headlamp" "headlamp"
+patch_ingress "$FQDN" 1 "dashboard" "headlamp" "headlamp"
 
 # Patch the ingress with the nip.io route
-patch_ingress "$nip_host" 0 "dashboard" "headlamp" "headlamp"
+patch_ingress "$NIP_HOST" 0 "dashboard" "headlamp" "headlamp"
 
 # Update the MOTD with both routes
-update_motd "$fqdn" "$nip_host"
+update_motd "$FQDN" "$NIP_HOST"

@@ -15,6 +15,11 @@ K8S_CONFIG="/etc/k8s-config.yaml"
 if [ -f "$K4ALL_CONFIG" ]; then
   POD_NET=$(jq -r '.cluster.podNetwork // "10.100.0.1/18"' "$K4ALL_CONFIG")
   SVC_NET=$(jq -r '.cluster.serviceNetwork // "10.96.0.0/16"' "$K4ALL_CONFIG")
+  CNI=$(jq -r '.networking.cni.type // "calico"' "$K4ALL_CONFIG")
+
+  if [ "$CNI" == "cilium" ]; then
+    yq e '(select(.kind == "ClusterConfiguration") | .proxy.disabled) = true' -i "$K8S_CONFIG"
+  fi
 
   echo "Setting pod network to $POD_NET and service network to $SVC_NET"
   yq e '(select(.kind == "ClusterConfiguration") | .networking.podSubnet) = "'"$POD_NET"'"' -i "$K8S_CONFIG"

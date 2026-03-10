@@ -11,6 +11,8 @@ Type=oneshot
 ExecStart=/usr/local/bin/setup-certmanager.sh
 RemainAfterExit=yes
 WorkingDirectory=/root/
+Restart=on-failure
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target

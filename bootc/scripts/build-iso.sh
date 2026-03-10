@@ -27,6 +27,10 @@ case "$ISO_MODE" in
         CONFIG_FILE="${CONFIG_DIR}/unattended-bootstrap.toml"
         ISO_SUFFIX="bootstrap"
         ;;
+    unattended-control)
+        CONFIG_FILE="${CONFIG_DIR}/unattended-control.toml"
+        ISO_SUFFIX="control"
+        ;;
     unattended-worker)
         CONFIG_FILE="${CONFIG_DIR}/unattended-worker.toml"
         ISO_SUFFIX="worker"
@@ -37,7 +41,7 @@ case "$ISO_MODE" in
         ;;
     *)
         echo "ERROR: Unknown ISO_MODE='${ISO_MODE}'"
-        echo "Valid modes: attended, unattended-bootstrap, unattended-worker"
+        echo "Valid modes: attended, unattended-bootstrap, unattended-control, unattended-worker"
         exit 1
         ;;
 esac

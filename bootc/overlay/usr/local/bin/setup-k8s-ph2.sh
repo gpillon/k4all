@@ -113,6 +113,9 @@ enable_service_if_not_running kubelet
 # Check if networking.firewalld.enabled is true in $K4ALL_CONFIG_FILE
 if jq -e '.networking.firewalld.enabled == "true"' "$K4ALL_CONFIG_FILE" >/dev/null; then
   enable_service_if_not_running firewalld
+else
+  echo "Firewalld is disabled. Disabling it..."
+  systemctl stop firewalld && systemctl stop firewalld
 fi
 
 # Remove the old NetworkManager connection if it exists

@@ -7,7 +7,7 @@ OUTPUT_DIR ?= $(CURDIR)/output
 
 CONTAINER_NAME ?= k4all-test
 
-.PHONY: all image iso iso-attended iso-unattended-bootstrap iso-unattended-worker \
+.PHONY: all image iso iso-attended iso-unattended-bootstrap iso-unattended-control iso-unattended-worker \
         addon remaster clean help test test-addon run stop test-runtime
 
 all: image
@@ -38,6 +38,12 @@ iso-unattended-bootstrap: image addon
 	@ISO_FILE=$$(ls -1t $(OUTPUT_DIR)/k4all-bootstrap.iso 2>/dev/null | head -1); \
 	if [ -n "$$ISO_FILE" ]; then ./scripts/remaster-iso.sh "$$ISO_FILE"; fi
 
+# Build an unattended control plane ISO — auto-installs control plane node
+iso-unattended-control: image addon
+	ISO_MODE=unattended-control OUTPUT_DIR=$(OUTPUT_DIR) ./scripts/build-iso.sh $(IMAGE_NAME):$(IMAGE_TAG)
+	@ISO_FILE=$$(ls -1t $(OUTPUT_DIR)/k4all-control.iso 2>/dev/null | head -1); \
+	if [ -n "$$ISO_FILE" ]; then ./scripts/remaster-iso.sh "$$ISO_FILE"; fi
+
 # Build an unattended worker ISO — auto-installs worker node
 iso-unattended-worker: image addon
 	ISO_MODE=unattended-worker OUTPUT_DIR=$(OUTPUT_DIR) ./scripts/build-iso.sh $(IMAGE_NAME):$(IMAGE_TAG)
@@ -45,7 +51,7 @@ iso-unattended-worker: image addon
 	if [ -n "$$ISO_FILE" ]; then ./scripts/remaster-iso.sh "$$ISO_FILE"; fi
 
 # Shortcut: build all ISO variants
-iso: iso-attended iso-unattended-bootstrap iso-unattended-worker
+iso: iso-attended iso-unattended-bootstrap iso-unattended-control iso-unattended-worker
 
 # Build the Anaconda addon
 addon:
@@ -142,6 +148,7 @@ help:
 	@echo "ISO (all include K4All Anaconda addon):"
 	@echo "  iso-attended             - Interactive Anaconda ISO (GUI with K4All spoke)"
 	@echo "  iso-unattended-bootstrap - Unattended bootstrap node ISO (20% OS / 80% LVM)"
+	@echo "  iso-unattended-control   - Unattended control plane node ISO (20% OS / 80% LVM)"
 	@echo "  iso-unattended-worker    - Unattended worker node ISO (20% OS / 80% LVM)"
 	@echo "  iso                      - Build ALL ISO variants"
 	@echo "  addon                    - Build Anaconda addon only"
