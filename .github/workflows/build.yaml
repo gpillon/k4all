@@ -1,11 +1,18 @@
-name: Build K4All ISOs and Release
+name: Build K4All
 
 on:
   push:
     tags:
       - "v*"
+    branches:
+      - dev/bootc*
+      - main
   workflow_dispatch:
     inputs:
+      build_iso:
+        description: "Build ISOs (slow, ~1h per arch)"
+        type: boolean
+        default: false
       version:
         description: "Version override (e.g. v2.0.0-beta)"
         required: false
@@ -14,13 +21,9 @@ on:
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/k4all-bootc
 
-permissions:
-  contents: read
-  packages: write
-
 jobs:
   # ------------------------------------------------------------------
-  # 1. Build the bootc OCI image (per arch)
+  # 1. Build the bootc OCI image (per arch) — always runs
   # ------------------------------------------------------------------
   build-image:
     runs-on: ubuntu-latest
@@ -33,6 +36,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      is_tag: ${{ steps.version.outputs.is_tag }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
@@ -48,6 +52,13 @@ jobs:
             VERSION="${GITHUB_REF_NAME//\//-}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          IS_TAG="false"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            IS_TAG="true"
+          fi
+          echo "is_tag=${IS_TAG}" >> "$GITHUB_OUTPUT"
+
           if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc) ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
@@ -76,11 +87,11 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-${{ matrix.arch }}
-          cache-from: type=gha,scope=iso-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=iso-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
   # ------------------------------------------------------------------
-  # 2. Create multi-arch manifest
+  # 2. Create multi-arch manifest — always runs
   # ------------------------------------------------------------------
   push-manifest:
     needs: build-image
@@ -102,16 +113,21 @@ jobs:
             "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
             "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
           docker manifest push "${{ env.IMAGE_NAME }}:${VERSION}"
-          docker manifest create "${{ env.IMAGE_NAME }}:latest" \
-            "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
-            "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
-          docker manifest push "${{ env.IMAGE_NAME }}:latest"
+
+          # Tag :latest only on release tags
+          if [ "${{ needs.build-image.outputs.is_tag }}" = "true" ]; then
+            docker manifest create "${{ env.IMAGE_NAME }}:latest" \
+              "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
+              "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
+            docker manifest push "${{ env.IMAGE_NAME }}:latest"
+          fi
 
   # ------------------------------------------------------------------
-  # 3. Build ISOs (per arch, all variants)
+  # 3. Build ISOs — only on tags or manual request
   # ------------------------------------------------------------------
   build-iso:
     needs: [build-image, push-manifest]
+    if: needs.build-image.outputs.is_tag == 'true' || github.event.inputs.build_iso == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -138,7 +154,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set platform for bootc-image-builder
+      - name: Set platform
         id: platform
         run: |
           if [ "${{ matrix.arch }}" = "amd64" ]; then
@@ -162,8 +178,11 @@ jobs:
 
       - name: Build all ISO variants
         run: |
-          BIB_ARCH="${{ steps.platform.outputs.bib_arch }}"
           OCI_IMAGE="${{ env.IMAGE_NAME }}:${{ env.VERSION }}-${{ matrix.arch }}"
+          OUTPUT_DIR="$(pwd)/output"
+          STORE_DIR="$(pwd)/.cache/osbuild-store"
+          RPMMD_DIR="$(pwd)/.cache/rpmmd"
+          mkdir -p "$OUTPUT_DIR" "$STORE_DIR" "$RPMMD_DIR"
 
           for MODE in attended unattended-bootstrap unattended-control unattended-worker; do
             echo ""
@@ -178,18 +197,7 @@ jobs:
               unattended-worker)      SUFFIX="worker" ;;
             esac
 
-            CONFIG="bootc/iso/config/${MODE/attended/attended}.toml"
-            if [ "$MODE" = "attended" ]; then
-              CONFIG="bootc/iso/config/attended.toml"
-            else
-              CONFIG="bootc/iso/config/${MODE}.toml"
-            fi
-
-            OUTPUT_DIR="$(pwd)/output"
-            mkdir -p "$OUTPUT_DIR"
-            STORE_DIR="$(pwd)/.cache/osbuild-store"
-            RPMMD_DIR="$(pwd)/.cache/rpmmd"
-            mkdir -p "$STORE_DIR" "$RPMMD_DIR"
+            CONFIG="bootc/iso/config/${MODE}.toml"
 
             sudo podman run --rm --privileged --pull=newer \
               --security-opt label=type:unconfined_t \
@@ -212,10 +220,8 @@ jobs:
               rmdir "${OUTPUT_DIR}/bootiso" 2>/dev/null || true
             fi
 
-            # Remaster to include addon
             cd bootc && ./scripts/remaster-iso.sh "$FINAL" && cd ..
 
-            # Rename to versioned filename
             VERSIONED="${OUTPUT_DIR}/k4all-${SUFFIX}-${{ env.VERSION }}-${{ steps.platform.outputs.bib_arch }}.iso"
             mv "$FINAL" "$VERSIONED"
             echo "Built: $VERSIONED"
@@ -231,10 +237,11 @@ jobs:
           retention-days: 3
 
   # ------------------------------------------------------------------
-  # 4. Create GitHub Release with all ISOs
+  # 4. Create GitHub Release — only on tags
   # ------------------------------------------------------------------
   release:
     needs: [build-image, build-iso]
+    if: needs.build-image.outputs.is_tag == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -278,4 +285,3 @@ jobs:
           files: isos/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
