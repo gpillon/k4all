@@ -129,14 +129,18 @@ jobs:
   build-iso:
     needs: [build-image, push-manifest]
     if: needs.build-image.outputs.is_tag == 'true' || github.event.inputs.build_iso == 'true'
-    runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: read
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     env:
       VERSION: ${{ needs.build-image.outputs.version }}
     steps:
@@ -166,15 +170,9 @@ jobs:
         run: |
           if [ "${{ matrix.arch }}" = "amd64" ]; then
             echo "bib_arch=x86_64" >> "$GITHUB_OUTPUT"
-            echo "target_arch=x86_64" >> "$GITHUB_OUTPUT"
           else
             echo "bib_arch=aarch64" >> "$GITHUB_OUTPUT"
-            echo "target_arch=aarch64" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Set up QEMU (for cross-arch)
-        if: matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@v3
 
       - name: Build K4All Anaconda addon
         run: |
@@ -224,14 +222,14 @@ jobs:
               quay.io/centos-bootc/bootc-image-builder:latest \
               --type anaconda-iso \
               --rootfs xfs \
-              --target-arch ${{ steps.platform.outputs.target_arch }} \
               --local \
               "${OCI_IMAGE}"
 
             BIB_OUT="${OUTPUT_DIR}/bootiso/install.iso"
             FINAL="${OUTPUT_DIR}/k4all-${SUFFIX}.iso"
             if [ -f "$BIB_OUT" ]; then
-              mv "$BIB_OUT" "$FINAL"
+              sudo mv "$BIB_OUT" "$FINAL"
+              sudo chown "$(id -u):$(id -g)" "$FINAL"
               rmdir "${OUTPUT_DIR}/bootiso" 2>/dev/null || true
             fi
 
