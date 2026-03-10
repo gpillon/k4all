@@ -134,6 +134,7 @@ jobs:
       contents: write
       packages: read
     strategy:
+      fail-fast: false
       matrix:
         arch: [amd64, arm64]
     env:
@@ -165,8 +166,10 @@ jobs:
         run: |
           if [ "${{ matrix.arch }}" = "amd64" ]; then
             echo "bib_arch=x86_64" >> "$GITHUB_OUTPUT"
+            echo "target_arch=x86_64" >> "$GITHUB_OUTPUT"
           else
             echo "bib_arch=aarch64" >> "$GITHUB_OUTPUT"
+            echo "target_arch=aarch64" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up QEMU (for cross-arch)
@@ -221,6 +224,7 @@ jobs:
               quay.io/centos-bootc/bootc-image-builder:latest \
               --type anaconda-iso \
               --rootfs xfs \
+              --target-arch ${{ steps.platform.outputs.target_arch }} \
               --local \
               "${OCI_IMAGE}"
 
