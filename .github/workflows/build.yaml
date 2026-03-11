@@ -242,17 +242,25 @@ jobs:
 
           echo ""
           echo "=== Compressing ISOs with zstd ==="
+          MAX_SIZE=$((2000 * 1024 * 1024))
           for iso in output/*.iso; do
-            echo "Compressing $(basename "$iso")..."
-            zstd -T0 --rm "$iso"
+            BASE=$(basename "$iso")
+            echo "Compressing ${BASE}..."
+            zstd -T0 -12 --rm "$iso"
+            SIZE=$(stat -c%s "${iso}.zst")
+            if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+              echo "  ${BASE}.zst is $(( SIZE / 1024 / 1024 ))MB — splitting into parts..."
+              split -b 1900m "${iso}.zst" "${iso}.zst.part-"
+              rm "${iso}.zst"
+            fi
           done
-          ls -lh output/*.iso.zst
+          ls -lh output/k4all-*
 
       - name: Upload ISO artifacts
         uses: actions/upload-artifact@v4
         with:
           name: isos-${{ matrix.arch }}
-          path: output/*.iso.zst
+          path: output/k4all-*
           retention-days: 3
 
   # ------------------------------------------------------------------
@@ -290,18 +298,21 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.build-image.outputs.version }}
             ```
 
-            ### ISO Downloads (zstd compressed — decompress with `unzstd *.iso.zst`)
+            ### ISO Downloads
+            ISOs are compressed with zstd. Decompress with: `unzstd <file>.iso.zst`
+            If the ISO was split (x86_64), reassemble first: `cat <file>.iso.zst.part-* > <file>.iso.zst`
+
             | Variant | x86_64 | aarch64 |
             |---------|--------|---------|
-            | **Attended** (interactive GUI) | `k4all-attended-*-x86_64.iso.zst` | `k4all-attended-*-aarch64.iso.zst` |
-            | **Bootstrap** (unattended, first node) | `k4all-bootstrap-*-x86_64.iso.zst` | `k4all-bootstrap-*-aarch64.iso.zst` |
-            | **Control** (unattended, control plane) | `k4all-control-*-x86_64.iso.zst` | `k4all-control-*-aarch64.iso.zst` |
-            | **Worker** (unattended, worker node) | `k4all-worker-*-x86_64.iso.zst` | `k4all-worker-*-aarch64.iso.zst` |
+            | **Attended** (interactive GUI) | `k4all-attended-*-x86_64.iso.zst*` | `k4all-attended-*-aarch64.iso.zst` |
+            | **Bootstrap** (unattended, first node) | `k4all-bootstrap-*-x86_64.iso.zst*` | `k4all-bootstrap-*-aarch64.iso.zst` |
+            | **Control** (unattended, control plane) | `k4all-control-*-x86_64.iso.zst*` | `k4all-control-*-aarch64.iso.zst` |
+            | **Worker** (unattended, worker node) | `k4all-worker-*-x86_64.iso.zst*` | `k4all-worker-*-aarch64.iso.zst` |
 
             ### Update existing systems
             ```bash
             bootc switch ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.build-image.outputs.version }}
             ```
-          files: isos/*.iso.zst
+          files: isos/k4all-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
