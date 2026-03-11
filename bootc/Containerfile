@@ -4,7 +4,7 @@
 # The actual cluster configuration is done at install time via Anaconda addon or at first boot.
 
 #FROM quay.io/centos-bootc/centos-bootc:stream9
-FROM quay.io/fedora/fedora-bootc-minimal:43
+FROM quay.io/fedora/fedora-bootc:43
 
 # ============================================================================
 # REPOS
