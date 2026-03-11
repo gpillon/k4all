@@ -237,16 +237,22 @@ jobs:
 
             VERSIONED="${OUTPUT_DIR}/k4all-${SUFFIX}-${{ env.VERSION }}-${{ steps.platform.outputs.bib_arch }}.iso"
             mv "$FINAL" "$VERSIONED"
-            echo "Built: $VERSIONED"
+            echo "Built: $VERSIONED ($(du -h "$VERSIONED" | cut -f1))"
           done
 
-          ls -lh output/*.iso
+          echo ""
+          echo "=== Compressing ISOs with zstd ==="
+          for iso in output/*.iso; do
+            echo "Compressing $(basename "$iso")..."
+            zstd -T0 --rm "$iso"
+          done
+          ls -lh output/*.iso.zst
 
       - name: Upload ISO artifacts
         uses: actions/upload-artifact@v4
         with:
           name: isos-${{ matrix.arch }}
-          path: output/*.iso
+          path: output/*.iso.zst
           retention-days: 3
 
   # ------------------------------------------------------------------
@@ -284,18 +290,18 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.build-image.outputs.version }}
             ```
 
-            ### ISO Downloads
+            ### ISO Downloads (zstd compressed — decompress with `unzstd *.iso.zst`)
             | Variant | x86_64 | aarch64 |
             |---------|--------|---------|
-            | **Attended** (interactive GUI) | `k4all-attended-*-x86_64.iso` | `k4all-attended-*-aarch64.iso` |
-            | **Bootstrap** (unattended, first node) | `k4all-bootstrap-*-x86_64.iso` | `k4all-bootstrap-*-aarch64.iso` |
-            | **Control** (unattended, control plane) | `k4all-control-*-x86_64.iso` | `k4all-control-*-aarch64.iso` |
-            | **Worker** (unattended, worker node) | `k4all-worker-*-x86_64.iso` | `k4all-worker-*-aarch64.iso` |
+            | **Attended** (interactive GUI) | `k4all-attended-*-x86_64.iso.zst` | `k4all-attended-*-aarch64.iso.zst` |
+            | **Bootstrap** (unattended, first node) | `k4all-bootstrap-*-x86_64.iso.zst` | `k4all-bootstrap-*-aarch64.iso.zst` |
+            | **Control** (unattended, control plane) | `k4all-control-*-x86_64.iso.zst` | `k4all-control-*-aarch64.iso.zst` |
+            | **Worker** (unattended, worker node) | `k4all-worker-*-x86_64.iso.zst` | `k4all-worker-*-aarch64.iso.zst` |
 
             ### Update existing systems
             ```bash
             bootc switch ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.build-image.outputs.version }}
             ```
-          files: isos/*
+          files: isos/*.iso.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
