@@ -9,9 +9,19 @@ fi
 HOME=/root/
 source /usr/local/bin/k4all-utils
 
-helm --kubeconfig=/etc/kubernetes/admin.conf repo add headlamp https://kubernetes-sigs.github.io/headlamp/
-helm --kubeconfig=/etc/kubernetes/admin.conf upgrade --install headlamp headlamp/headlamp \
-  --create-namespace --namespace headlamp \
+HEADLAMP_REPO=$(get_component_repo headlamp)
+HEADLAMP_CHART=$(get_component_chart headlamp)
+HEADLAMP_VERSION=$(get_component_version headlamp)
+HEADLAMP_NS=$(get_component_namespace headlamp)
+
+HEADLAMP_HELM_ARGS=()
+if [ -n "$HEADLAMP_VERSION" ] && [ "$HEADLAMP_VERSION" != "null" ]; then
+  HEADLAMP_HELM_ARGS+=(--version "${HEADLAMP_VERSION}")
+fi
+
+helm --kubeconfig=/etc/kubernetes/admin.conf repo add k4all-headlamp "${HEADLAMP_REPO}"
+helm --kubeconfig=/etc/kubernetes/admin.conf upgrade --install headlamp "k4all-headlamp/${HEADLAMP_CHART}" \
+  "${HEADLAMP_HELM_ARGS[@]}" --create-namespace --namespace "${HEADLAMP_NS}" \
   -f /usr/local/share/headlamp-values.yaml
 
 kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /usr/local/share/headlamp-users.yaml

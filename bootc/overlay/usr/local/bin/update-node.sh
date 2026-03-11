@@ -228,6 +228,10 @@ main() {
         config)
             update_config
             ;;
+        migrate)
+            log "Running configuration migration..."
+            /usr/local/bin/k4all-migrate-config.sh
+            ;;
         *)
             echo "K4All Node Update Script"
             echo ""

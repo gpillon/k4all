@@ -4,6 +4,88 @@
 K4ALL_CONFIG_FILE="/etc/k4all-config.json"
 KUBECONFIG=/etc/kubernetes/admin.conf
 
+# Release manifest: user copy with fallback to base image copy
+K4ALL_RELEASE_FILE="/etc/k4all-release.yaml"
+K4ALL_RELEASE_BASE="/usr/local/share/k4all-release.yaml"
+
+_k4all_release_file() {
+    if [ -f "$K4ALL_RELEASE_FILE" ]; then
+        echo "$K4ALL_RELEASE_FILE"
+    elif [ -f "$K4ALL_RELEASE_BASE" ]; then
+        echo "$K4ALL_RELEASE_BASE"
+    else
+        echo ""
+    fi
+}
+
+get_component_version() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".components.${component}.version" "$rf" 2>/dev/null
+}
+
+get_component_repo() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".components.${component}.repo // .components.${component}.source" "$rf" 2>/dev/null
+}
+
+get_component_source() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".components.${component}.source" "$rf" 2>/dev/null
+}
+
+get_component_chart() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".components.${component}.chart" "$rf" 2>/dev/null
+}
+
+get_component_namespace() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".components.${component}.namespace" "$rf" 2>/dev/null
+}
+
+get_component_version_url() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".components.${component}.versionUrl" "$rf" 2>/dev/null
+}
+
+get_component_custom_args() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    local args
+    args=$(yq e ".components.${component}.custom.helmArgs // [] | .[]" "$rf" 2>/dev/null)
+    echo "$args"
+}
+
+get_component_helm_args() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    local args
+    args=$(yq e ".components.${component}.helmArgs // [] | .[]" "$rf" 2>/dev/null)
+    echo "$args"
+}
+
 retry_command() {
   local command="$1"
   local max_retries="$2"

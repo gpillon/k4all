@@ -255,3 +255,39 @@ class K4AllInterface(KickstartModuleInterface):
     def SetIngressCiliumDedicatedIP(self, value: Str):
         self.implementation.set_ingress_cilium_dedicated_ip(value)
 
+    # --- Disk layout (attended mode) ---
+
+    @property
+    def DiskLayoutApplied(self) -> Bool:
+        return self.implementation.disk_layout_applied
+
+    @emits_properties_changed
+    def SetDiskLayoutApplied(self, applied: Bool):
+        self.implementation.set_disk_layout_applied(applied)
+
+    @property
+    def DiskLayoutKickstart(self) -> Str:
+        return self.implementation.disk_layout_kickstart
+
+    @emits_properties_changed
+    def SetDiskLayoutKickstart(self, ks: Str):
+        self.implementation.set_disk_layout_kickstart(ks)
+
+    # --- Backup/restore ---
+
+    @property
+    def BackupArchivePath(self) -> Str:
+        return self.implementation.backup_archive_path
+
+    @emits_properties_changed
+    def SetBackupArchivePath(self, path: Str):
+        self.implementation.set_backup_archive_path(path)
+
+    @property
+    def RestoreEnabled(self) -> Bool:
+        return self.implementation.restore_enabled
+
+    @emits_properties_changed
+    def SetRestoreEnabled(self, enabled: Bool):
+        self.implementation.set_restore_enabled(enabled)
+

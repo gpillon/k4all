@@ -5,6 +5,8 @@
 """K4All configuration spoke for Anaconda's graphical interface."""
 
 import logging
+import os
+import subprocess
 
 from pyanaconda.ui.gui.spokes import NormalSpoke
 from pyanaconda.ui.common import FirstbootSpokeMixIn
@@ -80,6 +82,36 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalSpoke):
         self._ingress_default_combo = self.builder.get_object("ingressDefaultCombo")
         self._ingress_l2_info = self.builder.get_object("ingressL2InfoLabel")
 
+        # Disk layout widgets
+        self._disk_layout_frame = self.builder.get_object("diskLayoutFrame")
+        self._disk_target_combo = self.builder.get_object("diskTargetCombo")
+        self._apply_disk_button = self.builder.get_object("applyDiskLayoutButton")
+        self._disk_status_label = self.builder.get_object("diskLayoutStatusLabel")
+        self._disk_layout_applied = False
+
+        # Backup/restore widgets
+        self._backup_frame = self.builder.get_object("backupRestoreFrame")
+        self._scan_backups_button = self.builder.get_object("scanBackupsButton")
+        self._backup_archive_combo = self.builder.get_object("backupArchiveCombo")
+        self._restore_check = self.builder.get_object("restoreEnableCheck")
+        self._backup_details_label = self.builder.get_object("backupDetailsLabel")
+        self._found_backups = []
+
+        if self._scan_backups_button:
+            self._scan_backups_button.connect("clicked", self._on_scan_backups)
+        if self._backup_archive_combo:
+            self._backup_archive_combo.connect("changed", self._on_backup_selected)
+        if self._restore_check:
+            self._restore_check.connect("toggled", self._on_restore_toggled)
+
+        if self._disk_target_combo:
+            self._populate_disk_list()
+        if self._apply_disk_button:
+            self._apply_disk_button.connect("clicked", self._on_apply_disk_layout)
+
+        # Auto-scan for backups on initialize
+        self._scan_for_backups()
+
         if self._role_combo:
             self._role_combo.connect("changed", self._on_role_changed)
         if self._ha_combo:
@@ -107,6 +139,193 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalSpoke):
     def _current_ha(self):
         ha_map = {0: "none", 1: "keepalived", 2: "kubevip"}
         return ha_map.get(self._ha_combo.get_active(), "none") if self._ha_combo else "none"
+
+    # --- Disk layout helpers ---
+
+    def _populate_disk_list(self):
+        """Populate the disk target combo with available disks."""
+        if not self._disk_target_combo:
+            return
+        self._disk_target_combo.remove_all()
+        try:
+            result = subprocess.run(
+                ["lsblk", "-ndo", "NAME,SIZE,TYPE,MODEL"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split("\n"):
+                    parts = line.split(None, 3)
+                    if len(parts) >= 3 and parts[2] == "disk":
+                        name = parts[0]
+                        size = parts[1]
+                        model = parts[3] if len(parts) > 3 else ""
+                        label = f"/dev/{name} ({size})"
+                        if model:
+                            label += f" - {model}"
+                        self._disk_target_combo.append_text(label)
+                if self._disk_target_combo.get_model().iter_n_children(None) > 0:
+                    self._disk_target_combo.set_active(0)
+        except Exception:
+            log.warning("Failed to list disks", exc_info=True)
+
+    def _on_apply_disk_layout(self, button):
+        """Apply the K4All recommended partition layout via kickstart storage commands.
+
+        This writes a partition include file that Anaconda's Storage module will pick up,
+        or directly configures the auto-partitioning through D-Bus.
+        """
+        if not self._disk_target_combo:
+            return
+
+        active = self._disk_target_combo.get_active()
+        if active < 0:
+            if self._disk_status_label:
+                self._disk_status_label.set_text("Please select a target disk first")
+            return
+
+        label = self._disk_target_combo.get_active_text()
+        disk_dev = label.split()[0]  # e.g. "/dev/sda"
+        disk_name = disk_dev.replace("/dev/", "")
+
+        try:
+            result = subprocess.run(
+                ["lsblk", "-ndb", "-o", "SIZE", disk_dev],
+                capture_output=True, text=True, timeout=10
+            )
+            disk_bytes = int(result.stdout.strip())
+            disk_mb = disk_bytes // (1024 * 1024)
+        except Exception:
+            disk_mb = 100000  # fallback 100GB
+
+        boot_mb = 1024
+        efi_mb = 600
+        reserved = boot_mb + efi_mb
+        usable = disk_mb - reserved
+        os_mb = usable * 20 // 100
+        os_mb = max(30000, min(os_mb, 200000))
+        swap_mb = 4000
+        root_mb = os_mb - swap_mb
+
+        ks_commands = (
+            f"bootloader --location=mbr --boot-drive={disk_name}\n"
+            f"clearpart --all --initlabel --disklabel=gpt --drives={disk_name}\n"
+            f"part /boot --fstype=xfs --size={boot_mb} --ondisk={disk_name}\n"
+            f"part /boot/efi --fstype=efi --size={efi_mb} --ondisk={disk_name}\n"
+            f"part pv.01 --size={os_mb} --ondisk={disk_name}\n"
+            f"part pv.02 --size=1 --grow --ondisk={disk_name}\n"
+            f"volgroup rootvg pv.01\n"
+            f"logvol / --vgname=rootvg --fstype=xfs --size={root_mb} --name=rootlv\n"
+            f"logvol swap --vgname=rootvg --size={swap_mb} --name=swaplv\n"
+            f"volgroup vg_data pv.02\n"
+            f"logvol none --vgname=vg_data --size=1 --grow --thinpool --name=thin-pool\n"
+        )
+
+        try:
+            ks_path = "/tmp/k4all-disk-layout.cfg"
+            with open(ks_path, "w") as f:
+                f.write(ks_commands)
+
+            self._disk_layout_applied = True
+            if self._disk_status_label:
+                self._disk_status_label.set_text(
+                    f"K4All layout applied to {disk_dev}: "
+                    f"rootvg={root_mb}MB + {swap_mb}MB swap, vg_data=remaining. "
+                    f"Verify in the Storage spoke before installing."
+                )
+            if self._k4all_module:
+                self._k4all_module.SetDiskLayoutApplied(True)
+                self._k4all_module.SetDiskLayoutKickstart(ks_commands)
+
+            log.info("K4All disk layout written to %s for disk %s", ks_path, disk_dev)
+        except Exception:
+            log.error("Failed to apply disk layout", exc_info=True)
+            if self._disk_status_label:
+                self._disk_status_label.set_text("Error applying disk layout!")
+
+    # --- Backup/restore helpers ---
+
+    def _scan_for_backups(self):
+        """Scan mounted media and disks for K4All backup archives."""
+        import json as _json
+        import tarfile
+
+        self._found_backups = []
+        search_paths = ["/run/media", "/mnt", "/tmp"]
+
+        for base_dir in search_paths:
+            if not os.path.isdir(base_dir):
+                continue
+            try:
+                for root, dirs, files in os.walk(base_dir):
+                    if root.count(os.sep) - base_dir.count(os.sep) > 3:
+                        continue
+                    for f in files:
+                        if f.startswith("k4all-backup-") and f.endswith(".tar.gz"):
+                            full_path = os.path.join(root, f)
+                            try:
+                                with tarfile.open(full_path, "r:gz") as tf:
+                                    info_member = tf.getmember("metadata/backup-info.json")
+                                    info_file = tf.extractfile(info_member)
+                                    if info_file:
+                                        info = _json.loads(info_file.read())
+                                        if info.get("marker") == "K4ALL_BACKUP_V2":
+                                            self._found_backups.append({
+                                                "path": full_path,
+                                                "info": info
+                                            })
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+        if self._backup_archive_combo:
+            self._backup_archive_combo.remove_all()
+            if self._found_backups:
+                for backup in self._found_backups:
+                    info = backup["info"]
+                    label = (
+                        f"{info.get('hostname', '?')} "
+                        f"({info.get('node_type', '?')}) — "
+                        f"{info.get('timestamp', '?')} "
+                        f"[K4All {info.get('k4all_version', '?')}]"
+                    )
+                    self._backup_archive_combo.append_text(label)
+                self._backup_archive_combo.set_active(0)
+
+        self._update_backup_details()
+
+    def _on_scan_backups(self, button):
+        self._scan_for_backups()
+
+    def _on_backup_selected(self, combo):
+        self._update_backup_details()
+
+    def _on_restore_toggled(self, check):
+        pass
+
+    def _update_backup_details(self):
+        if not self._backup_details_label:
+            return
+        if not self._found_backups:
+            self._backup_details_label.set_text(
+                "No K4All backups found. Attach a USB drive or mount a disk with a backup archive and click 'Scan for Backups'."
+            )
+            if self._restore_check:
+                self._restore_check.set_sensitive(False)
+            return
+
+        if self._restore_check:
+            self._restore_check.set_sensitive(True)
+
+        idx = self._backup_archive_combo.get_active() if self._backup_archive_combo else -1
+        if 0 <= idx < len(self._found_backups):
+            info = self._found_backups[idx]["info"]
+            path = self._found_backups[idx]["path"]
+            self._backup_details_label.set_text(
+                f"Found {len(self._found_backups)} backup(s). "
+                f"Selected: {info.get('hostname')} ({info.get('node_type')}) from {info.get('timestamp')}. "
+                f"Path: {path}"
+            )
 
     # --- Signal handlers ---
 
@@ -334,6 +553,14 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalSpoke):
                 self._k4all_module.SetIngressNginxDedicatedIP(self._ingress_nginx_ip.get_text().strip())
             if self._ingress_cilium_ip:
                 self._k4all_module.SetIngressCiliumDedicatedIP(self._ingress_cilium_ip.get_text().strip())
+
+            # Backup/restore
+            restore_on = self._restore_check.get_active() if self._restore_check else False
+            self._k4all_module.SetRestoreEnabled(restore_on)
+            if restore_on and self._found_backups:
+                idx = self._backup_archive_combo.get_active() if self._backup_archive_combo else -1
+                if 0 <= idx < len(self._found_backups):
+                    self._k4all_module.SetBackupArchivePath(self._found_backups[idx]["path"])
         except Exception:
             log.error("K4All spoke: error during apply", exc_info=True)
 

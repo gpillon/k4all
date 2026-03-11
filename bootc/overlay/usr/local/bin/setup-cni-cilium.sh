@@ -6,11 +6,13 @@ if [ -f "/opt/k4all/cilium-setup.done" ]; then
   exit 0
 fi
 
-CILIUM_VERSION="1.19.1"
 KUBECONFIG=/root/.kube/config
 export HOME=/root/
 
 source /opt/k4all/bin/control-plane-utils
+
+CILIUM_VERSION=$(get_component_version cilium)
+GATEWAY_API_VERSION=$(get_component_version gateway-api)
 
 POD_NET=$(jq -r '.cluster.podNetwork // "10.100.0.1/18"' "$K4ALL_CONFIG_FILE")
 NGINX_DEDICATED_IP=$(jq -r '.ingress.nginx.dedicatedIP // ""' "$K4ALL_CONFIG_FILE")
@@ -45,9 +47,9 @@ CILIUM_ARGS+=(--set devices="$DEVICES")
 
 GATEWAY_API_ENABLED=$(jq -r '.cni.cilium.gatewayApi // "false"' "$K4ALL_CONFIG_FILE")
 if [ "$GATEWAY_API_ENABLED" = "true" ]; then
-  kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml || true
+  kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml || true
   kubectl --kubeconfig=/etc/kubernetes/admin.conf apply --server-side \
-    -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
+    -f https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml
 
   #to solve the issue with the tlsroutes crd
   kubectl --kubeconfig=/etc/kubernetes/admin.conf patch crd tlsroutes.gateway.networking.k8s.io --type='json' -p='[{"op": "replace", "path": "/spec/versions/1/served", "value": true}]'
@@ -94,9 +96,11 @@ else
 fi
 
 # Install cilium CNI
-helm upgrade --install cilium oci://quay.io/cilium/charts/cilium \
+CILIUM_REPO=$(get_component_repo cilium)
+CILIUM_NS=$(get_component_namespace cilium)
+helm upgrade --install cilium "oci://${CILIUM_REPO}" \
   --kubeconfig=/etc/kubernetes/admin.conf \
-  --namespace kube-system --version $CILIUM_VERSION \
+  --namespace "${CILIUM_NS}" --version "${CILIUM_VERSION}" --create-namespace \
   "${CILIUM_ARGS[@]}"
 
 # this is to avoid the issue with the CRDs not being ready in next steps

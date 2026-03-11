@@ -16,6 +16,7 @@ if [ -f "/opt/k4all/setup-ph3.done" ]; then
 fi
 
 source /var/opt/k4all/bin/control-plane-utils
+source /usr/local/bin/k4all-utils
 
 function setup_k8s_for_vip()  {
   
@@ -40,7 +41,10 @@ function setup_k8s_for_vip()  {
 function setup_for_kubevip() {
   setup_k8s_for_vip
 
-  KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
+  KVVERSION=$(get_component_version kube-vip)
+  if [ -z "$KVVERSION" ] || [ "$KVVERSION" = "null" ] || [ "$KVVERSION" = "latest" ]; then
+    KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
+  fi
 
   echo "
 apiVersion: v1

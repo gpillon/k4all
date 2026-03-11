@@ -39,6 +39,14 @@ class K4All(KickstartService):
         # Full configuration dict
         self._config = copy.deepcopy(DEFAULT_CONFIG)
         
+        # Disk layout (attended mode)
+        self._disk_layout_applied = False
+        self._disk_layout_kickstart = ""
+        
+        # Backup/restore
+        self._backup_archive_path = ""
+        self._restore_enabled = False
+        
         # Signals for property changes
         self.role_changed = Signal()
         self.config_changed = Signal()
@@ -273,6 +281,40 @@ class K4All(KickstartService):
         self._ingress().setdefault("cilium", {})["dedicatedIP"] = value
         self.config_changed.emit()
 
+    # --- Disk layout (attended mode) ---
+
+    @property
+    def disk_layout_applied(self):
+        return self._disk_layout_applied
+
+    def set_disk_layout_applied(self, applied):
+        self._disk_layout_applied = applied
+
+    @property
+    def disk_layout_kickstart(self):
+        return self._disk_layout_kickstart
+
+    def set_disk_layout_kickstart(self, ks):
+        self._disk_layout_kickstart = ks
+
+    # --- Backup/restore ---
+
+    @property
+    def backup_archive_path(self):
+        return self._backup_archive_path
+
+    def set_backup_archive_path(self, path):
+        self._backup_archive_path = path
+        self.config_changed.emit()
+
+    @property
+    def restore_enabled(self):
+        return self._restore_enabled
+
+    def set_restore_enabled(self, enabled):
+        self._restore_enabled = enabled
+        self.config_changed.emit()
+
     def configure_with_tasks(self):
         """Return configuration tasks (run at start of installation)."""
         task = K4AllConfigurationTask()
@@ -283,7 +325,9 @@ class K4All(KickstartService):
         task = K4AllInstallationTask(
             sysroot=conf.target.system_root,
             role=self._role,
-            config=self._config
+            config=self._config,
+            backup_archive_path=self._backup_archive_path,
+            restore_enabled=self._restore_enabled
         )
         return [task]
 

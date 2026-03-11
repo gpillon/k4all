@@ -4,7 +4,7 @@
 # The actual cluster configuration is done at install time via Anaconda addon or at first boot.
 
 #FROM quay.io/centos-bootc/centos-bootc:stream9
-FROM quay.io/fedora/fedora-bootc:43
+FROM quay.io/fedora/fedora-bootc-minimal:43
 
 # ============================================================================
 # REPOS
@@ -68,6 +68,8 @@ COPY overlay/usr/local/share/ /usr/local/share/
 
 # Default cluster config (will be overwritten by Anaconda addon or first-boot)
 COPY overlay/etc/k4all-config.json.default /usr/local/share/default-cluster-config.json
+
+# k4all-release.yaml is already in overlay/usr/local/share/ (copied above)
 
 # ============================================================================
 # SYSTEMD UNITS

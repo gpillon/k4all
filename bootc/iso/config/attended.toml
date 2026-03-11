@@ -1,7 +1,10 @@
 # K4All bootc-image-builder config — Attended (Interactive) Install
 # Builds an anaconda-iso with full Anaconda GUI.
 # The K4All addon spoke will be visible for interactive configuration.
-# Storage is NOT preconfigured — user MUST use the Storage spoke.
+# Storage is NOT preconfigured — the user configures storage via the Storage spoke
+# or uses the K4All recommended layout button in the K4All spoke.
+# IMPORTANT: No destructive disk operations in %pre — the disk is safe until
+# the user explicitly configures storage and begins installation.
 
 [customizations.iso]
 volume_id = "K4all"
@@ -24,32 +27,6 @@ services --enabled=sshd
 reboot --eject
 
 %addon com_k4all_installer --cni=calico --ha=none
-%end
-
-zerombr
-clearpart --all --initlabel --disklabel=gpt
-
-part /boot/efi --fstype=efi  --size=600
-part /boot     --fstype=xfs  --size=1024
-part pv.01     --size=51200
-part pv.02     --size=1 --grow
-
-volgroup rootvg pv.01
-logvol /    --vgname=rootvg --size=1 --grow --fstype=xfs --name=rootlv
-
-volgroup vg_data pv.02
-logvol none --vgname=vg_data --size=1 --grow --thinpool --name=thin-pool
-
-%pre --interpreter=/bin/bash --log=/tmp/pre.log
-vgchange -an 2>/dev/null || true
-for vg in $(vgs --noheadings -o vg_name 2>/dev/null | tr -d ' '); do
-    vgremove -f "$vg" 2>/dev/null || true
-done
-for pv in $(pvs --noheadings -o pv_name 2>/dev/null | tr -d ' '); do
-    pvremove -ff "$pv" 2>/dev/null || true
-done
-DISK=$(lsblk -ndo NAME,TYPE | awk '/disk/{print $1; exit}')
-wipefs -af /dev/$DISK 2>/dev/null || true
 %end
 
 %post --nochroot

@@ -28,6 +28,12 @@ if [ ! -f /etc/k4all-config.json ]; then
     fi
 fi
 
+RELEASE_MANIFEST="/usr/local/share/k4all-release.yaml"
+if [ ! -f /etc/k4all-release.yaml ] && [ -f "$RELEASE_MANIFEST" ]; then
+    echo "Copying base release manifest to /etc/k4all-release.yaml"
+    cp "$RELEASE_MANIFEST" /etc/k4all-release.yaml
+fi
+
 mkdir -p /var/opt/k4all
 mkdir -p /var/home/core/.kube
 mkdir -p /var/roothome/.kube

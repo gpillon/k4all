@@ -15,4 +15,6 @@ bootc/tests/__pycache__/
 
 k4all-anaconda-addon/k4all_addon_updates.img
 k4all-anaconda-addon/tests/__pycache__/
+k4all-anaconda-addon/com_k4all_installer/__pycache__/
+k4all-anaconda-addon/com_k4all_installer/service/__pycache__/
 k4all-anaconda-addon/test-results.xml

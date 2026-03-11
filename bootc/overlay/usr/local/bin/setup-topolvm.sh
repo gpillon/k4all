@@ -7,24 +7,38 @@ h="helm --kubeconfig=/etc/kubernetes/admin.conf"
 KUBECONFIG=/root/.kube/config
 HOME=/root/
 
+source /usr/local/bin/k4all-utils
+
 # Controlla se il file di stato esiste
 if [ -f "/opt/k4all/topolvm-setup.done" ]; then
   echo "TopoLVM setup already done. Exiting."
   exit 0
 fi
+
+TOPOLVM_VERSION=$(get_component_version topolvm)
+TOPOLVM_REPO=$(get_component_repo topolvm)
+TOPOLVM_CHART=$(get_component_chart topolvm)
+TOPOLVM_NS=$(get_component_namespace topolvm)
+
 # Deploy TopoLVM
-$h repo add topolvm https://topolvm.github.io/topolvm
+$h repo add k4all-topolvm "${TOPOLVM_REPO}"
 $h repo update
 
-$k apply -f <(echo 'apiVersion: v1
+$k apply -f <(echo "apiVersion: v1
 kind: Namespace
 metadata:
-  name: topolvm-system')
+  name: ${TOPOLVM_NS}")
 
-$k label namespace topolvm-system topolvm.io/webhook=ignore
+$k label namespace "${TOPOLVM_NS}" topolvm.io/webhook=ignore
 $k label namespace kube-system topolvm.io/webhook=ignore
 
-$h upgrade --install --create-namespace --namespace=topolvm-system topolvm topolvm/topolvm --set cert-manager.enabled=false -f /usr/local/share/lvm-values.yaml
+TOPOLVM_HELM_ARGS=()
+if [ -n "$TOPOLVM_VERSION" ] && [ "$TOPOLVM_VERSION" != "null" ]; then
+  TOPOLVM_HELM_ARGS+=(--version "${TOPOLVM_VERSION}")
+fi
+
+$h upgrade --install --create-namespace --namespace="${TOPOLVM_NS}" topolvm "k4all-topolvm/${TOPOLVM_CHART}" \
+  "${TOPOLVM_HELM_ARGS[@]}" --set cert-manager.enabled=false -f /usr/local/share/lvm-values.yaml
 
 # Wait for TopoLVM deployment to complete
 while true; do

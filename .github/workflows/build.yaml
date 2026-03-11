@@ -135,11 +135,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        arch: [amd64, arm64]
+        mode: [attended, unattended-bootstrap, unattended-control, unattended-worker]
         include:
           - arch: amd64
             runner: ubuntu-latest
+            bib_arch: x86_64
           - arch: arm64
             runner: ubuntu-24.04-arm
+            bib_arch: aarch64
+          - mode: attended
+            suffix: attended
+          - mode: unattended-bootstrap
+            suffix: bootstrap
+          - mode: unattended-control
+            suffix: control
+          - mode: unattended-worker
+            suffix: worker
     runs-on: ${{ matrix.runner }}
     env:
       VERSION: ${{ needs.build-image.outputs.version }}
@@ -165,15 +177,6 @@ jobs:
           echo "${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}" | \
             sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Set platform
-        id: platform
-        run: |
-          if [ "${{ matrix.arch }}" = "amd64" ]; then
-            echo "bib_arch=x86_64" >> "$GITHUB_OUTPUT"
-          else
-            echo "bib_arch=aarch64" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Build K4All Anaconda addon
         run: |
           make -C k4all-anaconda-addon updates
@@ -189,7 +192,7 @@ jobs:
           echo "Pulling ${OCI_IMAGE}..."
           sudo podman pull "${OCI_IMAGE}"
 
-      - name: Build all ISO variants
+      - name: Build ISO (${{ matrix.mode }} / ${{ matrix.arch }})
         run: |
           OCI_IMAGE="${{ env.IMAGE_NAME }}:${{ env.VERSION }}-${{ matrix.arch }}"
           OUTPUT_DIR="$(pwd)/output"
@@ -197,69 +200,59 @@ jobs:
           RPMMD_DIR="$(pwd)/.cache/rpmmd"
           mkdir -p "$OUTPUT_DIR" "$STORE_DIR" "$RPMMD_DIR"
 
-          for MODE in attended unattended-bootstrap unattended-control unattended-worker; do
-            echo ""
-            echo "========================================"
-            echo "Building ISO: ${MODE} (${{ matrix.arch }})"
-            echo "========================================"
+          MODE="${{ matrix.mode }}"
+          SUFFIX="${{ matrix.suffix }}"
+          CONFIG="$(pwd)/bootc/iso/config/${MODE}.toml"
 
-            case "$MODE" in
-              attended)               SUFFIX="attended" ;;
-              unattended-bootstrap)   SUFFIX="bootstrap" ;;
-              unattended-control)     SUFFIX="control" ;;
-              unattended-worker)      SUFFIX="worker" ;;
-            esac
+          echo "========================================"
+          echo "Building ISO: ${MODE} (${{ matrix.arch }})"
+          echo "========================================"
 
-            CONFIG="$(pwd)/bootc/iso/config/${MODE}.toml"
+          sudo podman run --rm --privileged --pull=newer \
+            --security-opt label=type:unconfined_t \
+            -v "${CONFIG}":/config.toml:ro \
+            -v "${OUTPUT_DIR}":/output \
+            -v "${STORE_DIR}":/store \
+            -v "${RPMMD_DIR}":/rpmmd \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            quay.io/centos-bootc/bootc-image-builder:latest \
+            --type anaconda-iso \
+            --rootfs xfs \
+            --local \
+            "${OCI_IMAGE}"
 
-            sudo podman run --rm --privileged --pull=newer \
-              --security-opt label=type:unconfined_t \
-              -v "${CONFIG}":/config.toml:ro \
-              -v "${OUTPUT_DIR}":/output \
-              -v "${STORE_DIR}":/store \
-              -v "${RPMMD_DIR}":/rpmmd \
-              -v /var/lib/containers/storage:/var/lib/containers/storage \
-              quay.io/centos-bootc/bootc-image-builder:latest \
-              --type anaconda-iso \
-              --rootfs xfs \
-              --local \
-              "${OCI_IMAGE}"
+          BIB_OUT="${OUTPUT_DIR}/bootiso/install.iso"
+          FINAL="${OUTPUT_DIR}/k4all-${SUFFIX}.iso"
+          if [ -f "$BIB_OUT" ]; then
+            sudo mv "$BIB_OUT" "$FINAL"
+            sudo chown "$(id -u):$(id -g)" "$FINAL"
+            rmdir "${OUTPUT_DIR}/bootiso" 2>/dev/null || true
+          fi
 
-            BIB_OUT="${OUTPUT_DIR}/bootiso/install.iso"
-            FINAL="${OUTPUT_DIR}/k4all-${SUFFIX}.iso"
-            if [ -f "$BIB_OUT" ]; then
-              sudo mv "$BIB_OUT" "$FINAL"
-              sudo chown "$(id -u):$(id -g)" "$FINAL"
-              rmdir "${OUTPUT_DIR}/bootiso" 2>/dev/null || true
-            fi
+          ./bootc/scripts/remaster-iso.sh "$FINAL"
 
-            ./bootc/scripts/remaster-iso.sh "$FINAL"
-
-            VERSIONED="${OUTPUT_DIR}/k4all-${SUFFIX}-${{ env.VERSION }}-${{ steps.platform.outputs.bib_arch }}.iso"
-            mv "$FINAL" "$VERSIONED"
-            echo "Built: $VERSIONED ($(du -h "$VERSIONED" | cut -f1))"
-          done
+          VERSIONED="${OUTPUT_DIR}/k4all-${SUFFIX}-${{ env.VERSION }}-${{ matrix.bib_arch }}.iso"
+          mv "$FINAL" "$VERSIONED"
+          echo "Built: $VERSIONED ($(du -h "$VERSIONED" | cut -f1))"
 
           echo ""
-          echo "=== Compressing ISOs with zstd ==="
+          echo "=== Compressing ISO with zstd ==="
           MAX_SIZE=$((2000 * 1024 * 1024))
-          for iso in output/*.iso; do
-            BASE=$(basename "$iso")
-            echo "Compressing ${BASE}..."
-            zstd -T0 -12 --rm "$iso"
-            SIZE=$(stat -c%s "${iso}.zst")
-            if [ "$SIZE" -gt "$MAX_SIZE" ]; then
-              echo "  ${BASE}.zst is $(( SIZE / 1024 / 1024 ))MB — splitting into parts..."
-              split -b 1900m "${iso}.zst" "${iso}.zst.part-"
-              rm "${iso}.zst"
-            fi
-          done
+          BASE=$(basename "$VERSIONED")
+          echo "Compressing ${BASE}..."
+          zstd -T0 -12 --rm "$VERSIONED"
+          SIZE=$(stat -c%s "${VERSIONED}.zst")
+          if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+            echo "  ${BASE}.zst is $(( SIZE / 1024 / 1024 ))MB — splitting into parts..."
+            split -b 1900m "${VERSIONED}.zst" "${VERSIONED}.zst.part-"
+            rm "${VERSIONED}.zst"
+          fi
           ls -lh output/k4all-*
 
       - name: Upload ISO artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: isos-${{ matrix.arch }}
+          name: isos-${{ matrix.suffix }}-${{ matrix.arch }}
           path: output/k4all-*
           retention-days: 3
 

@@ -33,14 +33,14 @@ fi
 
 echo "Installing MetalLB for L2 announcement of dedicated IPs: ${DEDICATED_IPS[*]}"
 
-METALLB_VERSION="v0.14.5"
+METALLB_VERSION=$(get_component_version metallb)
 HOME=/root/
 
 kubectl --kubeconfig=/etc/kubernetes/admin.conf get configmap kube-proxy -n kube-system -o yaml | \
 sed -e "s/strictARP: false/strictARP: true/" | \
 kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - -n kube-system
 
-metal_lb_manifest_url="https://raw.githubusercontent.com/metallb/metallb/$METALLB_VERSION/config/manifests/metallb-native.yaml"
+metal_lb_manifest_url="https://raw.githubusercontent.com/metallb/metallb/${METALLB_VERSION}/config/manifests/metallb-native.yaml"
 
 while true; do
   if kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f $metal_lb_manifest_url; then

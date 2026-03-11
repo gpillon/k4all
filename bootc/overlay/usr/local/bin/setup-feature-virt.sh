@@ -11,8 +11,18 @@ export HOME=/root/
 
 source /usr/local/bin/k4all-utils
 
-# Install Kubevirt
-export RELEASE=$(curl https://storage.googleapis.com/kubevirt-prow/release/kubevirt/kubevirt/stable.txt)
+# Resolve kubevirt version: use manifest pinned version, fall back to latest stable
+KUBEVIRT_VERSION=$(get_component_version kubevirt)
+if [ -z "$KUBEVIRT_VERSION" ] || [ "$KUBEVIRT_VERSION" = "null" ] || [ "$KUBEVIRT_VERSION" = "latest" ]; then
+  KUBEVIRT_VERSION_URL=$(get_component_version_url kubevirt)
+  if [ -n "$KUBEVIRT_VERSION_URL" ] && [ "$KUBEVIRT_VERSION_URL" != "null" ]; then
+    KUBEVIRT_VERSION=$(curl -sL "$KUBEVIRT_VERSION_URL")
+  else
+    KUBEVIRT_VERSION=$(curl -sL https://storage.googleapis.com/kubevirt-prow/release/kubevirt/kubevirt/stable.txt)
+  fi
+fi
+export RELEASE="$KUBEVIRT_VERSION"
+
 retry_command "kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/${RELEASE}/kubevirt-operator.yaml" 10 30
 retry_command "kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/${RELEASE}/kubevirt-cr.yaml" 10 30
 kubectl -n kubevirt patch kubevirt kubevirt --type=merge --patch '{"spec":{"infra":{"replicas": 1 }}}'
@@ -39,9 +49,13 @@ elif [ "$virt_emulation" = "auto" ]; then
     fi
 fi
 
-#Install CDI
-export TAG=$(curl -s -w %{redirect_url} https://github.com/kubevirt/containerized-data-importer/releases/latest)
-export VERSION=$(echo ${TAG##*/})
+# Resolve CDI version: use manifest pinned version, fall back to latest
+CDI_VERSION=$(get_component_version cdi)
+if [ -z "$CDI_VERSION" ] || [ "$CDI_VERSION" = "null" ] || [ "$CDI_VERSION" = "latest" ]; then
+  export TAG=$(curl -s -w %{redirect_url} https://github.com/kubevirt/containerized-data-importer/releases/latest)
+  CDI_VERSION=$(echo ${TAG##*/})
+fi
+export VERSION="$CDI_VERSION"
 kubectl apply -f https://github.com/kubevirt/containerized-data-importer/releases/download/$VERSION/cdi-operator.yaml
 kubectl apply -f https://github.com/kubevirt/containerized-data-importer/releases/download/$VERSION/cdi-cr.yaml
 kubectl patch cdi cdi --patch '{"spec": {"config": {"podResourceRequirements": {"limits": {"memory": "2G"}}}}}' --type merge

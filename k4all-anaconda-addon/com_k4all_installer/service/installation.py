@@ -7,6 +7,8 @@
 import logging
 import json
 import os
+import glob
+import shutil
 import subprocess
 from os.path import normpath, join as joinpath, dirname
 from os import makedirs
@@ -42,11 +44,13 @@ class K4AllInstallationTask(Task):
     This task runs at the end of installation to write the K4All configuration.
     """
 
-    def __init__(self, sysroot, role, config):
+    def __init__(self, sysroot, role, config, backup_archive_path="", restore_enabled=False):
         super().__init__()
         self._sysroot = sysroot
         self._role = role
         self._config = config
+        self._backup_archive_path = backup_archive_path
+        self._restore_enabled = restore_enabled
 
     @property
     def name(self):
@@ -85,6 +89,10 @@ class K4AllInstallationTask(Task):
             makedirs(joinpath(self._sysroot, d), exist_ok=True)
 
         log.info("K4All configuration written successfully (role=%s)", self._role)
+
+        # Copy backup archive to restore location if restore is enabled
+        if self._restore_enabled and self._backup_archive_path:
+            self._copy_backup_for_restore()
 
         # Setup vg_data if enabled
         self._setup_vg_data()
@@ -224,4 +232,21 @@ class K4AllInstallationTask(Task):
         except Exception as e:
             log.warning("Error finding vgdata partition: %s", e)
         return None
+
+    def _copy_backup_for_restore(self):
+        """Copy the selected backup archive into the installed system's restore directory."""
+        restore_dir = joinpath(self._sysroot, "var/opt/k4all/restore")
+        makedirs(restore_dir, exist_ok=True)
+
+        src = self._backup_archive_path
+        if not os.path.isfile(src):
+            log.warning("Backup archive not found at %s", src)
+            return
+
+        dst = joinpath(restore_dir, os.path.basename(src))
+        try:
+            shutil.copy2(src, dst)
+            log.info("Backup archive copied to %s for restore at first boot", dst)
+        except Exception as e:
+            log.warning("Failed to copy backup archive: %s", e)
 

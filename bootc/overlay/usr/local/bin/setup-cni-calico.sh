@@ -6,12 +6,11 @@ if [ -f "/opt/k4all/calico-setup.done" ]; then
   exit 0
 fi
 
-CALICO_VERSION="v3.27.3"
 HOME=/root/
 
 source /usr/local/bin/k4all-utils
 
-#calico_manifest_url="https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/custom-resources.yaml"
+CALICO_VERSION=$(get_component_version calico)
 
 # Deploy the Tigera operator for Calico
 kubectl --kubeconfig=/etc/kubernetes/admin.conf create -f https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/tigera-operator.yaml || {

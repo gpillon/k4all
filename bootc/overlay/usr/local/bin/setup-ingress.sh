@@ -10,6 +10,10 @@ source /var/opt/k4all/bin/control-plane-utils
 
 HOME=/root/
 CLUSTER_IP=$(get_cluster_ip)
+NGINX_VERSION=$(get_component_version ingress-nginx)
+NGINX_REPO=$(get_component_repo ingress-nginx)
+NGINX_CHART=$(get_component_chart ingress-nginx)
+NGINX_NS=$(get_component_namespace ingress-nginx)
 CNI_TYPE=$(jq -r '.networking.cni.type // "calico"' "$K4ALL_CONFIG_FILE")
 
 NGINX_ENABLED=$(jq -r '.ingress.nginx.enabled // "true"' "$K4ALL_CONFIG_FILE")
@@ -59,9 +63,9 @@ if [ "$NGINX_ENABLED" = "true" ]; then
     HELM_ARGS+=(--set controller.hostPort.enabled=false)
   fi
 
-  helm upgrade --kubeconfig=/etc/kubernetes/admin.conf --install ingress-nginx ingress-nginx \
-    --repo https://kubernetes.github.io/ingress-nginx --version 4.14.3 \
-    --namespace ingress-nginx --create-namespace -f /usr/local/share/ingress-values.yaml --timeout 30m \
+  helm upgrade --kubeconfig=/etc/kubernetes/admin.conf --install ingress-nginx "${NGINX_CHART}" \
+    --repo "${NGINX_REPO}" --version "${NGINX_VERSION}" \
+    --namespace "${NGINX_NS}" --create-namespace -f /usr/local/share/ingress-values.yaml --timeout 30m \
     "${HELM_ARGS[@]}"
 fi
 

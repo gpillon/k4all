@@ -11,14 +11,22 @@ export HOME=/root/
 
 source /usr/local/bin/k4all-utils
 
-namespace="argocd"
-helm repo add argo https://argoproj.github.io/argo-helm
+ARGOCD_REPO=$(get_component_repo argocd)
+ARGOCD_CHART=$(get_component_chart argocd)
+ARGOCD_VERSION=$(get_component_version argocd)
+namespace=$(get_component_namespace argocd)
+
+ARGOCD_HELM_ARGS=""
+if [ -n "$ARGOCD_VERSION" ] && [ "$ARGOCD_VERSION" != "null" ]; then
+  ARGOCD_HELM_ARGS="--version ${ARGOCD_VERSION}"
+fi
+
+helm repo add k4all-argo "${ARGOCD_REPO}"
 helm repo update
 
 ARGO_JSON="server.ingress.extraHosts=[{\"name\": \"argo.$(get_fqdn)\", \"path\": \"/\"}]"
 
-# Use single quotes around the helm command to avoid early variable expansion
-retry_command "helm upgrade --install argocd argo/argo-cd --create-namespace -n $namespace -f /usr/local/share/argocd-values.yaml --set \"global.domain=argo.$(get_ip).nip.io\" --set-json '$ARGO_JSON'" 30 10 
+retry_command "helm upgrade --install argocd k4all-argo/${ARGOCD_CHART} ${ARGOCD_HELM_ARGS} --create-namespace -n $namespace -f /usr/local/share/argocd-values.yaml --set \"global.domain=argo.$(get_ip).nip.io\" --set-json '$ARGO_JSON'" 30 10
 
 # Wait for ArgoCD server to be available
 kubectl -n $namespace wait deployment/argocd-server --for condition=Available --timeout=3600s
