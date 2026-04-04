@@ -6,13 +6,13 @@ Before=fck8s-k8s-setup-ph2.service
 Before=fck8s-k8s-setup-ph3.service
 Before=fck8s-k8s-setup-init.service
 Before=kubelet.service
+After=fck8s-restore.service
 After=fck8s-first-boot.service
 After=local-fs.target
-ConditionPathExists=!/opt/k4all/restore.done
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/k4all-restore.sh
+ExecStart=/usr/local/bin/k4all-migrate-config.sh
 RemainAfterExit=yes
 
 [Install]

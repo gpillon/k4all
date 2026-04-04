@@ -6,6 +6,8 @@ alwaysApply: false
 
 # K4All Anaconda Addon Architecture
 
+Anaconda documentation: https://docs.redhat.com/it/documentation/red_hat_enterprise_linux/9/html-single/customizing_anaconda/index#architecture-of-anaconda_developing-installer-add-ons
+
 The addon lives in `k4all-anaconda-addon/com_k4all_installer/` and follows Anaconda's D-Bus addon pattern. Every feature change requires edits to **6 files** in a specific order.
 
 ## Module Map

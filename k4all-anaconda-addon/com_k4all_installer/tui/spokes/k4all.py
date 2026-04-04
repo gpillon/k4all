@@ -5,9 +5,6 @@
 """K4All configuration spoke for Anaconda's text user interface."""
 
 import logging
-import os
-import json as _json
-import tarfile
 
 from simpleline.render.prompt import Prompt
 from simpleline.render.screen import InputState
@@ -68,10 +65,6 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
         self._ingress_cilium = False
         self._ingress_cilium_ip = ""
         self._ingress_default = "nginx"
-        # Backup/restore
-        self._restore_enabled = False
-        self._found_backups = []
-        self._selected_backup_idx = -1
 
     def initialize(self):
         super().initialize()
@@ -103,10 +96,8 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
             self._ingress_cilium = self._k4all_module.IngressCiliumEnabled
             self._ingress_cilium_ip = self._k4all_module.IngressCiliumDedicatedIP
             self._ingress_default = "cilium" if self._k4all_module.IngressCiliumDefault else "nginx"
-            self._restore_enabled = self._k4all_module.RestoreEnabled
         except Exception:
             log.error("K4All TUI spoke: error during setup", exc_info=True)
-        self._scan_for_backups()
         return True
 
     def refresh(self, args=None):
@@ -206,19 +197,6 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
                 CheckboxWidget(title=_("Enable firewalld"), completed=self._firewalld),
                 callback=self._toggle_firewalld)
 
-        # Backup/restore section
-        if self._found_backups:
-            backup_desc = f"{len(self._found_backups)} backup(s) found"
-            if 0 <= self._selected_backup_idx < len(self._found_backups):
-                info = self._found_backups[self._selected_backup_idx]["info"]
-                backup_desc = f"{info.get('hostname')} ({info.get('node_type')})"
-            self._container.add(
-                EntryWidget(title=_("Backup to restore"), value=backup_desc),
-                callback=self._cycle_backup)
-            self._container.add(
-                CheckboxWidget(title=_("Restore from backup"), completed=self._restore_enabled),
-                callback=self._toggle_restore)
-
         self.window.add_with_separator(self._container)
 
     def apply(self):
@@ -249,10 +227,6 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
             is_cilium_default = self._ingress_default == "cilium"
             self._k4all_module.SetIngressNginxDefault(not is_cilium_default)
             self._k4all_module.SetIngressCiliumDefault(is_cilium_default)
-            # Backup/restore
-            self._k4all_module.SetRestoreEnabled(self._restore_enabled)
-            if self._restore_enabled and 0 <= self._selected_backup_idx < len(self._found_backups):
-                self._k4all_module.SetBackupArchivePath(self._found_backups[self._selected_backup_idx]["path"])
         except Exception:
             log.error("K4All TUI spoke: error during apply", exc_info=True)
 
@@ -411,37 +385,3 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
     def _toggle_firewalld(self, data):
         self._firewalld = not self._firewalld
 
-    def _cycle_backup(self, data):
-        if self._found_backups:
-            self._selected_backup_idx = (self._selected_backup_idx + 1) % len(self._found_backups)
-
-    def _toggle_restore(self, data):
-        self._restore_enabled = not self._restore_enabled
-
-    def _scan_for_backups(self):
-        """Scan mounted media for K4All backup archives."""
-        self._found_backups = []
-        for base_dir in ["/run/media", "/mnt", "/tmp"]:
-            if not os.path.isdir(base_dir):
-                continue
-            try:
-                for root, dirs, files in os.walk(base_dir):
-                    if root.count(os.sep) - base_dir.count(os.sep) > 3:
-                        continue
-                    for f in files:
-                        if f.startswith("k4all-backup-") and f.endswith(".tar.gz"):
-                            full_path = os.path.join(root, f)
-                            try:
-                                with tarfile.open(full_path, "r:gz") as tf:
-                                    info_member = tf.getmember("metadata/backup-info.json")
-                                    info_file = tf.extractfile(info_member)
-                                    if info_file:
-                                        info = _json.loads(info_file.read())
-                                        if info.get("marker") == "K4ALL_BACKUP_V2":
-                                            self._found_backups.append({"path": full_path, "info": info})
-                            except Exception:
-                                pass
-            except Exception:
-                pass
-        if self._found_backups:
-            self._selected_backup_idx = 0

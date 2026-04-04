@@ -2,7 +2,7 @@ apiVersion: k4all.io/v1
 kind: ReleaseManifest
 metadata:
   name: k4all
-  version: "2.0.0"
+  version: "2.0.1"
 
 # Centralized source-of-truth for all K4All component versions.
 # This file is baked into the bootc image at /usr/local/share/k4all-release.yaml.
@@ -95,7 +95,7 @@ components:
   # --- Dashboard ---
   headlamp:
     type: helm
-    version: ""
+    version: "0.40.0"
     repo: "https://kubernetes-sigs.github.io/headlamp/"
     chart: headlamp
     namespace: headlamp

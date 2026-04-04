@@ -8,7 +8,10 @@
 #              flag and skips kubeadm init (cluster is already initialized from etcd)
 #   control:   Restore PKI, configs → let auto-join rejoin the cluster
 #   worker:    Restore configs → let auto-join rejoin the cluster
+
 set -euo pipefail
+
+trap 'rc=$?; echo "[k4all-restore ERROR] line $LINENO: $BASH_COMMAND (rc=$rc)" >&2' ERR
 
 RESTORE_DIR="/var/opt/k4all/restore"
 RESTORE_DONE="/opt/k4all/restore.done"
@@ -24,8 +27,89 @@ warn() { echo -e "${YELLOW}[k4all-restore WARN]${NC} $1"; }
 err()  { echo -e "${RED}[k4all-restore ERROR]${NC} $1" >&2; }
 
 # ========================================================================
-# Helper: find a backup archive in known locations
+# Helpers
 # ========================================================================
+
+get_etcd_manifest_path() {
+    local mf
+    for mf in \
+        "$WORK_DIR/kubernetes/manifests/etcd.yaml" \
+        "/etc/kubernetes/manifests/etcd.yaml"
+    do
+        [ -f "$mf" ] && { echo "$mf"; return 0; }
+    done
+    return 1
+}
+
+get_etcd_image_from_manifest() {
+    local manifest="$1"
+    awk '/image:/ {print $2; exit}' "$manifest" 2>/dev/null
+}
+
+get_etcd_flag_from_manifest() {
+    local manifest="$1"
+    local flag="$2"
+    grep -E "^[[:space:]]*-[[:space:]]*--${flag}=" "$manifest" 2>/dev/null | \
+        head -n1 | sed -E "s/^[[:space:]]*-[[:space:]]*--${flag}=//"
+}
+
+restore_etcd_snapshot_host() {
+    local snapshot_path="$1"
+    local restore_dir="$2"
+    shift 2
+    local extra_args=("$@")
+
+    if command -v etcdutl >/dev/null 2>&1; then
+        etcdutl snapshot restore "$snapshot_path" \
+            --data-dir="$restore_dir" \
+            "${extra_args[@]}"
+        return $?
+    fi
+
+    if command -v etcdctl >/dev/null 2>&1; then
+        ETCDCTL_API=3 etcdctl snapshot restore "$snapshot_path" \
+            --data-dir="$restore_dir" \
+            "${extra_args[@]}"
+        return $?
+    fi
+
+    return 127
+}
+
+restore_etcd_snapshot_podman() {
+    local snapshot_path="$1"
+    local restore_dir="$2"
+    local etcd_image="$3"
+    shift 3
+    local extra_args=("$@")
+
+    mkdir -p "$restore_dir"
+
+    local snapshot_dir snapshot_file
+    snapshot_dir="$(dirname "$snapshot_path")"
+    snapshot_file="$(basename "$snapshot_path")"
+
+    if podman run --rm \
+        --entrypoint /usr/local/bin/etcdutl \
+        -v "$snapshot_dir:/backup:ro,Z" \
+        -v "$restore_dir:/restore:Z" \
+        "$etcd_image" \
+        snapshot restore "/backup/$snapshot_file" \
+        --data-dir=/restore \
+        "${extra_args[@]}"; then
+        return 0
+    fi
+
+    podman run --rm \
+        --entrypoint /usr/local/bin/etcdctl \
+        -v "$snapshot_dir:/backup:ro,Z" \
+        -v "$restore_dir:/restore:Z" \
+        "$etcd_image" \
+        snapshot restore "/backup/$snapshot_file" \
+        --data-dir=/restore \
+        "${extra_args[@]}"
+}
+
 find_backup_archive() {
     local search_paths=(
         "$RESTORE_DIR"
@@ -39,7 +123,7 @@ find_backup_archive() {
             local found
             found=$(find "$dir" -maxdepth 3 -name 'k4all-backup-*.tar.gz' -type f 2>/dev/null | sort -r | head -1)
             if [ -n "$found" ]; then
-                if tar -tzf "$found" metadata/backup-info.json &>/dev/null; then
+                if tar -tzf "$found" 2>/dev/null | grep -Eq '(^|/)metadata/backup-info\.json$'; then
                     echo "$found"
                     return 0
                 fi
@@ -49,71 +133,141 @@ find_backup_archive() {
     return 1
 }
 
+restore_selinux_contexts() {
+    if ! command -v restorecon >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local paths=(
+        /etc/kubernetes
+        /var/lib/kubelet
+        /etc/NetworkManager/system-connections
+        /etc/keepalived
+        /root
+        /etc/login_data
+        /var/lib/etcd
+    )
+
+    local existing=()
+    local p
+    for p in "${paths[@]}"; do
+        [ -e "$p" ] && existing+=("$p")
+    done
+
+    [ ${#existing[@]} -gt 0 ] && restorecon -RF "${existing[@]}" 2>/dev/null || true
+}
+
 # ========================================================================
 # Node-type-specific restore functions
 # ========================================================================
+
 restore_bootstrap() {
     log "Performing BOOTSTRAP restore (cluster restore)..."
 
-    if [ -f "$WORK_DIR/etcd/snapshot.db" ]; then
-        log "Restoring etcd from snapshot..."
-        mkdir -p /var/lib/etcd-restore
+    local restore_dir="/var/lib/etcd-restore"
+    local final_dir="/var/lib/etcd"
+    local manifest=""
+    local etcd_image=""
+    local restored_etcd=0
+    local extra_args=()
 
-        local etcd_args=(
-            --data-dir=/var/lib/etcd-restore
-            --skip-hash-check=true
-        )
+    log "  WORK_DIR=${WORK_DIR:-<unset>}"
 
-        if command -v etcdutl &>/dev/null; then
-            etcdutl snapshot restore "$WORK_DIR/etcd/snapshot.db" "${etcd_args[@]}"
-        elif command -v etcdctl &>/dev/null; then
-            ETCDCTL_API=3 etcdctl snapshot restore "$WORK_DIR/etcd/snapshot.db" "${etcd_args[@]}"
-        else
-            warn "Neither etcdutl nor etcdctl available, attempting raw copy"
-            if [ -d "$WORK_DIR/etcd/data" ]; then
-                cp -a "$WORK_DIR/etcd/data" /var/lib/etcd-restore
-            fi
-        fi
-
-        if [ -d /var/lib/etcd-restore ] && [ "$(ls -A /var/lib/etcd-restore 2>/dev/null)" ]; then
-            rm -rf /var/lib/etcd
-            mv /var/lib/etcd-restore /var/lib/etcd
-            log "  + etcd data restored"
-        fi
-    elif [ -d "$WORK_DIR/etcd/data" ]; then
-        log "Restoring etcd from raw data copy..."
-        rm -rf /var/lib/etcd
-        cp -a "$WORK_DIR/etcd/data" /var/lib/etcd
-        log "  + etcd data directory restored"
-    else
-        warn "No etcd snapshot or data found in backup"
+    if [ -z "${WORK_DIR:-}" ] || [ ! -d "$WORK_DIR" ]; then
+        err "WORK_DIR is not set or does not exist"
+        return 1
     fi
 
-    # Restore static pod manifests
+    ls -lah "$WORK_DIR" 2>&1 | sed 's/^/[k4all-restore]   /' || true
+    ls -lah "$WORK_DIR/etcd" 2>&1 | sed 's/^/[k4all-restore]   /' || true
+
+    rm -rf "$restore_dir"
+    mkdir -p "$restore_dir"
+
+    manifest="$(get_etcd_manifest_path || true)"
+    if [ -n "$manifest" ]; then
+        local name initial_cluster initial_advertise_peer_urls initial_cluster_token
+
+        etcd_image="$(get_etcd_image_from_manifest "$manifest" || true)"
+        [ -n "$etcd_image" ] && log "  Detected etcd image from manifest: $etcd_image"
+
+        name="$(get_etcd_flag_from_manifest "$manifest" "name" || true)"
+        initial_cluster="$(get_etcd_flag_from_manifest "$manifest" "initial-cluster" || true)"
+        initial_advertise_peer_urls="$(get_etcd_flag_from_manifest "$manifest" "initial-advertise-peer-urls" || true)"
+        initial_cluster_token="$(get_etcd_flag_from_manifest "$manifest" "initial-cluster-token" || true)"
+
+        [ -n "$name" ] && extra_args+=("--name=$name")
+        [ -n "$initial_cluster" ] && extra_args+=("--initial-cluster=$initial_cluster")
+        [ -n "$initial_advertise_peer_urls" ] && extra_args+=("--initial-advertise-peer-urls=$initial_advertise_peer_urls")
+        [ -n "$initial_cluster_token" ] && extra_args+=("--initial-cluster-token=$initial_cluster_token")
+    fi
+
+    if [ -f "$WORK_DIR/etcd/snapshot.db" ]; then
+        log "Restoring etcd from snapshot..."
+
+        if restore_etcd_snapshot_host "$WORK_DIR/etcd/snapshot.db" "$restore_dir" "${extra_args[@]}"; then
+            log "  + etcd snapshot restored using host tools"
+        elif command -v podman >/dev/null 2>&1 && [ -n "$etcd_image" ]; then
+            log "  Host etcdutl/etcdctl unavailable or failed, trying podman image: $etcd_image"
+            restore_etcd_snapshot_podman "$WORK_DIR/etcd/snapshot.db" "$restore_dir" "$etcd_image" "${extra_args[@]}"
+            log "  + etcd snapshot restored using podman"
+        else
+            err "Cannot restore etcd snapshot: no working host restore tool and no usable podman fallback"
+            return 1
+        fi
+
+        if [ -d "$restore_dir" ] && [ "$(ls -A "$restore_dir" 2>/dev/null)" ]; then
+            rm -rf "$final_dir"
+            mv "$restore_dir" "$final_dir"
+            restored_etcd=1
+            log "  + etcd data restored"
+        else
+            err "etcd snapshot restore produced an empty restore directory"
+            return 1
+        fi
+
+    elif [ -d "$WORK_DIR/etcd/data" ]; then
+        log "Restoring etcd from raw data copy..."
+        rm -rf "$final_dir"
+        mkdir -p "$final_dir"
+        cp -a "$WORK_DIR/etcd/data/." "$final_dir/"
+        restored_etcd=1
+        log "  + etcd data directory restored"
+    else
+        err "No etcd snapshot or raw data found in backup"
+        return 1
+    fi
+
+    if [ "$restored_etcd" -ne 1 ]; then
+        err "etcd was not restored"
+        return 1
+    fi
+
     if [ -d "$WORK_DIR/kubernetes/manifests" ]; then
         mkdir -p /etc/kubernetes/manifests
-        cp -a "$WORK_DIR/kubernetes/manifests/"* /etc/kubernetes/manifests/ 2>/dev/null || true
+        cp -a "$WORK_DIR/kubernetes/manifests/." /etc/kubernetes/manifests/
         log "  + static pod manifests restored"
     fi
 
-    # Restore kubeconfig files
+    mkdir -p /etc/kubernetes
     for f in admin.conf kubelet.conf controller-manager.conf scheduler.conf super-admin.conf; do
         if [ -f "$WORK_DIR/kubernetes/$f" ]; then
-            cp "$WORK_DIR/kubernetes/$f" /etc/kubernetes/
+            cp -f "$WORK_DIR/kubernetes/$f" /etc/kubernetes/
             log "  + /etc/kubernetes/$f"
         fi
     done
 
-    # Signal the init service to skip kubeadm init
+    mkdir -p /opt/k4all
     touch /opt/k4all/restore-bootstrap-cluster.flag
     log "  Bootstrap restore complete. Init service will detect the restore flag."
 }
 
 restore_control() {
     log "Performing CONTROL node restore..."
+    mkdir -p /etc/kubernetes
     for f in admin.conf kubelet.conf controller-manager.conf scheduler.conf; do
         if [ -f "$WORK_DIR/kubernetes/$f" ]; then
-            cp "$WORK_DIR/kubernetes/$f" /etc/kubernetes/
+            cp -f "$WORK_DIR/kubernetes/$f" /etc/kubernetes/
             log "  + /etc/kubernetes/$f"
         fi
     done
@@ -124,7 +278,7 @@ restore_worker() {
     log "Performing WORKER node restore..."
     if [ -f "$WORK_DIR/kubernetes/kubelet.conf" ]; then
         mkdir -p /etc/kubernetes
-        cp "$WORK_DIR/kubernetes/kubelet.conf" /etc/kubernetes/kubelet.conf
+        cp -f "$WORK_DIR/kubernetes/kubelet.conf" /etc/kubernetes/kubelet.conf
         log "  + /etc/kubernetes/kubelet.conf"
     fi
     log "  Worker node restore complete. Auto-join will handle cluster rejoin."
@@ -138,7 +292,7 @@ if [ -f "$RESTORE_DONE" ]; then
     exit 0
 fi
 
-ARCHIVE=$(find_backup_archive) || true
+ARCHIVE="$(find_backup_archive || true)"
 
 if [ -z "$ARCHIVE" ]; then
     log "No backup archive found — fresh installation, skipping restore."
@@ -149,21 +303,20 @@ fi
 
 log "Found backup archive: $ARCHIVE"
 
-WORK_DIR=$(mktemp -d /tmp/k4all-restore.XXXXXX)
+WORK_DIR="$(mktemp -d /tmp/k4all-restore.XXXXXX)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 tar -xzf "$ARCHIVE" -C "$WORK_DIR"
 
-# Validate backup marker
-BACKUP_MARKER_VAL=$(jq -r '.marker // ""' "$WORK_DIR/metadata/backup-info.json" 2>/dev/null || echo "")
+BACKUP_MARKER_VAL="$(jq -r '.marker // ""' "$WORK_DIR/metadata/backup-info.json" 2>/dev/null || echo "")"
 if [ "$BACKUP_MARKER_VAL" != "$RESTORE_MARKER" ]; then
     err "Invalid backup archive (marker mismatch: expected $RESTORE_MARKER, got $BACKUP_MARKER_VAL)"
     exit 1
 fi
 
-BACKUP_NODE_TYPE=$(jq -r '.node_type' "$WORK_DIR/metadata/backup-info.json")
-BACKUP_HOSTNAME=$(jq -r '.hostname' "$WORK_DIR/metadata/backup-info.json")
-BACKUP_VERSION=$(jq -r '.k4all_version' "$WORK_DIR/metadata/backup-info.json")
+BACKUP_NODE_TYPE="$(jq -r '.node_type' "$WORK_DIR/metadata/backup-info.json")"
+BACKUP_HOSTNAME="$(jq -r '.hostname' "$WORK_DIR/metadata/backup-info.json")"
+BACKUP_VERSION="$(jq -r '.k4all_version' "$WORK_DIR/metadata/backup-info.json")"
 
 log "Restoring backup from: ${BACKUP_HOSTNAME} (${BACKUP_NODE_TYPE} node, K4All ${BACKUP_VERSION})"
 
@@ -172,13 +325,13 @@ log "Restoring K4All configuration files..."
 if [ -d "$WORK_DIR/config" ]; then
     for f in k4all-config.json node-type k4all-release.yaml k8s-config.yaml; do
         if [ -f "$WORK_DIR/config/$f" ]; then
-            cp "$WORK_DIR/config/$f" "/etc/$f"
+            cp -f "$WORK_DIR/config/$f" "/etc/$f"
             log "  + /etc/$f"
         fi
     done
 
     if [ -f "$WORK_DIR/config/hostname" ]; then
-        cp "$WORK_DIR/config/hostname" /etc/hostname
+        cp -f "$WORK_DIR/config/hostname" /etc/hostname
         hostnamectl set-hostname "$(cat /etc/hostname)" 2>/dev/null || true
         log "  + hostname restored: $(cat /etc/hostname)"
     fi
@@ -188,12 +341,13 @@ fi
 if [ -d "$WORK_DIR/network/nm-connections" ]; then
     log "Restoring NetworkManager connections..."
     mkdir -p /etc/NetworkManager/system-connections
-    cp -a "$WORK_DIR/network/nm-connections/"* /etc/NetworkManager/system-connections/ 2>/dev/null || true
+    cp -a "$WORK_DIR/network/nm-connections/." /etc/NetworkManager/system-connections/
     log "  + NetworkManager connections"
 fi
+
 if [ -f "$WORK_DIR/network/keepalived.conf" ]; then
     mkdir -p /etc/keepalived
-    cp "$WORK_DIR/network/keepalived.conf" /etc/keepalived/keepalived.conf
+    cp -f "$WORK_DIR/network/keepalived.conf" /etc/keepalived/keepalived.conf
     log "  + keepalived config"
 fi
 
@@ -201,7 +355,8 @@ fi
 if [ -d "$WORK_DIR/kubernetes/pki" ]; then
     log "Restoring Kubernetes PKI certificates..."
     mkdir -p /etc/kubernetes
-    cp -a "$WORK_DIR/kubernetes/pki" /etc/kubernetes/pki
+    rm -rf /etc/kubernetes/pki
+    cp -a "$WORK_DIR/kubernetes/pki" /etc/kubernetes/
     log "  + /etc/kubernetes/pki"
 fi
 
@@ -209,28 +364,35 @@ fi
 if [ -d "$WORK_DIR/kubelet" ]; then
     log "Restoring kubelet configuration..."
     mkdir -p /var/lib/kubelet
+
     for f in config.yaml kubeadm-flags.env; do
         if [ -f "$WORK_DIR/kubelet/$f" ]; then
-            cp "$WORK_DIR/kubelet/$f" /var/lib/kubelet/
+            cp -f "$WORK_DIR/kubelet/$f" /var/lib/kubelet/
             log "  + /var/lib/kubelet/$f"
         fi
     done
+
+    if [ -d "$WORK_DIR/kubelet/pki" ]; then
+        rm -rf /var/lib/kubelet/pki
+        cp -a "$WORK_DIR/kubelet/pki" /var/lib/kubelet/
+        log "  + /var/lib/kubelet/pki"
+    fi
 fi
 
 # --- Restore user data ---
 if [ -d "$WORK_DIR/user" ]; then
     for f in "$WORK_DIR/user/"*; do
         [ -f "$f" ] || continue
-        base=$(basename "$f")
+        base="$(basename "$f")"
         case "$base" in
-            .bash_profile) cp "$f" /root/.bash_profile ;;
-            login_data) cp "$f" /etc/login_data ;;
+            .bash_profile) cp -f "$f" /root/.bash_profile ;;
+            login_data)    cp -f "$f" /etc/login_data ;;
         esac
     done
 fi
 
 # --- Run node-type-specific restore ---
-NODE_TYPE=$(cat /etc/node-type 2>/dev/null || echo "$BACKUP_NODE_TYPE")
+NODE_TYPE="$(cat /etc/node-type 2>/dev/null || echo "$BACKUP_NODE_TYPE")"
 
 case "$NODE_TYPE" in
     bootstrap) restore_bootstrap ;;
@@ -238,6 +400,9 @@ case "$NODE_TYPE" in
     worker)    restore_worker ;;
     *)         warn "Unknown node type '$NODE_TYPE', performing generic restore" ;;
 esac
+
+# --- Restore SELinux contexts ---
+restore_selinux_contexts
 
 mkdir -p /opt/k4all
 echo "$ARCHIVE" > /opt/k4all/restore-source.txt

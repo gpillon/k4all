@@ -47,9 +47,9 @@ CILIUM_ARGS+=(--set devices="$DEVICES")
 
 GATEWAY_API_ENABLED=$(jq -r '.cni.cilium.gatewayApi // "false"' "$K4ALL_CONFIG_FILE")
 if [ "$GATEWAY_API_ENABLED" = "true" ]; then
-  kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml || true
+  kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/experimental-install.yaml || true
   kubectl --kubeconfig=/etc/kubernetes/admin.conf apply --server-side \
-    -f https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml
+    -f https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/experimental-install.yaml
 
   #to solve the issue with the tlsroutes crd
   kubectl --kubeconfig=/etc/kubernetes/admin.conf patch crd tlsroutes.gateway.networking.k8s.io --type='json' -p='[{"op": "replace", "path": "/spec/versions/1/served", "value": true}]'
@@ -89,7 +89,13 @@ if [ -z "$CILIUM_DEDICATED_IP" ] && [ "$HA_TYPE" != "kubevip" ] && [ "$INGRESS_I
     CILIUM_ARGS+=(--set ingressController.hostNetwork.enabled=true)
     CILIUM_ARGS+=(--set ingressController.hostNetwork.httpPort=80)
     CILIUM_ARGS+=(--set ingressController.hostNetwork.httpsPort=443)
+    CILIUM_ARGS+=(--set ingressController.hostNetwork.tlsPassthroughPort=8443)
     CILIUM_ARGS+=(--set ingressController.service.type=ClusterIP)
+
+    CILIUM_ARGS+=(--set envoy.securityContext.capabilities.keepCapNetBindService=true)
+    CILIUM_ARGS+=(--set-string envoy.securityContext.capabilities.envoy[0]=NET_ADMIN)
+    CILIUM_ARGS+=(--set-string envoy.securityContext.capabilities.envoy[1]=SYS_ADMIN)
+    CILIUM_ARGS+=(--set-string envoy.securityContext.capabilities.envoy[2]=NET_BIND_SERVICE)
 else
   echo "Setting controller.hostPort=false because NGINX_DEDICATED_IP is set, HA_TYPE is not none or NGINX_IS_DEFAULT is not true"
   CILIUM_ARGS+=(--set ingressController.hostPort.enabled=false)

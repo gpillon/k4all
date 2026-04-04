@@ -25,9 +25,9 @@ CILIUM_INGRESS_IS_DEFAULT=$(jq -r '.ingress.cilium.isDefault // "false"' "$K4ALL
 FQDN=$(get_fqdn)
 
 INGRESS_IP=$(get_cluster_ip)
-if [ "$NGINX_INGRESS_ENABLED" = "true" ] && [ "$NGINX_INGRESS_DEDICATED_IP" != "true" ]; then
+if [ "$NGINX_INGRESS_ENABLED" = "true" ] && [ "$NGINX_INGRESS_DEDICATED_IP" = "true" ] && [ "$NGINX_IS_DEFAULT" = "true" ]; then
     INGRESS_IP="$NGINX_INGRESS_DEDICATED_IP"
-elif [ "$CILIUM_INGRESS_ENABLED" = "true" ] && [ "$CILIUM_INGRESS_DEDICATED_IP" != "true" ]; then
+elif [ "$CILIUM_INGRESS_ENABLED" = "true" ] && [ "$CILIUM_INGRESS_DEDICATED_IP" = "true" ] && [ "$CILIUM_INGRESS_IS_DEFAULT" = "true" ]; then
     INGRESS_IP="$CILIUM_INGRESS_DEDICATED_IP"
 fi
 

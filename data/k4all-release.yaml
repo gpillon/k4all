@@ -73,7 +73,7 @@ components:
   # --- Storage ---
   topolvm:
     type: helm
-    version: ""
+    version: "16.0.1"
     repo: "https://topolvm.github.io/topolvm"
     chart: topolvm
     namespace: topolvm-system
@@ -95,7 +95,7 @@ components:
   # --- Dashboard ---
   headlamp:
     type: helm
-    version: ""
+    version: "0.41.0"
     repo: "https://kubernetes-sigs.github.io/headlamp/"
     chart: headlamp
     namespace: headlamp

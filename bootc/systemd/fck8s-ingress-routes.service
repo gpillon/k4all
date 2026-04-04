@@ -1,0 +1,15 @@
+[Unit]
+Description=K4All - Configure Ingress Routes
+Requires=fck8s-dashboard-setup.service
+After=fck8s-dashboard-setup.service fck8s-nginx-setup.service fck8s-cni-setup.service
+ConditionPathExists=/etc/kubernetes/admin.conf
+ConditionPathExists=!/opt/k4all/setup-ingress-routes.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-ingress-routes.sh
+RemainAfterExit=yes
+WorkingDirectory=/root/
+
+[Install]
+WantedBy=multi-user.target

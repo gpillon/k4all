@@ -1,7 +1,8 @@
 [Unit]
-Description=K4All - Install Ingress Controller
-Requires=fck8s-dashboard-setup.service
-After=fck8s-dashboard-setup.service
+Description=K4All - Install Ingress Controller (legacy wrapper)
+Requires=fck8s-nginx-setup.service
+Requires=fck8s-ingress-routes.service
+After=fck8s-nginx-setup.service fck8s-ingress-routes.service
 ConditionPathExists=/etc/kubernetes/admin.conf
 ConditionPathExists=!/opt/k4all/setup-ingress.done
 
@@ -13,4 +14,3 @@ WorkingDirectory=/root/
 
 [Install]
 WantedBy=multi-user.target
-

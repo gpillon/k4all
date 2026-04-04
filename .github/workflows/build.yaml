@@ -1,6 +1,8 @@
 name: Build K4All
 
 on:
+  schedule:
+    - cron: "0 3 * * *"
   push:
     tags:
       - "v*"

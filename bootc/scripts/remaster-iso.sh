@@ -69,20 +69,71 @@ if [ -n "$UPDATES_IMG" ]; then
     UPDATES_PARAM="inst.updates=hd:LABEL=${VOLID}:/images/k4all_updates.img"
 fi
 
-# Modify GRUB configs — only kernel command lines (starting with whitespace + linux/linuxefi)
+# Modify GRUB configs — kernel command lines + branding
 for grub_cfg in "${WORK_DIR}/iso/EFI/BOOT/grub.cfg" "${WORK_DIR}/iso/boot/grub2/grub.cfg"; do
-    if [ -f "$grub_cfg" ] && [ -n "$UPDATES_PARAM" ]; then
+    if [ -f "$grub_cfg" ]; then
         echo "Modifying GRUB config: $(basename $(dirname "$grub_cfg"))/$(basename "$grub_cfg")"
-        sed -i "/^[[:space:]]*linux\(efi\)\{0,1\} /{/inst.updates/!s|$| ${UPDATES_PARAM}|}" "$grub_cfg"
+        if [ -n "$UPDATES_PARAM" ]; then
+            sed -i "/^[[:space:]]*linux\(efi\)\{0,1\} /{/inst.updates/!s|$| ${UPDATES_PARAM}|}" "$grub_cfg"
+        fi
+        # Rebrand menu entries: "Install Fedora ..." → "Install K4All ..."
+        sed -i "s/Install Fedora[^'\"']*/Install K4All/g" "$grub_cfg"
+        sed -i "s/Test this media & install Fedora[^'\"']*/Test this media \& install K4All/g" "$grub_cfg"
+        sed -i "s/Troubleshooting Fedora[^'\"']*/Troubleshooting K4All/g" "$grub_cfg"
+        sed -i "s/Rescue a Fedora[^'\"']*/Rescue a K4All/g" "$grub_cfg"
     fi
 done
 
 # Modify isolinux config for BIOS boot (if present)
 ISOLINUX_CFG="${WORK_DIR}/iso/isolinux/isolinux.cfg"
-if [ -f "$ISOLINUX_CFG" ] && [ -n "$UPDATES_PARAM" ]; then
-    echo "Modifying isolinux config..."
-    sed -i "/^[[:space:]]*append /{/inst.updates/!s|$| ${UPDATES_PARAM}|}" "$ISOLINUX_CFG"
+if [ -f "$ISOLINUX_CFG" ]; then
+    if [ -n "$UPDATES_PARAM" ]; then
+        echo "Modifying isolinux config..."
+        sed -i "/^[[:space:]]*append /{/inst.updates/!s|$| ${UPDATES_PARAM}|}" "$ISOLINUX_CFG"
+    fi
+    sed -i 's/Install Fedora[^[:cntrl:]]*/Install K4All/g' "$ISOLINUX_CFG"
+    sed -i 's/Test this media & install Fedora[^[:cntrl:]]*/Test this media \& install K4All/g' "$ISOLINUX_CFG"
 fi
+
+# Create product.img to rebrand Anaconda UI ("FEDORA" → "K4ALL")
+echo "Creating product.img for K4All branding..."
+PRODUCT_DIR=$(mktemp -d)
+cat > "${PRODUCT_DIR}/.buildstamp" << 'BUILDSTAMP'
+[Main]
+Product=K4All
+Version=2
+BugURL=https://github.com/gpillon/fcos-k8s/issues
+IsFinal=True
+BUILDSTAMP
+mkdir -p "${PRODUCT_DIR}/etc/anaconda/product.d"
+cat > "${PRODUCT_DIR}/etc/anaconda/product.d/k4all.conf" << 'PRODCONF'
+[Product]
+product_name = K4All - Kubernetes for All
+
+[Base Product]
+product_name = Fedora
+
+[Storage]
+file_system_type = xfs
+
+default_partitioning =
+    /     (min 25 GiB)
+
+default_scheme = LVM_THINP
+
+[Storage Constraints]
+swap_is_recommended = False
+
+min_partition_sizes =
+    /      12 GiB
+
+[User Interface]
+can_change_users = True
+
+PRODCONF
+mkdir -p "${WORK_DIR}/iso/images"
+(cd "${PRODUCT_DIR}" && find . | cpio -c -o --quiet | gzip -9) > "${WORK_DIR}/iso/images/product.img"
+rm -rf "${PRODUCT_DIR}"
 
 # Copy the original ISO to work dir so we can reference it for boot sectors
 # while writing the output (avoids Premature EOF on in-place remaster)

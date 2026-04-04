@@ -115,7 +115,7 @@ if jq -e '.networking.firewalld.enabled == "true"' "$K4ALL_CONFIG_FILE" >/dev/nu
   enable_service_if_not_running firewalld
 else
   echo "Firewalld is disabled. Disabling it..."
-  systemctl stop firewalld && systemctl stop firewalld
+  systemctl stop firewalld && systemctl disable firewalld
 fi
 
 # Remove the old NetworkManager connection if it exists
