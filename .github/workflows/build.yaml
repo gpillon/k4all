@@ -101,7 +101,7 @@ jobs:
             echo "WARNING: could not resolve latest stable k4all-operator release, keeping default"
           fi
 
-          cp "${RELEASE_FILE}" bootc/overlay/usr/local/share/k4all-release.yaml
+          # cp "${RELEASE_FILE}" bootc/overlay/usr/local/share/k4all-release.yaml
 
       - name: Build and push (${{ matrix.arch }})
         uses: docker/build-push-action@v6
