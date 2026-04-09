@@ -33,6 +33,7 @@ RUN dnf install -y \
     kubeadm kubelet kubectl \
     cri-o \
     openvswitch NetworkManager-ovs \
+    skopeo \
     lvm2 \
     jq \
     firewalld \
@@ -108,7 +109,7 @@ RUN systemctl enable fck8s-first-boot.service && \
 # ============================================================================
 # DIRECTORIES (bootc composefs makes / read-only; use /var for writable paths)
 # ============================================================================
-RUN mkdir -p /var/opt/k4all /var/opt/k4all/bin /var/opt/cni/bin /var/opt/libexec/kubernetes/kubelet-plugins/volume/exec/ && \
+RUN mkdir -p /var/opt/k4all /var/opt/k4all/bin /var/opt/k4all/.imagecache /var/opt/cni/bin /var/opt/libexec/kubernetes/kubelet-plugins/volume/exec/ && \
     rm -rf /opt/k4all /opt/cni /opt/libexec && \
     ln -sf /var/opt/k4all /opt/k4all && \
     ln -sf /var/opt/cni /opt/cni && \
@@ -135,8 +136,15 @@ RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
 
 #Download latest operator manifest for fallback and prepull images
 RUN curl -L "https://github.com/gpillon/k4all-operator/releases/latest/download/install.yaml" -o /usr/local/share/k4all-operator-install.yaml && \
-    kubeadm config images list | xargs -r -n1 podman pull && \
-    podman pull ${K4ALL_OPERATOR_VERSION}
+    set -eux; \
+    kubeadm config images list > /tmp/k8s-images.txt; \
+    echo 'ghcr.io/gpillon/k4all-operator:latest' >> /tmp/k8s-images.txt; \
+    while read -r img; do \
+    file="$(printf '%s' "$img" | tr '/:@' '_')"; \
+    skopeo --override-os linux --override-arch amd64 copy \
+        "docker://$img" \
+        "docker-archive:/var/opt/k4all/.imagecache/${file}.tar:${img}"; \
+    done < /tmp/k8s-images.txt
 
 # ============================================================================
 # BOOTC LABELS

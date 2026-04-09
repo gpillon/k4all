@@ -33,6 +33,13 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     exit 1
 fi
 
+echo "Extracting images from cache..."
+for img in /var/opt/k4all/.imagecache/*.tar; do
+    podman load -i "$img"
+    rm -f "$img"
+    echo "Extracted $img"
+done
+
 echo "All required packages verified."
 
 mkdir -p /opt/k4all
