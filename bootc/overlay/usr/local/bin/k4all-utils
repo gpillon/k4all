@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Path to the JSON configuration file
-K4ALL_CONFIG_FILE="/etc/k4all-config.json"
+# Path to the cluster configuration file (ClusterConfig CR YAML)
+K4ALL_CONFIG_FILE="/etc/k4all-config.yaml"
 KUBECONFIG=/etc/kubernetes/admin.conf
 
 # Release manifest: user copy with fallback to base image copy
@@ -146,24 +146,19 @@ finalize_k8s_setup_for_user() {
 }
 
 function get_network_device() {
-    # Check if the configuration file exists
     if [ ! -f "$K4ALL_CONFIG_FILE" ]; then
-        # Configuration file does not exist, use the default network interface
-        ip route show default | awk '/default/ {print $5; exit}'  # Exit after the first match
+        ip route show default | awk '/default/ {print $5; exit}'
         return
     fi
 
-    # Extract the iface.dev value from the JSON configuration file
-    local net_dev=$(jq -r '.networking.iface.dev' "$K4ALL_CONFIG_FILE")
-    
-    # Check if the iface.dev is set to auto
-    if [ "$net_dev" = "auto" ]; then
-        # Find the default network interface used for the first default route
-        net_dev=$(ip route show default | awk '/default/ {print $5; exit}')  # Exit after the first match
+    local net_dev
+    net_dev=$(yq e '.spec.networking.iface.dev' "$K4ALL_CONFIG_FILE")
+
+    if [ "$net_dev" = "auto" ] || [ "$net_dev" = "null" ] || [ -z "$net_dev" ]; then
+        net_dev=$(ip route show default | awk '/default/ {print $5; exit}')
     fi
 
-    # Output the result
-    echo $net_dev
+    echo "$net_dev"
 }
 
 # Function to get the first available physical network interface
@@ -210,10 +205,11 @@ remove_tagged_block() {
 }
 
 
-# Function to get the current IP address
 get_ip() {
-    if jq -e '.cluster.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "keepalived"; then
-        jq -r '.cluster.ha.apiControlEndpoint' $K4ALL_CONFIG_FILE
+    local ha_type
+    ha_type=$(yq e '.spec.cluster.ha.type' "$K4ALL_CONFIG_FILE" 2>/dev/null)
+    if [ "$ha_type" = "keepalived" ]; then
+        yq e '.spec.cluster.ha.apiControlEndpoint' "$K4ALL_CONFIG_FILE"
     else
         hostname -I | awk '{print $1}'
     fi

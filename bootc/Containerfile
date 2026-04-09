@@ -6,6 +6,7 @@
 #FROM quay.io/centos-bootc/centos-bootc:stream9
 FROM quay.io/fedora/fedora-bootc:43
 
+ARG K4ALL_OPERATOR_VERSION=ghcr.io/gpillon/k4all-operator:latest
 # ============================================================================
 # REPOS
 # ============================================================================
@@ -68,7 +69,7 @@ RUN find /usr/local/bin -type f \( -name '*.sh' -o -name 'k4all-*' \) -exec chmo
 COPY overlay/usr/local/share/ /usr/local/share/
 
 # Default cluster config (will be overwritten by Anaconda addon or first-boot)
-COPY overlay/etc/k4all-config.json.default /usr/local/share/default-cluster-config.json
+COPY overlay/etc/k4all-config.yaml.default /usr/local/share/k4all-config.yaml.default
 
 # k4all-release.yaml is already in overlay/usr/local/share/ (copied above)
 
@@ -84,10 +85,25 @@ RUN systemctl enable crio.service && \
     systemctl enable kubelet.service && \
     systemctl enable openvswitch.service
 
-# Enable K4All phase services and timers (they are idempotent and check for .done markers)
-RUN for unit in /etc/systemd/system/fck8s-*.service /etc/systemd/system/fck8s-*.timer; do \
-        [ -f "$unit" ] && systemctl enable "$(basename "$unit")"; \
-    done || true
+# Enable pre-operator bootstrap services (these must run before the operator deploys)
+RUN systemctl enable fck8s-first-boot.service && \
+    systemctl enable fck8s-set-static-ip.service && \
+    systemctl enable fck8s-set-hostname.service && \
+    systemctl enable fck8s-setup-proxy.service && \
+    systemctl enable fck8s-role-dispatcher.service && \
+    systemctl enable fck8s-k8s-setup-ph2.service && \
+    systemctl enable fck8s-k8s-setup-ph3.service && \
+    systemctl enable fck8s-k8s-setup-init.service && \
+    systemctl enable fck8s-lvm-setup.service && \
+    systemctl enable fck8s-node-ready-and-schedulable.service && \
+    systemctl enable fck8s-taint-master-schedulable.service && \
+    systemctl enable fck8s-restore.service && \
+    systemctl enable fck8s-migrate.service && \
+    systemctl enable fck8s-auto-join.service && \
+    systemctl enable fck8s-update-routes.timer && \
+    systemctl enable fck8s-operator-deploy.service
+# Component-install services (cni, ingress, dashboard, etc.) are now managed
+# by the k4all-operator and are NOT enabled as systemd units.
 
 # ============================================================================
 # DIRECTORIES (bootc composefs makes / read-only; use /var for writable paths)
@@ -116,6 +132,11 @@ RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
     echo "core ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/core && \
     mkdir -p /var/home/core/.kube /var/roothome/.kube && \
     echo 'core:core' | chpasswd
+
+#Download latest operator manifest for fallback and prepull images
+RUN curl -L "https://github.com/gpillon/k4all-operator/releases/latest/download/install.yaml" -o /usr/local/share/k4all-operator-install.yaml && \
+    kubeadm config images list | xargs -r -n1 podman pull && \
+    podman pull ${K4ALL_OPERATOR_VERSION}
 
 # ============================================================================
 # BOOTC LABELS

@@ -1,174 +1,311 @@
-apiVersion: k4all.io/v1
+apiVersion: k4all.magesgate.com/v1alpha1
 kind: ReleaseManifest
 metadata:
   name: k4all
-  version: "2.0.1"
-
 # Centralized source-of-truth for all K4All component versions.
 # This file is baked into the bootc image at /usr/local/share/k4all-release.yaml.
 # At first boot, it is copied to /etc/k4all-release.yaml if not already present.
 # The migration script updates component versions from the base release to /etc/k4all-release.yaml
 # while preserving user customizations in the `custom` section of each component.
+spec:
+  # The `os-image.imageTag` is stamped by CI during build.
+  osImage:
+    name: k4all-bootc
+    repository: ghcr.io/gpillon/k4all-bootc
+    imageTag: latest
+  components:
+    # --- CNI ---
+    calico:
+      type: manifest
+      version: "v3.27.3"
+      source: "https://raw.githubusercontent.com/projectcalico/calico/{{ version }}/manifests/tigera-operator.yaml"
+      namespace: tigera-operator
+      inlineManifests:
+        - |
+          apiVersion: operator.tigera.io/v1
+          kind: Installation
+          metadata:
+            name: default
+          spec:
+            flexVolumePath: /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
+            calicoNetwork:
+              ipPools:
+              - blockSize: 22
+                cidr: 10.100.0.1/18
+                encapsulation: VXLANCrossSubnet
+                natOutgoing: Enabled
+                nodeSelector: all()
+        - |
+          apiVersion: operator.tigera.io/v1
+          kind: APIServer
+          metadata:
+            name: default
+          spec: {}
+      custom: {}
 
-components:
-  # --- CNI ---
-  calico:
-    type: manifest
-    version: "v3.27.3"
-    source: "https://raw.githubusercontent.com/projectcalico/calico/{{ version }}/manifests/tigera-operator.yaml"
-    namespace: tigera-operator
-    valuesFiles:
-      - /usr/local/share/calico-resources.yaml
-    custom: {}
+    cilium:
+      type: helm-oci
+      version: "1.19.1"
+      repo: "quay.io/cilium/charts/cilium"
+      namespace: kube-system
+      custom: {}
 
-  cilium:
-    type: helm-oci
-    version: "1.19.1"
-    repo: "quay.io/cilium/charts/cilium"
-    namespace: kube-system
-    custom: {}
+    cilium-cli:
+      type: binary
+      version: "latest"
+      versionUrl: "https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt"
+      source: "https://github.com/cilium/cilium-cli/releases/download/{{ version }}/cilium-linux-{{ arch }}.tar.gz"
+      installPath: /var/opt/k4all/bin
+      dependsOn:
+        - cilium
+      custom: {}
 
-  cilium-cli:
-    type: binary
-    version: "latest"
-    versionUrl: "https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt"
-    source: "https://github.com/cilium/cilium-cli/releases/download/{{ version }}/cilium-linux-{{ arch }}.tar.gz"
-    installPath: /var/opt/k4all/bin
-    custom: {}
+    # --- Networking ---
+    metallb:
+      type: manifest
+      version: "v0.15.3"
+      source: "https://raw.githubusercontent.com/metallb/metallb/{{ version }}/config/manifests/metallb-native.yaml"
+      namespace: metallb-system
+      dependsOn:
+        - calico
+        - cilium
+      custom: {}
 
-  # --- Networking ---
-  metallb:
-    type: manifest
-    version: "v0.14.5"
-    source: "https://raw.githubusercontent.com/metallb/metallb/{{ version }}/config/manifests/metallb-native.yaml"
-    namespace: metallb-system
-    custom: {}
+    gateway-api:
+      type: manifest
+      version: "v1.5.0"
+      source: "https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ version }}/standard-install.yaml"
+      custom: {}
 
-  gateway-api:
-    type: manifest
-    version: "v1.5.0"
-    source: "https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ version }}/standard-install.yaml"
-    custom: {}
+    # --- HA ---
+    kube-vip:
+      type: static-pod
+      version: "latest"
+      versionUrl: "https://api.github.com/repos/kube-vip/kube-vip/releases"
+      image: "ghcr.io/kube-vip/kube-vip:{{ version }}"
+      namespace: kube-system
+      custom: {}
 
-  # --- HA ---
-  kube-vip:
-    type: static-pod
-    version: "latest"
-    versionUrl: "https://api.github.com/repos/kube-vip/kube-vip/releases"
-    image: "ghcr.io/kube-vip/kube-vip:{{ version }}"
-    namespace: kube-system
-    custom: {}
+    # --- Ingress ---
+    ingress-nginx:
+      type: helm
+      version: "4.14.3"
+      repo: "https://kubernetes.github.io/ingress-nginx"
+      chart: ingress-nginx
+      namespace: ingress-nginx
+      values:
+        controller:
+          allowSnippetAnnotations: true
+          ingressClassResource:
+            enabled: true
+          kind: DaemonSet
+          nodeSelector:
+            kubernetes.io/os: linux
+            node-role.kubernetes.io/control-plane: ""
+      dependsOn:
+        - cert-manager
+        - metallb
+      custom: {}
 
-  # --- Ingress ---
-  ingress-nginx:
-    type: helm
-    version: "4.14.3"
-    repo: "https://kubernetes.github.io/ingress-nginx"
-    chart: ingress-nginx
-    namespace: ingress-nginx
-    valuesFiles:
-      - /usr/local/share/ingress-values.yaml
-    custom: {}
+    # --- Storage ---
+    topolvm:
+      type: helm
+      version: "16.0.1"
+      repo: "https://topolvm.github.io/topolvm"
+      chart: topolvm
+      namespace: topolvm-system
+      values:
+        controller:
+          replicaCount: 1
+        lvmd:
+          deviceClasses:
+            - name: default
+              volume-group: vg_data
+              default: true
+              spare-gb: 5
+              type: thin
+              thin-pool:
+                name: thin-pool
+                overprovision-ratio: 4.0
+        cert-manager:
+          enabled: true
+        storageClasses:
+          - name: topolvm-provisioner
+            storageClass:
+              fsType: xfs
+              isDefaultClass: true
+              allowVolumeExpansion: true
+      dependsOn:
+        - calico
+        - cilium
+        - cert-manager
+      custom: {}
 
-  # --- Storage ---
-  topolvm:
-    type: helm
-    version: ""
-    repo: "https://topolvm.github.io/topolvm"
-    chart: topolvm
-    namespace: topolvm-system
-    valuesFiles:
-      - /usr/local/share/lvm-values.yaml
-    custom: {}
+    # --- Certificates ---
+    cert-manager:
+      type: helm
+      version: "v1.14.5"
+      repo: "https://charts.jetstack.io"
+      chart: cert-manager
+      namespace: cert-manager
+      helmArgs:
+        - "--set installCRDs=true"
+      dependsOn:
+        - calico
+        - cilium
+      custom: {}
 
-  # --- Certificates ---
-  cert-manager:
-    type: helm
-    version: "v1.14.5"
-    repo: "https://charts.jetstack.io"
-    chart: cert-manager
-    namespace: cert-manager
-    helmArgs:
-      - "--set installCRDs=true"
-    custom: {}
+    # --- Dashboard ---
+    headlamp:
+      type: helm
+      version: "0.40.0"
+      repo: "https://kubernetes-sigs.github.io/headlamp/"
+      chart: headlamp
+      namespace: headlamp
+      values:
+        config:
+          oidc:
+            clientID: ""
+            clientSecret: ""
+            issuerURL: ""
+            scopes: ""
+          pluginsDir: /headlamp/plugins
+        service:
+          type: ClusterIP
+          port: 4466
+        ingress:
+          enabled: false
+      dependsOn:
+        - cert-manager
+      custom: {}
 
-  # --- Dashboard ---
-  headlamp:
-    type: helm
-    version: "0.40.0"
-    repo: "https://kubernetes-sigs.github.io/headlamp/"
-    chart: headlamp
-    namespace: headlamp
-    valuesFiles:
-      - /usr/local/share/headlamp-values.yaml
-    custom: {}
+    # --- Monitoring ---
+    metrics-server:
+      type: manifest
+      version: "latest"
+      source: "https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"
+      namespace: kube-system
+      dependsOn:
+        - calico
+        - cilium
+      patches:
+        - target:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: metrics-server
+            namespace: kube-system
+          type: strategic
+          patch: '{"spec":{"template":{"spec":{"containers":[{"name":"metrics-server","args":["--cert-dir=/tmp","--secure-port=10250","--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname","--kubelet-use-node-status-port","--metric-resolution=15s","--kubelet-insecure-tls"]}]}}}}'
+      custom: {}
 
-  # --- Monitoring ---
-  metrics-server:
-    type: manifest
-    version: "latest"
-    source: "https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"
-    namespace: kube-system
-    custom: {}
+    # --- Virtualization ---
+    kubevirt:
+      type: manifest
+      version: "latest"
+      versionUrl: "https://storage.googleapis.com/kubevirt-prow/release/kubevirt/kubevirt/stable.txt"
+      sources:
+        - "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/kubevirt-operator.yaml"
+        - "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/kubevirt-cr.yaml"
+      namespace: kubevirt
+      featureGate: virt
+      custom: {}
 
-  # --- Virtualization ---
-  kubevirt:
-    type: manifest
-    version: "latest"
-    versionUrl: "https://storage.googleapis.com/kubevirt-prow/release/kubevirt/kubevirt/stable.txt"
-    sources:
-      - "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/kubevirt-operator.yaml"
-      - "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/kubevirt-cr.yaml"
-    namespace: kubevirt
-    custom: {}
+    virtctl:
+      type: binary
+      version: "latest"
+      versionUrl: "https://storage.googleapis.com/kubevirt-prow/release/kubevirt/kubevirt/stable.txt"
+      source: "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/virtctl-{{ version }}-linux-{{ arch }}"
+      installPath: /var/opt/k4all/bin
+      featureGate: virt
+      dependsOn:
+        - kubevirt
+      custom: {}
 
-  virtctl:
-    type: binary
-    version: "latest"
-    versionUrl: "https://storage.googleapis.com/kubevirt-prow/release/kubevirt/kubevirt/stable.txt"
-    source: "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/virtctl-{{ version }}-linux-{{ arch }}"
-    installPath: /var/opt/k4all/bin
-    custom: {}
+    cdi:
+      type: manifest
+      version: "latest"
+      versionUrl: "https://github.com/kubevirt/containerized-data-importer/releases/latest"
+      sources:
+        - "https://github.com/kubevirt/containerized-data-importer/releases/download/{{ version }}/cdi-operator.yaml"
+        - "https://github.com/kubevirt/containerized-data-importer/releases/download/{{ version }}/cdi-cr.yaml"
+      namespace: cdi
+      featureGate: virt
+      dependsOn:
+        - kubevirt
+      patches:
+        - target:
+            apiVersion: cdi.kubevirt.io/v1beta1
+            kind: CDI
+            name: cdi
+          type: merge
+          patch: '{"spec":{"config":{"podResourceRequirements":{"limits":{"memory":"2G"}}}}}'
+      custom: {}
 
-  cdi:
-    type: manifest
-    version: "latest"
-    versionUrl: "https://github.com/kubevirt/containerized-data-importer/releases/latest"
-    sources:
-      - "https://github.com/kubevirt/containerized-data-importer/releases/download/{{ version }}/cdi-operator.yaml"
-      - "https://github.com/kubevirt/containerized-data-importer/releases/download/{{ version }}/cdi-cr.yaml"
-    namespace: cdi
-    custom: {}
+    kubevirt-manager:
+      type: manifest
+      version: "latest"
+      sources:
+        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/main/kubernetes/bundled.yaml"
+        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/main/kubernetes/crd.yaml"
+      namespace: kubevirt-manager
+      featureGate: virt
+      dependsOn:
+        - kubevirt
+      custom: {}
 
-  kubevirt-manager:
-    type: manifest
-    version: "latest"
-    sources:
-      - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/main/kubernetes/bundled.yaml"
-      - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/main/kubernetes/crd.yaml"
-    namespace: kubevirt-manager
-    custom: {}
+    # --- GitOps ---
+    argocd:
+      type: helm
+      version: ""
+      repo: "https://argoproj.github.io/argo-helm"
+      chart: argo-cd
+      namespace: argocd
+      values:
+        global:
+          domain: argocd.example.com
+        configs:
+          params:
+            server.insecure: true
+        server:
+          ingress:
+            enabled: true
+            ingressClassName: nginx
+            annotations:
+              nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+              nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+      featureGate: argocd
+      dependsOn:
+        - calico
+        - cilium
+        - ingress-nginx
+      custom: {}
 
-  # --- GitOps ---
-  argocd:
-    type: helm
-    version: ""
-    repo: "https://argoproj.github.io/argo-helm"
-    chart: argo-cd
-    namespace: argocd
-    valuesFiles:
-      - /usr/local/share/argocd-values.yaml
-    custom: {}
+    # --- OVS/Multus ---
+    multus-cni:
+      type: manifest
+      version: "master"
+      source: "https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml"
+      featureGate: ovsCni
+      dependsOn:
+        - calico
+        - cilium
+      custom: {}
 
-  # --- OVS/Multus ---
-  multus-cni:
-    type: manifest
-    version: "master"
-    source: "https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml"
-    custom: {}
+    ovs-cni:
+      type: manifest
+      version: "master"
+      source: "https://raw.githubusercontent.com/k8snetworkplumbingwg/ovs-cni/master/examples/ovs-cni.yml"
+      featureGate: ovsCni
+      dependsOn:
+        - multus-cni
+      custom: {}
 
-  ovs-cni:
-    type: manifest
-    version: "master"
-    source: "https://raw.githubusercontent.com/k8snetworkplumbingwg/ovs-cni/master/examples/ovs-cni.yml"
-    custom: {}
+    # --- Operator (bootstrapped by deploy-operator.sh, tracked here for version/source) ---
+    k4all-operator:
+      type: manifest
+      management: Managed
+      version: "latest"
+      versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
+      source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
+      namespace: k4all-operator-system
+      custom: {}

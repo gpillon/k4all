@@ -18,8 +18,8 @@ extract_ips_from_range() {
 
 any_ip_available=0
 
-CNI_TYPE=$(jq -r '.networking.cni.type // "calico"' "$K4ALL_CONFIG_FILE")
-CILIUM_L2=$(jq -r '.cni.cilium.l2announcements // "false"' "$K4ALL_CONFIG_FILE")
+CNI_TYPE=$(yq e '.spec.networking.cni.type // "calico"' "$K4ALL_CONFIG_FILE")
+CILIUM_L2=$(yq e '.spec.componentOverrides.cilium.values.l2announcements // "false"' "$K4ALL_CONFIG_FILE")
 
 if [ "$CNI_TYPE" = "cilium" ] && [ "$CILIUM_L2" = "true" ]; then
     echo "Cilium L2 announcements active — checking CiliumLoadBalancerIPPool..."

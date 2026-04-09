@@ -1,272 +1,147 @@
 #!/bin/bash
-# K4All Configuration Migration Script
-# Migrates /etc/k4all-config.json between K4All versions.
-# Also updates /etc/k4all-release.yaml with latest base component versions
-# while preserving user customizations in the `custom` section.
-#
-# Usage: k4all-migrate-config.sh [--dry-run]
+# K4All - Configuration Migration
+# Handles migration from legacy JSON (/etc/k4all-config.json) to the new
+# ClusterConfig CR YAML (/etc/k4all-config.yaml), and future YAML-to-YAML
+# schema upgrades.
 set -euo pipefail
 
-CONFIG_FILE="/etc/k4all-config.json"
-RELEASE_FILE="/etc/k4all-release.yaml"
-BASE_CONFIG="/usr/local/share/default-cluster-config.json"
-BASE_RELEASE="/usr/local/share/k4all-release.yaml"
-BACKUP_DIR="/opt/k4all/config-backups"
-DRY_RUN=false
+source /usr/local/bin/k4all-utils
 
-if [ "${1:-}" = "--dry-run" ]; then
-    DRY_RUN=true
+CONFIG_YAML="/etc/k4all-config.yaml"
+CONFIG_JSON="/etc/k4all-config.json"
+RELEASE_MANIFEST="/etc/k4all-release.yaml"
+RELEASE_MANIFEST_DEFAULT="/usr/local/share/k4all-release.yaml"
+
+# =========================================================================
+# JSON-to-YAML migration (one-time, for upgrades from pre-operator builds)
+# =========================================================================
+migrate_json_to_yaml() {
+    echo "Migrating legacy JSON config to ClusterConfig CR YAML..."
+
+    local cni_type firewalld_enabled virt_enabled virt_emulation argocd_enabled
+    local ha_type ha_interface ha_vip ha_subnet
+    local iface_dev iface_ipconfig
+    local custom_api_ep api_hostname
+    local http_proxy https_proxy no_proxy
+
+    cni_type=$(jq -r '.networking.cni.type // "calico"' "$CONFIG_JSON")
+    firewalld_enabled=$(jq -r '.networking.firewalld.enabled // "false"' "$CONFIG_JSON")
+    virt_enabled=$(jq -r '.features.virt.enabled // "false"' "$CONFIG_JSON")
+    virt_emulation=$(jq -r '.features.virt.emulation // "auto"' "$CONFIG_JSON")
+    argocd_enabled=$(jq -r '.features.argocd.enabled // "false"' "$CONFIG_JSON")
+    ha_type=$(jq -r '.cluster.ha.type // "none"' "$CONFIG_JSON")
+    ha_interface=$(jq -r '.cluster.ha.interface // "auto"' "$CONFIG_JSON")
+    ha_vip=$(jq -r '.cluster.ha.apiControlEndpoint // ""' "$CONFIG_JSON")
+    ha_subnet=$(jq -r '.cluster.ha.apiControlEndpointSubnetSize // ""' "$CONFIG_JSON")
+    iface_dev=$(jq -r '.networking.iface.dev // "auto"' "$CONFIG_JSON")
+    iface_ipconfig=$(jq -r '.networking.iface.ipconfig // "dhcp"' "$CONFIG_JSON")
+    custom_api_ep=$(jq -r '.cluster.customApiEndPoint // ""' "$CONFIG_JSON")
+    api_hostname=$(jq -r '.cluster.apiEndPointUseHostName // "false"' "$CONFIG_JSON")
+    http_proxy=$(jq -r '.proxy.http_proxy // ""' "$CONFIG_JSON")
+    https_proxy=$(jq -r '.proxy.https_proxy // ""' "$CONFIG_JSON")
+    no_proxy=$(jq -r '.proxy.no_proxy // ""' "$CONFIG_JSON")
+
+    # Convert string booleans to YAML booleans
+    [ "$firewalld_enabled" = "true" ] && firewalld_enabled="true" || firewalld_enabled="false"
+    [ "$virt_enabled" = "true" ] && virt_enabled="true" || virt_enabled="false"
+    [ "$argocd_enabled" = "true" ] && argocd_enabled="true" || argocd_enabled="false"
+    [ "$api_hostname" = "true" ] && api_hostname="true" || api_hostname="false"
+
+    cp /usr/local/share/k4all-config.yaml.default "$CONFIG_YAML"
+
+    yq e ".spec.networking.cni.type = \"${cni_type}\"" -i "$CONFIG_YAML"
+    yq e ".spec.networking.firewalld.enabled = ${firewalld_enabled}" -i "$CONFIG_YAML"
+    yq e ".spec.networking.iface.dev = \"${iface_dev}\"" -i "$CONFIG_YAML"
+    yq e ".spec.networking.iface.ipConfig = \"${iface_ipconfig}\"" -i "$CONFIG_YAML"
+    yq e ".spec.features.virt.enabled = ${virt_enabled}" -i "$CONFIG_YAML"
+    yq e ".spec.features.virt.emulation = \"${virt_emulation}\"" -i "$CONFIG_YAML"
+    yq e ".spec.features.argocd.enabled = ${argocd_enabled}" -i "$CONFIG_YAML"
+    yq e ".spec.cluster.ha.type = \"${ha_type}\"" -i "$CONFIG_YAML"
+    yq e ".spec.cluster.ha.interface = \"${ha_interface}\"" -i "$CONFIG_YAML"
+    yq e ".spec.cluster.ha.apiControlEndpoint = \"${ha_vip}\"" -i "$CONFIG_YAML"
+    yq e ".spec.cluster.ha.apiControlEndpointSubnetSize = \"${ha_subnet}\"" -i "$CONFIG_YAML"
+    yq e ".spec.cluster.customApiEndPoint = \"${custom_api_ep}\"" -i "$CONFIG_YAML"
+    yq e ".spec.cluster.apiEndPointUseHostName = ${api_hostname}" -i "$CONFIG_YAML"
+    yq e ".spec.proxy.httpProxy = \"${http_proxy}\"" -i "$CONFIG_YAML"
+    yq e ".spec.proxy.httpsProxy = \"${https_proxy}\"" -i "$CONFIG_YAML"
+    yq e ".spec.proxy.noProxy = \"${no_proxy}\"" -i "$CONFIG_YAML"
+
+    mv "$CONFIG_JSON" "${CONFIG_JSON}.migrated"
+    echo "JSON config migrated to YAML. Backup saved as ${CONFIG_JSON}.migrated"
+}
+
+# =========================================================================
+# YAML-to-YAML schema upgrades (future version bumps)
+# =========================================================================
+migrate_yaml_schema() {
+    echo "Checking ClusterConfig YAML schema version..."
+
+    local api_version
+    api_version=$(yq e '.apiVersion' "$CONFIG_YAML" 2>/dev/null || echo "")
+
+    if [ "$api_version" != "k4all.magesgate.com/v1alpha1" ]; then
+        echo "WARNING: Unknown apiVersion '$api_version' — skipping YAML migration"
+        return
+    fi
+
+    # Ensure ingress section exists (added in operator v0.2.0)
+    if [ "$(yq e '.spec.ingress' "$CONFIG_YAML")" = "null" ]; then
+        yq e '.spec.ingress.nginx.isDefault = true' -i "$CONFIG_YAML"
+        yq e '.spec.ingress.nginx.dedicatedIP = ""' -i "$CONFIG_YAML"
+        yq e '.spec.ingress.cilium.dedicatedIP = ""' -i "$CONFIG_YAML"
+        echo "  Added missing ingress section"
+    fi
+
+    # Ensure proxy section exists (added in operator v0.2.0)
+    if [ "$(yq e '.spec.proxy' "$CONFIG_YAML")" = "null" ]; then
+        yq e '.spec.proxy.httpProxy = ""' -i "$CONFIG_YAML"
+        yq e '.spec.proxy.httpsProxy = ""' -i "$CONFIG_YAML"
+        yq e '.spec.proxy.noProxy = ""' -i "$CONFIG_YAML"
+        echo "  Added missing proxy section"
+    fi
+
+    echo "ClusterConfig YAML schema is up to date."
+}
+
+# =========================================================================
+# Release manifest migration
+# =========================================================================
+migrate_release_manifest() {
+    if [ ! -f "$RELEASE_MANIFEST" ]; then
+        if [ -f "$RELEASE_MANIFEST_DEFAULT" ]; then
+            cp "$RELEASE_MANIFEST_DEFAULT" "$RELEASE_MANIFEST"
+            echo "Installed default release manifest"
+        fi
+        return
+    fi
+
+    if [ -f "$RELEASE_MANIFEST_DEFAULT" ]; then
+        yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' \
+            "$RELEASE_MANIFEST" "$RELEASE_MANIFEST_DEFAULT" > /tmp/merged-release.yaml
+        mv /tmp/merged-release.yaml "$RELEASE_MANIFEST"
+        echo "Release manifest merged with defaults"
+    fi
+}
+
+# =========================================================================
+# Main
+# =========================================================================
+echo "K4All configuration migration starting..."
+
+# Step 1: Migrate from legacy JSON if it exists
+if [ -f "$CONFIG_JSON" ] && [ ! -f "$CONFIG_YAML" ]; then
+    migrate_json_to_yaml
+elif [ -f "$CONFIG_JSON" ] && [ -f "$CONFIG_YAML" ]; then
+    echo "Both JSON and YAML configs exist — using YAML, archiving JSON"
+    mv "$CONFIG_JSON" "${CONFIG_JSON}.migrated"
 fi
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+# Step 2: Schema upgrades on existing YAML
+if [ -f "$CONFIG_YAML" ]; then
+    migrate_yaml_schema
+fi
 
-log()  { echo -e "${GREEN}[k4all-migrate]${NC} $1" >&2; }
-warn() { echo -e "${YELLOW}[k4all-migrate WARN]${NC} $1" >&2; }
-err()  { echo -e "${RED}[k4all-migrate ERROR]${NC} $1" >&2; }
+# Step 3: Release manifest
+migrate_release_manifest
 
-# --- Version comparison ---
-version_lt() {
-    local IFS=.
-    local i ver1=($1) ver2=($2)
-    for ((i=${#ver1[@]}; i<${#ver2[@]}; i++)); do ver1[i]=0; done
-    for ((i=${#ver2[@]}; i<${#ver1[@]}; i++)); do ver2[i]=0; done
-    for ((i=0; i<${#ver1[@]}; i++)); do
-        if ((10#${ver1[i]:-0} < 10#${ver2[i]:-0})); then return 0; fi
-        if ((10#${ver1[i]:-0} > 10#${ver2[i]:-0})); then return 1; fi
-    done
-    return 1
-}
-
-version_le() {
-    [ "$1" = "$2" ] && return 0
-    version_lt "$1" "$2"
-}
-
-# --- Backup ---
-backup_file() {
-    local src="$1"
-    if [ -f "$src" ]; then
-        mkdir -p "$BACKUP_DIR"
-        local ts
-        ts=$(date +%Y%m%d-%H%M%S)
-        local base
-        base=$(basename "$src")
-        local dst="$BACKUP_DIR/${base}.${ts}.bak"
-        cp "$src" "$dst"
-        log "Backed up $src → $dst"
-    fi
-}
-
-# ========================================================================
-# Config migrations (k4all-config.json)
-# Each migration function transforms the config JSON for a specific version bump.
-# ========================================================================
-migrate_config() {
-    local old_version="$1"
-    local config="$2"
-
-    # Pre-1.6.1: "node" was renamed to "cluster", "customHostname" to "customApiEndPoint"
-    if version_lt "$old_version" "1.6.1"; then
-        log "  Applying migration: < 1.6.1 → rename node→cluster, customHostname→customApiEndPoint"
-        config=$(echo "$config" | jq '
-            if has("node") then .cluster = .node | del(.node) else . end |
-            .cluster |= (if has("customHostname") then .customApiEndPoint = .customHostname | del(.customHostname) else . end)
-        ')
-    fi
-
-    # Pre-1.8.0: add gateway feature, rename kubernetes-dashboard to headlamp
-    if version_lt "$old_version" "1.8.0"; then
-        log "  Applying migration: < 1.8.0 → add gateway feature"
-        config=$(echo "$config" | jq '
-            .features.gateway //= {"enabled": "false"}
-        ')
-    fi
-
-    # Pre-2.0.0: add storage section, ingress section, cni section
-    if version_lt "$old_version" "2.0.0"; then
-        log "  Applying migration: < 2.0.0 → add storage, ingress, cni sections"
-        config=$(echo "$config" | jq '
-            .storage //= {"vg_data": {"enabled": "true", "disk": "auto", "size": "remaining"}} |
-            .ingress //= {"nginx": {"enabled": "true", "isDefault": "true", "dedicatedIP": ""}, "cilium": {"enabled": "false", "isDefault": "false", "dedicatedIP": ""}} |
-            .cni //= {"cilium": {"additionalDevices": "", "gatewayApi": "false", "l2announcements": "false", "hubble": "false"}} |
-            .proxy //= {"http_proxy": "", "https_proxy": "", "no_proxy": ""}
-        ')
-    fi
-
-    echo "$config"
-}
-
-# ========================================================================
-# Main: Migrate k4all-config.json
-# ========================================================================
-migrate_k4all_config() {
-    if [ ! -f "$CONFIG_FILE" ]; then
-        if [ -f "$BASE_CONFIG" ]; then
-            log "No config file found, creating from defaults"
-            if [ "$DRY_RUN" = false ]; then
-                cp "$BASE_CONFIG" "$CONFIG_FILE"
-            fi
-        else
-            warn "No config file and no base config found"
-        fi
-        return 0
-    fi
-
-    local current_version
-    current_version=$(jq -r '.version // "0.0.0"' "$CONFIG_FILE")
-
-    local target_version
-    if [ -f "$BASE_CONFIG" ]; then
-        target_version=$(jq -r '.version // "2.0.0"' "$BASE_CONFIG")
-    else
-        target_version="2.0.0"
-    fi
-
-    log "Current config version: $current_version"
-    log "Target config version:  $target_version"
-
-    if [ "$current_version" = "$target_version" ]; then
-        log "Configuration is already up to date"
-        return 0
-    fi
-
-    if ! version_lt "$current_version" "$target_version"; then
-        log "Configuration version ($current_version) is newer than target ($target_version), skipping"
-        return 0
-    fi
-
-    if [ "$DRY_RUN" = false ]; then
-        backup_file "$CONFIG_FILE"
-    fi
-
-    local config
-    config=$(cat "$CONFIG_FILE")
-
-    # Run migrations
-    config=$(migrate_config "$current_version" "$config")
-
-    # Deep merge with new defaults (add new fields, keep existing values)
-    if [ -f "$BASE_CONFIG" ]; then
-        config=$(jq -s '
-        def deepmerge(a; b):
-            if (a | type) == "object" and (b | type) == "object" then
-                reduce (b | to_entries[]) as $item
-                (a;
-                    if .[$item.key] == null then .[$item.key] = $item.value
-                    else .[$item.key] = deepmerge(.[$item.key]; $item.value) end)
-            else a end;
-        deepmerge(.[0]; .[1])' <(echo "$config") "$BASE_CONFIG")
-    fi
-
-    # Update version
-    config=$(echo "$config" | jq --arg v "$target_version" '.version = $v')
-
-    if [ "$DRY_RUN" = true ]; then
-        log "DRY RUN — would write:"
-        echo "$config" | jq .
-    else
-        echo "$config" | jq . > "$CONFIG_FILE"
-        log "Configuration migrated to version $target_version"
-    fi
-}
-
-# ========================================================================
-# Main: Update k4all-release.yaml
-# Updates component versions from the base release while preserving
-# user customizations in the `custom:` section of each component.
-# ========================================================================
-migrate_release_manifest() {
-    if [ ! -f "$BASE_RELEASE" ]; then
-        warn "Base release manifest not found at $BASE_RELEASE, skipping"
-        return 0
-    fi
-
-    if [ ! -f "$RELEASE_FILE" ]; then
-        log "No user release manifest found, creating from base"
-        if [ "$DRY_RUN" = false ]; then
-            cp "$BASE_RELEASE" "$RELEASE_FILE"
-        fi
-        return 0
-    fi
-
-    if ! command -v yq &>/dev/null; then
-        warn "yq not found, skipping release manifest migration"
-        return 0
-    fi
-
-    local base_version
-    base_version=$(yq e '.metadata.version' "$BASE_RELEASE")
-    local current_version
-    current_version=$(yq e '.metadata.version' "$RELEASE_FILE")
-
-    log "Release manifest: current=$current_version, base=$base_version"
-
-    if [ "$current_version" = "$base_version" ]; then
-        log "Release manifest is already up to date"
-        return 0
-    fi
-
-    if [ "$DRY_RUN" = false ]; then
-        backup_file "$RELEASE_FILE"
-    fi
-
-    # For each component in the base release:
-    # - Update version, source, repo, etc. from base
-    # - Preserve user's `custom:` section
-    local components
-    components=$(yq e '.components | keys | .[]' "$BASE_RELEASE")
-
-    local temp_file
-    temp_file=$(mktemp)
-    cp "$RELEASE_FILE" "$temp_file"
-
-    while IFS= read -r comp; do
-        [ -z "$comp" ] && continue
-
-        # Preserve user custom section
-        local user_custom
-        user_custom=$(yq e ".components.${comp}.custom // {}" "$temp_file")
-
-        # Copy all fields from base for this component
-        local base_comp
-        base_comp=$(yq e ".components.${comp}" "$BASE_RELEASE")
-
-        yq e ".components.${comp} = ${base_comp}" -i "$temp_file" 2>/dev/null || \
-            yq e -i ".components.${comp} = load(\"$BASE_RELEASE\").components.${comp}" "$temp_file" 2>/dev/null || true
-
-        # Restore user custom section
-        if [ "$user_custom" != "{}" ] && [ "$user_custom" != "null" ]; then
-            yq e ".components.${comp}.custom = ${user_custom}" -i "$temp_file" 2>/dev/null || true
-        fi
-    done <<< "$components"
-
-    # Update metadata version
-    yq e ".metadata.version = \"$base_version\"" -i "$temp_file"
-
-    if [ "$DRY_RUN" = true ]; then
-        log "DRY RUN — would write release manifest:"
-        cat "$temp_file"
-        rm -f "$temp_file"
-    else
-        mv "$temp_file" "$RELEASE_FILE"
-        log "Release manifest updated to version $base_version"
-    fi
-}
-
-# ========================================================================
-# Entry point
-# ========================================================================
-main() {
-    log "K4All Configuration Migration"
-    log "=============================="
-
-    migrate_k4all_config
-    migrate_release_manifest
-
-    log "Migration complete."
-}
-
-main "$@"
+echo "K4All configuration migration complete."

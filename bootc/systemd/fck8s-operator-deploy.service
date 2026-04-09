@@ -1,0 +1,16 @@
+[Unit]
+Description=Deploy k4all-operator to manage cluster components
+After=fck8s-node-ready-and-schedulable.service fck8s-taint-master-schedulable.service
+Requires=fck8s-node-ready-and-schedulable.service
+ConditionPathExists=!/opt/k4all/operator-deploy.done
+ConditionPathExists=/etc/kubernetes/admin.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/deploy-operator.sh
+RemainAfterExit=yes
+Environment=KUBECONFIG=/etc/kubernetes/admin.conf
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

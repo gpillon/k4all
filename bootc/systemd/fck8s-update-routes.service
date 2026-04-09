@@ -1,7 +1,6 @@
 [Unit]
-Description=K4All - Update Kubernetes Ingress Routes for Dashboard
-Requires=fck8s-ingress-routes.service
-After=fck8s-ingress-routes.service
+Description=K4All - Update Kubernetes Ingress Routes
+After=fck8s-operator-deploy.service
 ConditionPathExists=/etc/kubernetes/admin.conf
 
 [Service]

@@ -53,7 +53,7 @@ add_firewalld_rule_if_not_exists() {
 NET_DEV=$(get_network_device)
 PHYS_NET_DEV=$(get_real_interface)
 
-CURRENT_IP_CONFIG=$(jq -r '.networking.iface.ipconfig' "$K4ALL_CONFIG_FILE")
+CURRENT_IP_CONFIG=$(yq e '.spec.networking.iface.ipConfig' "$K4ALL_CONFIG_FILE")
 MAC_ADDR=$(ip link show "${PHYS_NET_DEV}" | awk '/ether/ {print $2}')
 
 enable_service_if_not_running openvswitch
@@ -66,12 +66,11 @@ add_nmcli_connection_if_not_exists ovs-port-eth type ovs-port conn.interface ovs
 add_nmcli_connection_if_not_exists ovs-port-eth-int type ethernet conn.interface "${PHYS_NET_DEV}" master ovs-port-eth con-name ovs-port-eth-int
 
 if [ "$CURRENT_IP_CONFIG" = "static" ]; then
-  # Extract values from JSON
-  IP_ADDR=$(jq -r '.networking.iface.ipaddr' "$K4ALL_CONFIG_FILE")
-  GATEWAY=$(jq -r '.networking.iface.gateway' "$K4ALL_CONFIG_FILE")
-  DNS=$(jq -r '.networking.iface.dns' "$K4ALL_CONFIG_FILE")
-  SUBNET_MASK=$(jq -r '.networking.iface.subnet_mask' "$K4ALL_CONFIG_FILE")
-  DNS_SEARCH=$(jq -r '.networking.iface.dns_search' "$K4ALL_CONFIG_FILE" | sed 's/,/ /g')  # Converts commas to spaces if needed
+  IP_ADDR=$(yq e '.spec.networking.iface.ipaddr' "$K4ALL_CONFIG_FILE")
+  GATEWAY=$(yq e '.spec.networking.iface.gateway' "$K4ALL_CONFIG_FILE")
+  DNS=$(yq e '.spec.networking.iface.dns' "$K4ALL_CONFIG_FILE")
+  SUBNET_MASK=$(yq e '.spec.networking.iface.subnetMask' "$K4ALL_CONFIG_FILE")
+  DNS_SEARCH=$(yq e '.spec.networking.iface.dnsSearch' "$K4ALL_CONFIG_FILE" | sed 's/,/ /g')
   CIDR=$(mask_to_cidr $SUBNET_MASK)
   IP_CIDR="$IP_ADDR/$CIDR"
 
@@ -111,7 +110,7 @@ enable_service_if_not_running crio
 enable_service_if_not_running kubelet
 
 # Check if networking.firewalld.enabled is true in $K4ALL_CONFIG_FILE
-if jq -e '.networking.firewalld.enabled == "true"' "$K4ALL_CONFIG_FILE" >/dev/null; then
+if [ "$(yq e '.spec.networking.firewalld.enabled' "$K4ALL_CONFIG_FILE")" = "true" ]; then
   enable_service_if_not_running firewalld
 else
   echo "Firewalld is disabled. Disabling it..."
@@ -150,7 +149,7 @@ if systemctl is-enabled --quiet firewalld; then
   add_firewalld_rule_if_not_exists 30000-32767/tcp  # NodePort Services
 
   # Check the CNI type from the configuration file and apply appropriate firewall rules
-  CNI_TYPE=$(jq -r '.networking.cni' "$K4ALL_CONFIG_FILE")
+  CNI_TYPE=$(yq e '.spec.networking.cni.type' "$K4ALL_CONFIG_FILE")
   case "$CNI_TYPE" in
     "calico")
       echo "Configuring firewalld for Calico..."

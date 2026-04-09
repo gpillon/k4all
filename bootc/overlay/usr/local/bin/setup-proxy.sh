@@ -45,13 +45,13 @@ function upsert_default_env() {
     fi
 }
 
-# Read JSON path and set corresponding DefaultEnvironment if present
 function set_proxy_if_present() {
-    local var_name="$1"     # e.g., HTTP_PROXY
-    local json_path="$2"    # e.g., .proxy.http_proxy
+    local var_name="$1"
+    local yaml_path="$2"
 
-    local value=$(jq -r "$json_path" "$K4ALL_CONFIG_FILE")
-    if [ "x$value" != "x" ]; then
+    local value
+    value=$(yq e "$yaml_path" "$K4ALL_CONFIG_FILE")
+    if [ -n "$value" ] && [ "$value" != "null" ] && [ "$value" != '""' ]; then
         ensure_proxy_conf_ready
         upsert_default_env "$var_name" "$value"
     else
@@ -63,14 +63,14 @@ function set_proxy_if_present() {
 
 
 function setup_proxy() {
-    set_proxy_if_present "HTTP_PROXY" '.proxy.http_proxy'
-    set_proxy_if_present "http_proxy" '.proxy.http_proxy'
+    set_proxy_if_present "HTTP_PROXY" '.spec.proxy.httpProxy'
+    set_proxy_if_present "http_proxy" '.spec.proxy.httpProxy'
     echo "Success: Setup HTTP Proxy"
-    set_proxy_if_present "HTTPS_PROXY" '.proxy.https_proxy'
-    set_proxy_if_present "https_proxy" '.proxy.https_proxy'
+    set_proxy_if_present "HTTPS_PROXY" '.spec.proxy.httpsProxy'
+    set_proxy_if_present "https_proxy" '.spec.proxy.httpsProxy'
     echo "Success: Setup HTTPS Proxy"
-    set_proxy_if_present "NO_PROXY" '.proxy.no_proxy'
-    set_proxy_if_present "no_proxy" '.proxy.no_proxy'
+    set_proxy_if_present "NO_PROXY" '.spec.proxy.noProxy'
+    set_proxy_if_present "no_proxy" '.spec.proxy.noProxy'
     echo "Success: Setup No Proxy"
     systemctl daemon-reload
     systemctl restart systemd-resolved

@@ -46,10 +46,10 @@ if [ -f "/opt/k4all/restore-bootstrap-cluster.flag" ]; then
 fi
 
 # --- Normal init path ---
-if [ -f "$K4ALL_CONFIG" ]; then
-  POD_NET=$(jq -r '.cluster.podNetwork // "10.100.0.1/18"' "$K4ALL_CONFIG")
-  SVC_NET=$(jq -r '.cluster.serviceNetwork // "10.96.0.0/16"' "$K4ALL_CONFIG")
-  CNI=$(jq -r '.networking.cni.type // "calico"' "$K4ALL_CONFIG")
+if [ -f "$K4ALL_CONFIG_FILE" ]; then
+  POD_NET=$(yq e '.spec.cluster.podNetwork // "10.100.0.1/18"' "$K4ALL_CONFIG_FILE")
+  SVC_NET=$(yq e '.spec.cluster.serviceNetwork // "10.96.0.0/16"' "$K4ALL_CONFIG_FILE")
+  CNI=$(yq e '.spec.networking.cni.type // "calico"' "$K4ALL_CONFIG_FILE")
 
   if [ "$CNI" == "cilium" ]; then
     yq e '(select(.kind == "ClusterConfiguration") | .proxy.disabled) = true' -i "$K8S_CONFIG"
@@ -68,4 +68,3 @@ setup_kubeconfig_for_user "core" "/home/core"
 kubectl completion bash > /etc/bash_completion.d/kubectl_bash_completion
 
 touch /opt/k4all/k8s-setup-init.done
-

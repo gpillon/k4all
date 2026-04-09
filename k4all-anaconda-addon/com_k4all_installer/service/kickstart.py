@@ -6,6 +6,12 @@
 
 import json
 import logging
+import copy
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 from pykickstart.options import KSOptionParser
 
@@ -13,7 +19,8 @@ from pyanaconda.core.kickstart import VERSION, KickstartSpecification
 from pyanaconda.core.kickstart.addon import AddonData
 
 from com_k4all_installer.constants import (
-    VALID_ROLES, VALID_CNI_TYPES, VALID_HA_TYPES, DEFAULT_CONFIG
+    VALID_ROLES, VALID_CNI_TYPES, VALID_HA_TYPES,
+    DEFAULT_CLUSTER_CONFIG, DEFAULT_INSTALL_CONFIG,
 )
 
 log = logging.getLogger(__name__)
@@ -21,313 +28,146 @@ log = logging.getLogger(__name__)
 
 class K4AllData(AddonData):
     """The kickstart data for the K4All addon.
-    
+
     Example kickstart syntax:
-    
+
     %addon com_k4all_installer --role=bootstrap --cni=calico
-    {
-      "cluster": { "ha": { "type": "none" } },
-      "features": { "virt": { "enabled": "false" } }
-    }
+    networking:
+      cni:
+        type: calico
+    features:
+      virt:
+        enabled: true
     %end
     """
 
     def __init__(self):
         super().__init__()
-        # Node role (empty = not yet configured)
         self.role = ""
-        # JSON config (merged with defaults)
-        self.config = dict(DEFAULT_CONFIG)
-        # Raw JSON lines from kickstart body
-        self._json_lines = []
+        self.cluster_config = copy.deepcopy(DEFAULT_CLUSTER_CONFIG)
+        self.install_config = copy.deepcopy(DEFAULT_INSTALL_CONFIG)
+        self._body_lines = []
+
+    # ------------------------------------------------------------------
+    # Backward compat: keep .config as an alias for .cluster_config
+    # ------------------------------------------------------------------
+    @property
+    def config(self):
+        return self.cluster_config
+
+    @config.setter
+    def config(self, value):
+        self.cluster_config = value
 
     def handle_header(self, args, line_number=None):
-        """Parse arguments from the %addon line.
-        
-        Supported arguments:
-            --role=<bootstrap|control|worker>
-            --cni=<calico|cilium>
-            --ha=<none|keepalived|kubevip>
-            --virt (enable virtualization)
-            --argocd (enable ArgoCD)
-            --firewalld (enable firewalld)
-        """
+        """Parse arguments from the %addon line."""
         op = KSOptionParser(
             prog="%addon com_k4all_installer",
             version=VERSION,
             description="Configure K4All Kubernetes cluster"
         )
 
-        op.add_argument(
-            "--role",
-            choices=list(VALID_ROLES), # + [""],
-            default="",
-            dest="role",
-            version=VERSION,
-            help="Node role: bootstrap, control, or worker (empty = not configured)"
-        )
-
-        op.add_argument(
-            "--cni",
-            choices=VALID_CNI_TYPES,
-            default="calico",
-            dest="cni",
-            version=VERSION,
-            help="CNI plugin: calico or cilium"
-        )
-
-        op.add_argument(
-            "--ha",
-            choices=VALID_HA_TYPES,
-            default="none",
-            dest="ha",
-            version=VERSION,
-            help="HA type: none, keepalived, or kubevip"
-        )
-
-        op.add_argument(
-            "--virt",
-            action="store_true",
-            default=False,
-            dest="virt",
-            version=VERSION,
-            help="Enable KubeVirt virtualization"
-        )
-
-        op.add_argument(
-            "--argocd",
-            action="store_true",
-            default=False,
-            dest="argocd",
-            version=VERSION,
-            help="Enable ArgoCD"
-        )
-
-        op.add_argument(
-            "--firewalld",
-            action="store_true",
-            default=False,
-            dest="firewalld",
-            version=VERSION,
-            help="Enable firewalld"
-        )
-
-        op.add_argument(
-            "--vg-data-disk",
-            default="auto",
-            dest="vg_data_disk",
-            version=VERSION,
-            help="Disk for vg_data VG (auto, or device like sda)"
-        )
-
-        op.add_argument(
-            "--no-vg-data",
-            action="store_true",
-            default=False,
-            dest="no_vg_data",
-            version=VERSION,
-            help="Disable vg_data creation"
-        )
-
-        op.add_argument(
-            "--api-hostname",
-            choices=["false", "true", "short"],
-            default="false",
-            dest="api_hostname",
-            version=VERSION,
-            help="Use hostname for API endpoint (false/true/short)"
-        )
-
-        op.add_argument(
-            "--custom-api-endpoint",
-            default="",
-            dest="custom_api_endpoint",
-            version=VERSION,
-            help="Custom API endpoint hostname/IP"
-        )
-
-        op.add_argument(
-            "--pod-network",
-            default="10.100.0.1/18",
-            dest="pod_network",
-            version=VERSION,
-            help="Pod network CIDR (e.g. 10.100.0.1/18)"
-        )
-
-        op.add_argument(
-            "--service-network",
-            default="10.96.0.0/16",
-            dest="service_network",
-            version=VERSION,
-            help="Service network CIDR (e.g. 10.96.0.0/16)"
-        )
-
-        op.add_argument(
-            "--cilium-additional-devices",
-            default="",
-            dest="cilium_additional_devices",
-            version=VERSION,
-            help="Additional network devices for Cilium (comma-separated)"
-        )
-
-        op.add_argument(
-            "--cilium-gateway-api",
-            action="store_true",
-            default=False,
-            dest="cilium_gateway_api",
-            version=VERSION,
-            help="Enable Cilium Gateway API"
-        )
-
-        op.add_argument(
-            "--cilium-l2-announcements",
-            action="store_true",
-            default=False,
-            dest="cilium_l2_announcements",
-            version=VERSION,
-            help="Enable Cilium L2 Announcements"
-        )
-
-        op.add_argument(
-            "--cilium-hubble",
-            action="store_true",
-            default=False,
-            dest="cilium_hubble",
-            version=VERSION,
-            help="Enable Cilium Hubble UI"
-        )
-
-        op.add_argument(
-            "--ingress-nginx",
-            action="store_true",
-            default=True,
-            dest="ingress_nginx",
-            version=VERSION,
-            help="Enable NGINX Ingress Controller (default: enabled)"
-        )
-
-        op.add_argument(
-            "--no-ingress-nginx",
-            action="store_true",
-            default=False,
-            dest="no_ingress_nginx",
-            version=VERSION,
-            help="Disable NGINX Ingress Controller"
-        )
-
-        op.add_argument(
-            "--ingress-cilium",
-            action="store_true",
-            default=False,
-            dest="ingress_cilium",
-            version=VERSION,
-            help="Enable Cilium Ingress Controller"
-        )
-
-        op.add_argument(
-            "--ingress-default",
-            choices=["nginx", "cilium"],
-            default="nginx",
-            dest="ingress_default",
-            version=VERSION,
-            help="Default ingress controller (nginx or cilium)"
-        )
-
-        op.add_argument(
-            "--ingress-nginx-ip",
-            default="",
-            dest="ingress_nginx_ip",
-            version=VERSION,
-            help="Dedicated IP for NGINX ingress (empty = cluster IP)"
-        )
-
-        op.add_argument(
-            "--ingress-cilium-ip",
-            default="",
-            dest="ingress_cilium_ip",
-            version=VERSION,
-            help="Dedicated IP for Cilium ingress (empty = cluster IP)"
-        )
-
-        op.add_argument(
-            "--api-control-endpoint",
-            default="",
-            dest="api_control_endpoint",
-            version=VERSION,
-            help="HA control plane VIP address (required when HA != none)"
-        )
-
-        op.add_argument(
-            "--api-control-endpoint-subnet",
-            default="",
-            dest="api_control_endpoint_subnet",
-            version=VERSION,
-            help="HA control plane VIP subnet size, e.g. 24 (required when HA != none)"
-        )
+        op.add_argument("--role", choices=list(VALID_ROLES), default="",
+                         dest="role", version=VERSION, help="")
+        op.add_argument("--cni", choices=VALID_CNI_TYPES, default="calico",
+                         dest="cni", version=VERSION, help="")
+        op.add_argument("--ha", choices=VALID_HA_TYPES, default="none",
+                         dest="ha", version=VERSION, help="")
+        op.add_argument("--virt", action="store_true", default=False,
+                         dest="virt", version=VERSION, help="")
+        op.add_argument("--argocd", action="store_true", default=False,
+                         dest="argocd", version=VERSION, help="")
+        op.add_argument("--firewalld", action="store_true", default=False,
+                         dest="firewalld", version=VERSION, help="")
+        op.add_argument("--vg-data-disk", default="auto",
+                         dest="vg_data_disk", version=VERSION, help="")
+        op.add_argument("--no-vg-data", action="store_true", default=False,
+                         dest="no_vg_data", version=VERSION, help="")
+        op.add_argument("--api-hostname", choices=["false", "true", "short"],
+                         default="false", dest="api_hostname", version=VERSION, help="")
+        op.add_argument("--custom-api-endpoint", default="",
+                         dest="custom_api_endpoint", version=VERSION, help="")
+        op.add_argument("--pod-network", default="10.100.0.1/18",
+                         dest="pod_network", version=VERSION, help="")
+        op.add_argument("--service-network", default="10.96.0.0/16",
+                         dest="service_network", version=VERSION, help="")
+        op.add_argument("--ingress-nginx", action="store_true", default=True,
+                         dest="ingress_nginx", version=VERSION, help="")
+        op.add_argument("--no-ingress-nginx", action="store_true", default=False,
+                         dest="no_ingress_nginx", version=VERSION, help="")
+        op.add_argument("--ingress-cilium", action="store_true", default=False,
+                         dest="ingress_cilium", version=VERSION, help="")
+        op.add_argument("--ingress-default", choices=["nginx", "cilium"],
+                         default="nginx", dest="ingress_default", version=VERSION, help="")
+        op.add_argument("--ingress-nginx-ip", default="",
+                         dest="ingress_nginx_ip", version=VERSION, help="")
+        op.add_argument("--ingress-cilium-ip", default="",
+                         dest="ingress_cilium_ip", version=VERSION, help="")
+        op.add_argument("--api-control-endpoint", default="",
+                         dest="api_control_endpoint", version=VERSION, help="")
+        op.add_argument("--api-control-endpoint-subnet", default="",
+                         dest="api_control_endpoint_subnet", version=VERSION, help="")
 
         ns = op.parse_args(args=args, lineno=line_number)
 
-        # Store parsed values
         self.role = ns.role
-        self.config["networking"]["cni"]["type"] = ns.cni
-        self.config["cluster"]["ha"]["type"] = ns.ha
-        self.config["features"]["virt"]["enabled"] = "true" if ns.virt else "false"
-        self.config["features"]["argocd"]["enabled"] = "true" if ns.argocd else "false"
-        self.config["networking"]["firewalld"]["enabled"] = "true" if ns.firewalld else "false"
 
-        # Storage config
-        self.config["storage"]["vg_data"]["enabled"] = "false" if ns.no_vg_data else "true"
-        self.config["storage"]["vg_data"]["disk"] = ns.vg_data_disk
+        # Cluster config (CRD spec fields)
+        cfg = self.cluster_config
+        cfg["networking"]["cni"]["type"] = ns.cni
+        cfg["networking"]["firewalld"]["enabled"] = ns.firewalld
+        cfg["cluster"]["ha"]["type"] = ns.ha
+        cfg["features"]["virt"]["enabled"] = ns.virt
+        cfg["features"]["argocd"]["enabled"] = ns.argocd
+        cfg["cluster"]["apiEndPointUseHostName"] = ns.api_hostname != "false"
+        cfg["cluster"]["customApiEndPoint"] = ns.custom_api_endpoint
+        cfg["cluster"]["podNetwork"] = ns.pod_network
+        cfg["cluster"]["serviceNetwork"] = ns.service_network
 
-        # Cluster config (bootstrap/control only)
-        self.config["cluster"]["apiEndPointUseHostName"] = ns.api_hostname
-        self.config["cluster"]["customApiEndPoint"] = ns.custom_api_endpoint
-
-        # Network CIDRs (bootstrap only, but always stored)
-        self.config["cluster"]["podNetwork"] = ns.pod_network
-        self.config["cluster"]["serviceNetwork"] = ns.service_network
-
-        # Cilium-specific config
-        cilium = self.config.setdefault("cni", {}).setdefault("cilium", {})
-        cilium["additionalDevices"] = ns.cilium_additional_devices
-        cilium["gatewayApi"] = "true" if ns.cilium_gateway_api else "false"
-        cilium["l2announcements"] = "true" if ns.cilium_l2_announcements else "false"
-        cilium["hubble"] = "true" if ns.cilium_hubble else "false"
-
-        # Ingress config
-        ingress = self.config.setdefault("ingress", {})
+        # Ingress
         nginx_enabled = not ns.no_ingress_nginx
-        ingress.setdefault("nginx", {})["enabled"] = "true" if nginx_enabled else "false"
-        ingress.setdefault("cilium", {})["enabled"] = "true" if ns.ingress_cilium else "false"
-        ingress["nginx"]["isDefault"] = "true" if ns.ingress_default == "nginx" else "false"
-        ingress["cilium"]["isDefault"] = "true" if ns.ingress_default == "cilium" else "false"
-        ingress["nginx"]["dedicatedIP"] = ns.ingress_nginx_ip
-        ingress["cilium"]["dedicatedIP"] = ns.ingress_cilium_ip
+        cfg["ingress"]["nginx"]["isDefault"] = ns.ingress_default == "nginx"
+        cfg["ingress"]["nginx"]["dedicatedIP"] = ns.ingress_nginx_ip
+        cfg["ingress"]["cilium"]["dedicatedIP"] = ns.ingress_cilium_ip
 
-        # HA config
-        self.config["cluster"]["ha"]["apiControlEndpoint"] = ns.api_control_endpoint
-        self.config["cluster"]["ha"]["apiControlEndpointSubnetSize"] = ns.api_control_endpoint_subnet
+        # HA
+        cfg["cluster"]["ha"]["apiControlEndpoint"] = ns.api_control_endpoint
+        cfg["cluster"]["ha"]["apiControlEndpointSubnetSize"] = ns.api_control_endpoint_subnet
+
+        # Install config (not in CR)
+        icfg = self.install_config
+        icfg["storage"]["vg_data"]["enabled"] = "false" if ns.no_vg_data else "true"
+        icfg["storage"]["vg_data"]["disk"] = ns.vg_data_disk
 
     def handle_line(self, line, line_number=None):
-        """Handle lines inside the %addon section.
-        
-        Lines are expected to be JSON that will be merged with the default config.
-        """
-        self._json_lines.append(line)
+        """Collect body lines (YAML or JSON to merge into the cluster config)."""
+        self._body_lines.append(line)
 
     def finalize(self):
-        """Called after all lines have been processed.
-        
-        Merge the JSON body with the config.
-        """
-        if self._json_lines:
-            json_text = "".join(self._json_lines)
+        """Parse the body as YAML (preferred) or JSON and deep-merge into cluster_config."""
+        if not self._body_lines:
+            return
+
+        body_text = "".join(self._body_lines)
+        user_config = None
+
+        # Try YAML first, then JSON
+        if yaml is not None:
             try:
-                user_config = json.loads(json_text)
-                self._deep_merge(self.config, user_config)
-                log.debug("Merged user config from kickstart body")
-            except json.JSONDecodeError as e:
-                log.warning("Failed to parse JSON in kickstart body: %s", e)
+                user_config = yaml.safe_load(body_text)
+            except Exception:
+                pass
+
+        if user_config is None:
+            try:
+                user_config = json.loads(body_text)
+            except (json.JSONDecodeError, ValueError) as e:
+                log.warning("Failed to parse kickstart body as YAML or JSON: %s", e)
+                return
+
+        if isinstance(user_config, dict):
+            self._deep_merge(self.cluster_config, user_config)
+            log.debug("Merged user config from kickstart body")
 
     def _deep_merge(self, base, override):
         """Deep merge override into base dict."""
@@ -342,75 +182,71 @@ class K4AllData(AddonData):
         section = "\n%addon com_k4all_installer"
         if self.role:
             section += f" --role={self.role}"
-        section += f" --cni={self.config['networking']['cni']['type']}"
-        section += f" --ha={self.config['cluster']['ha']['type']}"
-        
-        if self.config["features"]["virt"]["enabled"] == "true":
-            section += " --virt"
-        if self.config["features"]["argocd"]["enabled"] == "true":
-            section += " --argocd"
-        if self.config["networking"]["firewalld"]["enabled"] == "true":
-            section += " --firewalld"
-        
-        if self.config["storage"]["vg_data"]["enabled"] == "false":
-            section += " --no-vg-data"
-        elif self.config["storage"]["vg_data"]["disk"] != "auto":
-            section += f" --vg-data-disk={self.config['storage']['vg_data']['disk']}"
 
-        api_hostname = self.config["cluster"].get("apiEndPointUseHostName", "false")
-        if api_hostname != "false":
-            section += f" --api-hostname={api_hostname}"
-        
-        custom_ep = self.config["cluster"].get("customApiEndPoint", "")
+        cfg = self.cluster_config
+        section += f" --cni={cfg['networking']['cni']['type']}"
+        section += f" --ha={cfg['cluster']['ha']['type']}"
+
+        if cfg["features"]["virt"]["enabled"]:
+            section += " --virt"
+        if cfg["features"]["argocd"]["enabled"]:
+            section += " --argocd"
+        if cfg["networking"]["firewalld"]["enabled"]:
+            section += " --firewalld"
+
+        # Install-only settings
+        icfg = self.install_config
+        if icfg.get("storage", {}).get("vg_data", {}).get("enabled") == "false":
+            section += " --no-vg-data"
+        elif icfg.get("storage", {}).get("vg_data", {}).get("disk", "auto") != "auto":
+            section += f" --vg-data-disk={icfg['storage']['vg_data']['disk']}"
+
+        api_host = cfg["cluster"].get("apiEndPointUseHostName", False)
+        if api_host and api_host is not False:
+            section += f" --api-hostname={'true' if api_host is True else api_host}"
+
+        custom_ep = cfg["cluster"].get("customApiEndPoint", "")
         if custom_ep:
             section += f" --custom-api-endpoint={custom_ep}"
 
-        pod_net = self.config["cluster"].get("podNetwork", "10.100.0.1/18")
+        pod_net = cfg["cluster"].get("podNetwork", "10.100.0.1/18")
         if pod_net != "10.100.0.1/18":
             section += f" --pod-network={pod_net}"
 
-        svc_net = self.config["cluster"].get("serviceNetwork", "10.96.0.0/16")
+        svc_net = cfg["cluster"].get("serviceNetwork", "10.96.0.0/16")
         if svc_net != "10.96.0.0/16":
             section += f" --service-network={svc_net}"
 
-        cilium = self.config.get("cni", {}).get("cilium", {})
-        cilium_devs = cilium.get("additionalDevices", "")
-        if cilium_devs:
-            section += f" --cilium-additional-devices={cilium_devs}"
-        if cilium.get("gatewayApi", "false") == "true":
-            section += " --cilium-gateway-api"
-        if cilium.get("l2announcements", "false") == "true":
-            section += " --cilium-l2-announcements"
-        if cilium.get("hubble", "false") == "true":
-            section += " --cilium-hubble"
-
-        ingress = self.config.get("ingress", {})
-        if ingress.get("nginx", {}).get("enabled", "true") == "false":
+        # Ingress flags
+        if not cfg.get("ingress", {}).get("nginx", {}).get("isDefault", True):
             section += " --no-ingress-nginx"
-        if ingress.get("cilium", {}).get("enabled", "false") == "true":
+        if cfg.get("ingress", {}).get("cilium", {}).get("dedicatedIP"):
             section += " --ingress-cilium"
-        ing_default = "cilium" if ingress.get("cilium", {}).get("isDefault", "false") == "true" else "nginx"
+        ing_default = "cilium" if not cfg.get("ingress", {}).get("nginx", {}).get("isDefault", True) else "nginx"
         if ing_default != "nginx":
             section += f" --ingress-default={ing_default}"
-        nginx_ip = ingress.get("nginx", {}).get("dedicatedIP", "")
+        nginx_ip = cfg.get("ingress", {}).get("nginx", {}).get("dedicatedIP", "")
         if nginx_ip:
             section += f" --ingress-nginx-ip={nginx_ip}"
-        cilium_ip = ingress.get("cilium", {}).get("dedicatedIP", "")
+        cilium_ip = cfg.get("ingress", {}).get("cilium", {}).get("dedicatedIP", "")
         if cilium_ip:
             section += f" --ingress-cilium-ip={cilium_ip}"
 
-        ha_vip = self.config["cluster"]["ha"].get("apiControlEndpoint", "")
+        ha_vip = cfg["cluster"]["ha"].get("apiControlEndpoint", "")
         if ha_vip:
             section += f" --api-control-endpoint={ha_vip}"
-
-        ha_subnet = self.config["cluster"]["ha"].get("apiControlEndpointSubnetSize", "")
+        ha_subnet = cfg["cluster"]["ha"].get("apiControlEndpointSubnetSize", "")
         if ha_subnet:
             section += f" --api-control-endpoint-subnet={ha_subnet}"
 
+        # Body: dump the cluster config as YAML
         section += "\n"
-        section += json.dumps(self.config, indent=2)
-        section += "\n%end\n"
-        
+        if yaml is not None:
+            section += yaml.safe_dump(cfg, default_flow_style=False, sort_keys=False)
+        else:
+            section += json.dumps(cfg, indent=2)
+        section += "%end\n"
+
         return section
 
 
@@ -420,4 +256,3 @@ class K4AllKickstartSpecification(KickstartSpecification):
     addons = {
         "com_k4all_installer": K4AllData
     }
-

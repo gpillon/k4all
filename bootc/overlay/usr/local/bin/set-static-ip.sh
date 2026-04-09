@@ -10,19 +10,18 @@ fi
 
 source /usr/local/bin/k4all-utils
 
-update_json_field() {
+update_yaml_field() {
     local path="$1"
     local value="$2"
     local config_file="$3"
-    local temp_file="/tmp/temp.json.$$"
 
-    jq "$path |= \"$value\"" "$config_file" > "$temp_file" && mv "$temp_file" "$config_file"
+    yq e "${path} = \"${value}\"" -i "$config_file"
 }
 
-CURRENT_DEV=$(jq -r '.networking.iface.dev' "$K4ALL_CONFIG_FILE")
-if [ "$CURRENT_DEV" = "auto" ]; then
+CURRENT_DEV=$(yq e '.spec.networking.iface.dev' "$K4ALL_CONFIG_FILE")
+if [ "$CURRENT_DEV" = "auto" ] || [ "$CURRENT_DEV" = "null" ] || [ -z "$CURRENT_DEV" ]; then
     PHYS_NET_DEV=$(get_real_interface)
-    update_json_field '.networking.iface.dev' "$PHYS_NET_DEV" "$K4ALL_CONFIG_FILE"
+    update_yaml_field '.spec.networking.iface.dev' "$PHYS_NET_DEV" "$K4ALL_CONFIG_FILE"
 fi
 
 

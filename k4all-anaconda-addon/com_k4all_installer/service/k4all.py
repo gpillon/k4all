@@ -13,7 +13,9 @@ from pyanaconda.core.signal import Signal
 from pyanaconda.modules.common.base import KickstartService
 from pyanaconda.modules.common.containers import TaskContainer
 
-from com_k4all_installer.constants import K4ALL, DEFAULT_CONFIG
+from com_k4all_installer.constants import (
+    K4ALL, DEFAULT_CLUSTER_CONFIG, DEFAULT_INSTALL_CONFIG,
+)
 from com_k4all_installer.service.k4all_interface import K4AllInterface
 from com_k4all_installer.service.installation import (
     K4AllConfigurationTask,
@@ -32,22 +34,21 @@ class K4All(KickstartService):
 
     def __init__(self):
         super().__init__()
-        
-        # Node role (empty = not yet configured)
+
         self._role = ""
-        
-        # Full configuration dict
-        self._config = copy.deepcopy(DEFAULT_CONFIG)
-        
-        # Disk layout (attended mode)
+
+        # ClusterConfig spec fields (written into the CR)
+        self._config = copy.deepcopy(DEFAULT_CLUSTER_CONFIG)
+
+        # Installer-only fields (disk/storage; not written into the CR)
+        self._install_config = copy.deepcopy(DEFAULT_INSTALL_CONFIG)
+
         self._disk_layout_applied = False
         self._disk_layout_kickstart = ""
-        
-        # Backup/restore
+
         self._backup_archive_path = ""
         self._restore_enabled = False
-        
-        # Signals for property changes
+
         self.role_changed = Signal()
         self.config_changed = Signal()
 
@@ -59,20 +60,19 @@ class K4All(KickstartService):
 
     @property
     def kickstart_specification(self):
-        """Return the kickstart specification."""
         return K4AllKickstartSpecification
 
     def process_kickstart(self, data):
         """Process the kickstart data."""
         log.debug("Processing K4All kickstart data...")
         addon_data = data.addons.com_k4all_installer
-        
-        # Finalize to parse JSON body
+
         addon_data.finalize()
-        
+
         self._role = addon_data.role
-        self._config = addon_data.config
-        
+        self._config = addon_data.cluster_config
+        self._install_config = addon_data.install_config
+
         log.info("K4All kickstart: role=%s, cni=%s, ha=%s",
                  self._role,
                  self._config["networking"]["cni"]["type"],
@@ -83,12 +83,12 @@ class K4All(KickstartService):
         log.debug("Generating K4All kickstart data...")
         addon_data = data.addons.com_k4all_installer
         addon_data.role = self._role
-        addon_data.config = self._config
+        addon_data.cluster_config = self._config
+        addon_data.install_config = self._install_config
 
-    # Properties for role
+    # --- Role ---
     @property
     def role(self):
-        """The node role (bootstrap/control/worker)."""
         return self._role
 
     def set_role(self, role):
@@ -96,18 +96,17 @@ class K4All(KickstartService):
         self.role_changed.emit()
         log.debug("Role set to %s", role)
 
-    # Properties for config
+    # --- Full config ---
     @property
     def config(self):
-        """The full K4All configuration dict."""
+        """The full cluster configuration dict (ClusterConfig spec)."""
         return self._config
 
     def set_config(self, config):
         self._config = config
         self.config_changed.emit()
-        log.debug("Config updated")
 
-    # Convenience methods for common config options
+    # --- Convenience properties ---
     @property
     def cni_type(self):
         return self._config["networking"]["cni"]["type"]
@@ -126,34 +125,44 @@ class K4All(KickstartService):
 
     @property
     def virt_enabled(self):
-        return self._config["features"]["virt"]["enabled"] == "true"
+        return bool(self._config["features"]["virt"]["enabled"])
 
     def set_virt_enabled(self, enabled):
-        self._config["features"]["virt"]["enabled"] = "true" if enabled else "false"
+        self._config["features"]["virt"]["enabled"] = bool(enabled)
         self.config_changed.emit()
 
     @property
     def argocd_enabled(self):
-        return self._config["features"]["argocd"]["enabled"] == "true"
+        return bool(self._config["features"]["argocd"]["enabled"])
 
     def set_argocd_enabled(self, enabled):
-        self._config["features"]["argocd"]["enabled"] = "true" if enabled else "false"
+        self._config["features"]["argocd"]["enabled"] = bool(enabled)
         self.config_changed.emit()
 
     @property
     def firewalld_enabled(self):
-        return self._config["networking"]["firewalld"]["enabled"] == "true"
+        return bool(self._config["networking"]["firewalld"]["enabled"])
 
     def set_firewalld_enabled(self, enabled):
-        self._config["networking"]["firewalld"]["enabled"] = "true" if enabled else "false"
+        self._config["networking"]["firewalld"]["enabled"] = bool(enabled)
         self.config_changed.emit()
 
     @property
     def api_endpoint_use_hostname(self):
-        return self._config["cluster"].get("apiEndPointUseHostName", "false")
+        v = self._config["cluster"].get("apiEndPointUseHostName", False)
+        if v is True:
+            return "true"
+        if v is False:
+            return "false"
+        return str(v)
 
     def set_api_endpoint_use_hostname(self, value):
-        self._config["cluster"]["apiEndPointUseHostName"] = value
+        if value == "true":
+            self._config["cluster"]["apiEndPointUseHostName"] = True
+        elif value == "false":
+            self._config["cluster"]["apiEndPointUseHostName"] = False
+        else:
+            self._config["cluster"]["apiEndPointUseHostName"] = value
         self.config_changed.emit()
 
     @property
@@ -196,57 +205,59 @@ class K4All(KickstartService):
         self._config["cluster"]["ha"]["apiControlEndpointSubnetSize"] = value
         self.config_changed.emit()
 
+    # --- Cilium-specific (stored in componentOverrides) ---
+    def _cilium_overrides(self):
+        co = self._config.setdefault("componentOverrides", {})
+        cil = co.setdefault("cilium", {})
+        return cil.setdefault("values", {})
+
     @property
     def cilium_additional_devices(self):
-        return self._config.get("cni", {}).get("cilium", {}).get("additionalDevices", "")
+        return self._cilium_overrides().get("additionalDevices", "")
 
     def set_cilium_additional_devices(self, value):
-        self._config.setdefault("cni", {}).setdefault("cilium", {})["additionalDevices"] = value
+        self._cilium_overrides()["additionalDevices"] = value
         self.config_changed.emit()
 
     @property
     def cilium_gateway_api(self):
-        return self._config.get("cni", {}).get("cilium", {}).get("gatewayApi", "false") == "true"
+        return bool(self._cilium_overrides().get("gatewayApi", False))
 
     def set_cilium_gateway_api(self, enabled):
-        self._config.setdefault("cni", {}).setdefault("cilium", {})["gatewayApi"] = "true" if enabled else "false"
+        self._cilium_overrides()["gatewayApi"] = bool(enabled)
         self.config_changed.emit()
 
     @property
     def cilium_l2_announcements(self):
-        return self._config.get("cni", {}).get("cilium", {}).get("l2announcements", "false") == "true"
+        return bool(self._cilium_overrides().get("l2announcements", False))
 
     def set_cilium_l2_announcements(self, enabled):
-        self._config.setdefault("cni", {}).setdefault("cilium", {})["l2announcements"] = "true" if enabled else "false"
+        self._cilium_overrides()["l2announcements"] = bool(enabled)
         self.config_changed.emit()
 
     @property
     def cilium_hubble(self):
-        return self._config.get("cni", {}).get("cilium", {}).get("hubble", "false") == "true"
+        return bool(self._cilium_overrides().get("hubble", False))
 
     def set_cilium_hubble(self, enabled):
-        self._config.setdefault("cni", {}).setdefault("cilium", {})["hubble"] = "true" if enabled else "false"
+        self._cilium_overrides()["hubble"] = bool(enabled)
         self.config_changed.emit()
 
     # --- Ingress configuration ---
-
-    def _ingress(self):
-        return self._config.setdefault("ingress", {})
-
     @property
     def ingress_nginx_enabled(self):
-        return self._config.get("ingress", {}).get("nginx", {}).get("enabled", "true") == "true"
+        return self._config.get("ingress", {}).get("nginx", {}).get("isDefault", True)
 
     def set_ingress_nginx_enabled(self, enabled):
-        self._ingress().setdefault("nginx", {})["enabled"] = "true" if enabled else "false"
+        self._config.setdefault("ingress", {}).setdefault("nginx", {})["isDefault"] = bool(enabled)
         self.config_changed.emit()
 
     @property
     def ingress_nginx_default(self):
-        return self._config.get("ingress", {}).get("nginx", {}).get("isDefault", "true") == "true"
+        return bool(self._config.get("ingress", {}).get("nginx", {}).get("isDefault", True))
 
     def set_ingress_nginx_default(self, is_default):
-        self._ingress().setdefault("nginx", {})["isDefault"] = "true" if is_default else "false"
+        self._config.setdefault("ingress", {}).setdefault("nginx", {})["isDefault"] = bool(is_default)
         self.config_changed.emit()
 
     @property
@@ -254,23 +265,23 @@ class K4All(KickstartService):
         return self._config.get("ingress", {}).get("nginx", {}).get("dedicatedIP", "")
 
     def set_ingress_nginx_dedicated_ip(self, value):
-        self._ingress().setdefault("nginx", {})["dedicatedIP"] = value
+        self._config.setdefault("ingress", {}).setdefault("nginx", {})["dedicatedIP"] = value
         self.config_changed.emit()
 
     @property
     def ingress_cilium_enabled(self):
-        return self._config.get("ingress", {}).get("cilium", {}).get("enabled", "false") == "true"
+        return bool(self._config.get("ingress", {}).get("cilium", {}).get("dedicatedIP", ""))
 
     def set_ingress_cilium_enabled(self, enabled):
-        self._ingress().setdefault("cilium", {})["enabled"] = "true" if enabled else "false"
+        # Cilium ingress presence is implied by having a dedicated IP or by CNI choice
         self.config_changed.emit()
 
     @property
     def ingress_cilium_default(self):
-        return self._config.get("ingress", {}).get("cilium", {}).get("isDefault", "false") == "true"
+        return not self.ingress_nginx_default
 
     def set_ingress_cilium_default(self, is_default):
-        self._ingress().setdefault("cilium", {})["isDefault"] = "true" if is_default else "false"
+        self._config.setdefault("ingress", {}).setdefault("nginx", {})["isDefault"] = not is_default
         self.config_changed.emit()
 
     @property
@@ -278,11 +289,10 @@ class K4All(KickstartService):
         return self._config.get("ingress", {}).get("cilium", {}).get("dedicatedIP", "")
 
     def set_ingress_cilium_dedicated_ip(self, value):
-        self._ingress().setdefault("cilium", {})["dedicatedIP"] = value
+        self._config.setdefault("ingress", {}).setdefault("cilium", {})["dedicatedIP"] = value
         self.config_changed.emit()
 
     # --- Disk layout (attended mode) ---
-
     @property
     def disk_layout_applied(self):
         return self._disk_layout_applied
@@ -298,7 +308,6 @@ class K4All(KickstartService):
         self._disk_layout_kickstart = ks
 
     # --- Backup/restore ---
-
     @property
     def backup_archive_path(self):
         return self._backup_archive_path
@@ -317,17 +326,16 @@ class K4All(KickstartService):
 
     def configure_with_tasks(self):
         """Return configuration tasks (run at start of installation)."""
-        task = K4AllConfigurationTask()
-        return [task]
+        return [K4AllConfigurationTask()]
 
     def install_with_tasks(self):
         """Return installation tasks (run at end of installation)."""
         task = K4AllInstallationTask(
             sysroot=conf.target.system_root,
             role=self._role,
-            config=self._config,
+            cluster_config=self._config,
+            install_config=self._install_config,
             backup_archive_path=self._backup_archive_path,
             restore_enabled=self._restore_enabled
         )
         return [task]
-

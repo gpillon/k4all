@@ -15,15 +15,17 @@ class TestK4AllData:
         return K4AllData()
 
     def test_defaults(self):
-        """Test default values for K4AllData."""
         data = self._make_data()
-        assert data.role == "bootstrap"
-        assert data.config["networking"]["cni"]["type"] == "calico"
-        assert data.config["cluster"]["ha"]["type"] == "none"
-        assert data.config["features"]["virt"]["enabled"] == "false"
-        assert data.config["features"]["argocd"]["enabled"] == "false"
-        assert data.config["networking"]["firewalld"]["enabled"] == "false"
-        assert data.config["storage"]["vg_data"]["enabled"] == "true"
+        assert data.role == ""
+        assert data.cluster_config["networking"]["cni"]["type"] == "calico"
+        assert data.cluster_config["cluster"]["ha"]["type"] == "none"
+        assert data.cluster_config["features"]["virt"]["enabled"] is False
+        assert data.cluster_config["features"]["argocd"]["enabled"] is False
+        assert data.cluster_config["networking"]["firewalld"]["enabled"] is False
+
+    def test_install_defaults(self):
+        data = self._make_data()
+        assert data.install_config["storage"]["vg_data"]["enabled"] == "true"
 
     # -------------------------------------------------------------------------
     # handle_header tests
@@ -46,42 +48,42 @@ class TestK4AllData:
     def test_parse_cni_cilium(self):
         data = self._make_data()
         data.handle_header(["--cni=cilium"])
-        assert data.config["networking"]["cni"]["type"] == "cilium"
+        assert data.cluster_config["networking"]["cni"]["type"] == "cilium"
 
     def test_parse_ha_keepalived(self):
         data = self._make_data()
         data.handle_header(["--ha=keepalived"])
-        assert data.config["cluster"]["ha"]["type"] == "keepalived"
+        assert data.cluster_config["cluster"]["ha"]["type"] == "keepalived"
 
     def test_parse_ha_kubevip(self):
         data = self._make_data()
         data.handle_header(["--ha=kubevip"])
-        assert data.config["cluster"]["ha"]["type"] == "kubevip"
+        assert data.cluster_config["cluster"]["ha"]["type"] == "kubevip"
 
     def test_parse_virt_flag(self):
         data = self._make_data()
         data.handle_header(["--virt"])
-        assert data.config["features"]["virt"]["enabled"] == "true"
+        assert data.cluster_config["features"]["virt"]["enabled"] is True
 
     def test_parse_argocd_flag(self):
         data = self._make_data()
         data.handle_header(["--argocd"])
-        assert data.config["features"]["argocd"]["enabled"] == "true"
+        assert data.cluster_config["features"]["argocd"]["enabled"] is True
 
     def test_parse_firewalld_flag(self):
         data = self._make_data()
         data.handle_header(["--firewalld"])
-        assert data.config["networking"]["firewalld"]["enabled"] == "true"
+        assert data.cluster_config["networking"]["firewalld"]["enabled"] is True
 
     def test_parse_no_vg_data(self):
         data = self._make_data()
         data.handle_header(["--no-vg-data"])
-        assert data.config["storage"]["vg_data"]["enabled"] == "false"
+        assert data.install_config["storage"]["vg_data"]["enabled"] == "false"
 
     def test_parse_vg_data_disk(self):
         data = self._make_data()
         data.handle_header(["--vg-data-disk=sdb"])
-        assert data.config["storage"]["vg_data"]["disk"] == "sdb"
+        assert data.install_config["storage"]["vg_data"]["disk"] == "sdb"
 
     def test_parse_combined_args(self):
         data = self._make_data()
@@ -91,23 +93,22 @@ class TestK4AllData:
             "--vg-data-disk=nvme0n1"
         ])
         assert data.role == "worker"
-        assert data.config["networking"]["cni"]["type"] == "cilium"
-        assert data.config["cluster"]["ha"]["type"] == "kubevip"
-        assert data.config["features"]["virt"]["enabled"] == "true"
-        assert data.config["features"]["argocd"]["enabled"] == "true"
-        assert data.config["networking"]["firewalld"]["enabled"] == "true"
-        assert data.config["storage"]["vg_data"]["disk"] == "nvme0n1"
+        assert data.cluster_config["networking"]["cni"]["type"] == "cilium"
+        assert data.cluster_config["cluster"]["ha"]["type"] == "kubevip"
+        assert data.cluster_config["features"]["virt"]["enabled"] is True
+        assert data.cluster_config["features"]["argocd"]["enabled"] is True
+        assert data.cluster_config["networking"]["firewalld"]["enabled"] is True
+        assert data.install_config["storage"]["vg_data"]["disk"] == "nvme0n1"
 
     def test_parse_empty_args(self):
-        """Empty args should use all defaults."""
         data = self._make_data()
         data.handle_header([])
-        assert data.role == "bootstrap"
-        assert data.config["networking"]["cni"]["type"] == "calico"
-        assert data.config["cluster"]["ha"]["type"] == "none"
+        assert data.role == ""
+        assert data.cluster_config["networking"]["cni"]["type"] == "calico"
+        assert data.cluster_config["cluster"]["ha"]["type"] == "none"
 
     # -------------------------------------------------------------------------
-    # handle_line + finalize tests (JSON body)
+    # handle_line + finalize tests
     # -------------------------------------------------------------------------
     def test_json_body_merge(self):
         data = self._make_data()
@@ -116,44 +117,45 @@ class TestK4AllData:
         data.handle_line('  "cluster": { "ha": { "type": "keepalived" } }\n')
         data.handle_line('}\n')
         data.finalize()
-        # JSON body should override header args
-        assert data.config["cluster"]["ha"]["type"] == "keepalived"
+        assert data.cluster_config["cluster"]["ha"]["type"] == "keepalived"
 
-    def test_json_body_deep_merge(self):
-        """JSON body should deep merge, not replace entire sub-dicts."""
+    def test_yaml_body_merge(self):
+        data = self._make_data()
+        data.handle_header(["--role=bootstrap"])
+        data.handle_line("cluster:\n")
+        data.handle_line("  ha:\n")
+        data.handle_line("    type: kubevip\n")
+        data.finalize()
+        assert data.cluster_config["cluster"]["ha"]["type"] == "kubevip"
+
+    def test_body_deep_merge(self):
         data = self._make_data()
         data.handle_header([])
-        data.handle_line('{"features": {"virt": {"enabled": "true"}}}\n')
+        data.handle_line('{"features": {"virt": {"enabled": true}}}\n')
         data.finalize()
-        # virt should be updated
-        assert data.config["features"]["virt"]["enabled"] == "true"
-        # argocd should still have default
-        assert data.config["features"]["argocd"]["enabled"] == "false"
+        assert data.cluster_config["features"]["virt"]["enabled"] is True
+        assert data.cluster_config["features"]["argocd"]["enabled"] is False
 
-    def test_json_body_extra_fields(self):
-        """JSON body with extra fields should be preserved."""
+    def test_body_extra_fields(self):
         data = self._make_data()
         data.handle_header([])
         data.handle_line('{"custom_field": "custom_value"}\n')
         data.finalize()
-        assert data.config["custom_field"] == "custom_value"
+        assert data.cluster_config["custom_field"] == "custom_value"
 
-    def test_empty_json_body(self):
-        """No JSON body should leave config unchanged."""
+    def test_empty_body(self):
         data = self._make_data()
         data.handle_header(["--role=worker", "--cni=cilium"])
         data.finalize()
         assert data.role == "worker"
-        assert data.config["networking"]["cni"]["type"] == "cilium"
+        assert data.cluster_config["networking"]["cni"]["type"] == "cilium"
 
-    def test_invalid_json_body(self):
-        """Invalid JSON should be silently ignored (logged warning)."""
+    def test_invalid_body_ignored(self):
         data = self._make_data()
         data.handle_header(["--role=bootstrap"])
-        data.handle_line("this is not valid json\n")
+        data.handle_line("this is not valid yaml or json\n")
         data.finalize()
-        # Config should still be intact
-        assert data.config["networking"]["cni"]["type"] == "calico"
+        assert data.cluster_config["networking"]["cni"]["type"] == "calico"
 
     # -------------------------------------------------------------------------
     # __str__ roundtrip tests
@@ -192,27 +194,30 @@ class TestK4AllData:
         s = str(data)
         assert "--vg-data-disk=sdb" in s
 
-    def test_str_includes_json_body(self):
+    def test_str_body_is_parseable(self):
+        """The body between header and %end should be valid YAML or JSON."""
         data = self._make_data()
         data.handle_header(["--role=bootstrap"])
         data.finalize()
         s = str(data)
-        # The JSON body should be valid JSON
         lines = s.split("\n")
-        # Find the JSON part (between header line and %end)
-        json_lines = []
-        in_json = False
+        body_lines = []
+        in_body = False
         for line in lines:
             if line.startswith("%addon"):
-                in_json = True
+                in_body = True
                 continue
             if line.startswith("%end"):
                 break
-            if in_json:
-                json_lines.append(line)
-        json_text = "\n".join(json_lines).strip()
-        if json_text:
-            parsed = json.loads(json_text)
+            if in_body:
+                body_lines.append(line)
+        body_text = "\n".join(body_lines).strip()
+        if body_text:
+            try:
+                import yaml as _yaml
+                parsed = _yaml.safe_load(body_text)
+            except ImportError:
+                parsed = json.loads(body_text)
             assert isinstance(parsed, dict)
 
     # -------------------------------------------------------------------------
@@ -238,8 +243,6 @@ class TestK4AllData:
 
 
 class TestK4AllKickstartSpecification:
-    """Test the KickstartSpecification class."""
-
     def test_addons_registered(self):
         from com_k4all_installer.service.kickstart import K4AllKickstartSpecification
         assert "com_k4all_installer" in K4AllKickstartSpecification.addons

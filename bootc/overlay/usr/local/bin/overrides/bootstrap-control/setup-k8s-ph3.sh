@@ -22,7 +22,7 @@ function setup_k8s_for_vip()  {
   
   #get EP from the config file
   haEndpoint=$(get_ha_ep_ip)
-  interface=$(jq -r '.cluster.ha.interface' $K4ALL_CONFIG_FILE)
+  interface=$(yq e '.spec.cluster.ha.interface' "$K4ALL_CONFIG_FILE")
 
   if [ "$interface" == "auto" ]; then
     NET_DEV=$(ip route show default | awk '/default/ {print $5}')
@@ -131,7 +131,7 @@ function setup_for_keepalived() {
     keepalived_state="BACKUP"
   fi
 
-  apiControlEndpointSubnetSize=$(jq -r '.cluster.ha.apiControlEndpointSubnetSize' $K4ALL_CONFIG_FILE)
+  apiControlEndpointSubnetSize=$(yq e '.spec.cluster.ha.apiControlEndpointSubnetSize' "$K4ALL_CONFIG_FILE")
 
   echo "vrrp_instance VI_1 {
   state $keepalived_state
@@ -153,17 +153,19 @@ function setup_for_keepalived() {
     
 }
 
-# Check if the configuration is static and edit the Ignition file accordingly
-if jq -e '.cluster.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "keepalived"; then
+HA_TYPE=$(yq e '.spec.cluster.ha.type' "$K4ALL_CONFIG_FILE")
+CUSTOM_EP=$(yq e '.spec.cluster.customApiEndPoint // ""' "$K4ALL_CONFIG_FILE")
+API_HOSTNAME=$(yq e '.spec.cluster.apiEndPointUseHostName' "$K4ALL_CONFIG_FILE")
+
+if [ "$HA_TYPE" = "keepalived" ]; then
   setup_for_keepalived
-# Check if the configuration is static and edit the Ignition file accordingly
-elif jq -e '.cluster.ha.type' "$K4ALL_CONFIG_FILE" | grep -q "kubevip"; then
+elif [ "$HA_TYPE" = "kubevip" ]; then
   setup_for_kubevip
-elif [ "$(jq -r '.cluster.customApiEndPoint // empty' "$K4ALL_CONFIG_FILE")" != "" ]; then
-  set_control_plane_endpoint "$(jq -r '.cluster.customApiEndPoint' "$K4ALL_CONFIG_FILE")"
-elif jq -e '.cluster.apiEndPointUseHostName' "$K4ALL_CONFIG_FILE" | grep -q "short"; then
+elif [ -n "$CUSTOM_EP" ] && [ "$CUSTOM_EP" != "null" ]; then
+  set_control_plane_endpoint "$CUSTOM_EP"
+elif [ "$API_HOSTNAME" = "short" ]; then
   set_control_plane_endpoint "$(hostname)"
-elif jq -e '.cluster.apiEndPointUseHostName' "$K4ALL_CONFIG_FILE" | grep -q "true"; then
+elif [ "$API_HOSTNAME" = "true" ]; then
   set_control_plane_endpoint "$(hostname -f)"
 fi
 
@@ -178,7 +180,6 @@ sh /var/opt/k4all/bin/check-advertise-address.sh
 ' >> /root/.bash_profile
 fi
 
-# Append new block; TODO: fix to enable hostname usage here (maybe checking /etc/k4allconfig.json -> node.apiEndPointUseHostName / node.customApiEndPoint)! 
 if ! grep -q "#### K4ALL HELPER ####" /root/.bash_profile; then
 
   printf '\n

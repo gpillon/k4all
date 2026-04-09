@@ -1,8 +1,0 @@
-controller:
-  allowSnippetAnnotations: true
-  ingressClassResource:
-    enabled: true
-  kind: DaemonSet
-  nodeSelector:
-    kubernetes.io/os: linux
-    node-role.kubernetes.io/control-plane: ""

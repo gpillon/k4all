@@ -1,0 +1,42 @@
+apiVersion: k4all.magesgate.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: k4all-cluster-config
+spec:
+  networking:
+    cni:
+      type: calico
+    firewalld:
+      enabled: false
+    iface:
+      dev: auto
+      ipConfig: dhcp
+  features:
+    virt:
+      enabled: false
+      emulation: auto
+    argocd:
+      enabled: false
+    ovsCni:
+      enabled: false
+  cluster:
+    apiEndPointUseHostName: false
+    customApiEndPoint: ""
+    podNetwork: "10.100.0.1/18"
+    serviceNetwork: "10.96.0.0/16"
+    ha:
+      interface: auto
+      type: none
+      apiControlEndpoint: ""
+      apiControlEndpointSubnetSize: ""
+  ingress:
+    nginx:
+      dedicatedIP: ""
+      isDefault: true
+    cilium:
+      dedicatedIP: ""
+  proxy:
+    httpProxy: ""
+    httpsProxy: ""
+    noProxy: ""
+  componentOverrides: {}

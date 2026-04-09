@@ -80,6 +80,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Stamp version in k4all-release.yaml
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          RELEASE_FILE="data/k4all-release.yaml"
+          yq eval ".spec.osImage.imageTag = \"${VERSION}\"" -i "${RELEASE_FILE}"
+
+          # Pin k4all-operator to the latest stable (non-prerelease) release
+          OPERATOR_TAG=$(curl -fsSL https://api.github.com/repos/gpillon/k4all-operator/releases \
+            | jq -r '[.[] | select(.prerelease == false and .draft == false)] | first | .tag_name // empty')
+          if [ -n "$OPERATOR_TAG" ]; then
+            echo "Pinning k4all-operator to ${OPERATOR_TAG}"
+            yq eval ".spec.components.k4all-operator.version = \"${OPERATOR_TAG}\"" -i "${RELEASE_FILE}"
+          else
+            echo "WARNING: could not resolve latest stable k4all-operator release, keeping default"
+          fi
+
+          cp "${RELEASE_FILE}" bootc/overlay/usr/local/share/k4all-release.yaml
+
       - name: Build and push (${{ matrix.arch }})
         uses: docker/build-push-action@v6
         with:

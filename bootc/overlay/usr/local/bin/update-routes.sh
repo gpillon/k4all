@@ -14,21 +14,17 @@ update_motd() {
     echo " - nip.io Route: https://dashboard.$nip_host/" | sudo tee -a /etc/login_data
 }
 
-NGINX_INGRESS_ENABLED=$(jq -r '.ingress.nginx.enabled // "true"' "$K4ALL_CONFIG_FILE")
-NGINX_IS_DEFAULT=$(jq -r '.ingress.nginx.isDefault // "true"' "$K4ALL_CONFIG_FILE")
-NGINX_INGRESS_DEDICATED_IP=$(jq -r '.ingress.nginx.dedicatedIP // ""' "$K4ALL_CONFIG_FILE")
-
-CILIUM_INGRESS_ENABLED=$(jq -r '.ingress.cilium.enabled // "false"' "$K4ALL_CONFIG_FILE")
-CILIUM_INGRESS_DEDICATED_IP=$(jq -r '.ingress.cilium.dedicatedIP // ""' "$K4ALL_CONFIG_FILE")
-CILIUM_INGRESS_IS_DEFAULT=$(jq -r '.ingress.cilium.isDefault // "false"' "$K4ALL_CONFIG_FILE")
+NGINX_IS_DEFAULT=$(yq e '.spec.ingress.nginx.isDefault // "true"' "$K4ALL_CONFIG_FILE")
+NGINX_DEDICATED_IP=$(yq e '.spec.ingress.nginx.dedicatedIP // ""' "$K4ALL_CONFIG_FILE")
+CILIUM_DEDICATED_IP=$(yq e '.spec.ingress.cilium.dedicatedIP // ""' "$K4ALL_CONFIG_FILE")
 
 FQDN=$(get_fqdn)
 
 INGRESS_IP=$(get_cluster_ip)
-if [ "$NGINX_INGRESS_ENABLED" = "true" ] && [ "$NGINX_INGRESS_DEDICATED_IP" = "true" ] && [ "$NGINX_IS_DEFAULT" = "true" ]; then
-    INGRESS_IP="$NGINX_INGRESS_DEDICATED_IP"
-elif [ "$CILIUM_INGRESS_ENABLED" = "true" ] && [ "$CILIUM_INGRESS_DEDICATED_IP" = "true" ] && [ "$CILIUM_INGRESS_IS_DEFAULT" = "true" ]; then
-    INGRESS_IP="$CILIUM_INGRESS_DEDICATED_IP"
+if [ "$NGINX_IS_DEFAULT" = "true" ] && [ -n "$NGINX_DEDICATED_IP" ] && [ "$NGINX_DEDICATED_IP" != "null" ]; then
+    INGRESS_IP="$NGINX_DEDICATED_IP"
+elif [ "$NGINX_IS_DEFAULT" != "true" ] && [ -n "$CILIUM_DEDICATED_IP" ] && [ "$CILIUM_DEDICATED_IP" != "null" ]; then
+    INGRESS_IP="$CILIUM_DEDICATED_IP"
 fi
 
 # Create the nip.io route

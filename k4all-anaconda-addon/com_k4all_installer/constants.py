@@ -16,8 +16,13 @@ K4ALL = DBusServiceIdentifier(
     message_bus=DBus
 )
 
+# CRD metadata written around the spec when producing /etc/k4all-config.yaml
+CR_API_VERSION = "k4all.magesgate.com/v1alpha1"
+CR_KIND = "ClusterConfig"
+CR_NAME = "k4all-cluster-config"
+
 # File paths (relative to sysroot, without leading slash)
-K4ALL_CONFIG_PATH = "etc/k4all-config.json"
+K4ALL_CONFIG_PATH = "etc/k4all-config.yaml"
 K4ALL_NODE_TYPE_PATH = "etc/node-type"
 
 # Valid values for configuration options
@@ -28,31 +33,22 @@ VALID_EMULATION_VALUES = ("true", "false", "auto")
 VALID_INGRESS_CONTROLLERS = ("nginx", "cilium", "both")
 VALID_INGRESS_IP_MODES = ("auto", "dedicated")
 
-# Default configuration
-DEFAULT_CONFIG = {
-    "version": "2.0.0",
+# Default cluster configuration -- mirrors ClusterConfigSpec in the CRD.
+# This dict is written as `spec:` inside the ClusterConfig CR YAML.
+# All field names use camelCase to match the Go CRD exactly.
+DEFAULT_CLUSTER_CONFIG = {
     "networking": {
         "cni": {"type": "calico"},
-        "firewalld": {"enabled": "false"},
-        "iface": {"dev": "auto", "ipconfig": "dhcp"}
-    },
-    "disk": {
-        "root": {"disk": "auto", "size_mib": "20%"},
-        "keep_lvm": "true"
-    },
-    "storage": {
-        "vg_data": {
-            "enabled": "true",
-            "disk": "auto",
-            "size": "remaining"
-        }
+        "firewalld": {"enabled": False},
+        "iface": {"dev": "auto", "ipConfig": "dhcp"}
     },
     "features": {
-        "virt": {"enabled": "false", "emulation": "auto"},
-        "argocd": {"enabled": "false"}
+        "virt": {"enabled": False, "emulation": "auto"},
+        "argocd": {"enabled": False},
+        "ovsCni": {"enabled": False}
     },
     "cluster": {
-        "apiEndPointUseHostName": "false",
+        "apiEndPointUseHostName": False,
         "customApiEndPoint": "",
         "podNetwork": "10.100.0.1/18",
         "serviceNetwork": "10.96.0.0/16",
@@ -63,30 +59,35 @@ DEFAULT_CONFIG = {
             "apiControlEndpointSubnetSize": ""
         }
     },
-    "cni": {
-        "cilium": {
-            "additionalDevices": "",
-            "gatewayApi": "false",
-            "l2announcements": "false",
-            "hubble": "false"
-        }
-    },
     "ingress": {
         "nginx": {
-            "enabled": "true",
-            "isDefault": "true",
-            "dedicatedIP": ""
+            "dedicatedIP": "",
+            "isDefault": True
         },
         "cilium": {
-            "enabled": "false",
-            "isDefault": "false",
             "dedicatedIP": ""
         }
     },
     "proxy": {
-        "http_proxy": "",
-        "https_proxy": "",
-        "no_proxy": ""
-    }
+        "httpProxy": "",
+        "httpsProxy": "",
+        "noProxy": ""
+    },
+    "componentOverrides": {}
 }
 
+# Installer-only settings -- NOT written into the ClusterConfig CR.
+# These are consumed during the Anaconda installation phase only.
+DEFAULT_INSTALL_CONFIG = {
+    "disk": {
+        "root": {"disk": "auto", "size_mib": "20%"},
+        "keep_lvm": "true"
+    },
+    "storage": {
+        "vg_data": {
+            "enabled": "true",
+            "disk": "auto",
+            "size": "remaining"
+        }
+    }
+}
