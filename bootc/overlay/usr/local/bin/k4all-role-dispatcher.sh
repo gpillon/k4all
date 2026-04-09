@@ -53,17 +53,25 @@ case "$NODE_TYPE" in
         # Bootstrap node: needs bootstrap + bootstrap-control overrides
         copy_overrides "$OVERRIDES_BASE/bootstrap"
         copy_overrides "$OVERRIDES_BASE/bootstrap-control"
+        systemctl enable --now fck8s-operator-deploy.service
+        systemctl enable --now fck8s-node-ready-and-schedulable.service
+        systemctl enable --now fck8s-taint-master-schedulable.service
+        systemctl enable --now fck8s-update-routes.timer
         ;;
     control)
         # Control plane node: needs control + bootstrap-control + control-worker overrides
         copy_overrides "$OVERRIDES_BASE/control"
         copy_overrides "$OVERRIDES_BASE/bootstrap-control"
         copy_overrides "$OVERRIDES_BASE/control-worker"
+        systemctl enable --now fck8s-operator-deploy.service
+        systemctl enable --now fck8s-node-ready-and-schedulable.service
+        systemctl enable --now fck8s-taint-master-schedulable.service
         ;;
     worker)
         # Worker node: needs worker + control-worker overrides
         copy_overrides "$OVERRIDES_BASE/worker"
         copy_overrides "$OVERRIDES_BASE/control-worker"
+        systemctl enable --now fck8s-operator-deploy.service
         ;;
     *)
         echo "WARNING: Unknown node type '$NODE_TYPE'. No role-specific overrides applied."

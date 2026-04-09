@@ -96,13 +96,14 @@ RUN systemctl enable fck8s-first-boot.service && \
     systemctl enable fck8s-k8s-setup-ph3.service && \
     systemctl enable fck8s-k8s-setup-init.service && \
     systemctl enable fck8s-lvm-setup.service && \
-    systemctl enable fck8s-node-ready-and-schedulable.service && \
-    systemctl enable fck8s-taint-master-schedulable.service && \
+    # systemctl enable fck8s-node-ready-and-schedulable.service && \
+    # systemctl enable fck8s-taint-master-schedulable.service && \
     systemctl enable fck8s-restore.service && \
-    systemctl enable fck8s-migrate.service && \
-    systemctl enable fck8s-auto-join.service && \
-    systemctl enable fck8s-update-routes.timer && \
-    systemctl enable fck8s-operator-deploy.service
+    # systemctl enable fck8s-auto-join.service && \
+    # systemctl enable fck8s-operator-deploy.service && \
+    # systemctl enable fck8s-update-routes.timer && \
+    systemctl enable fck8s-migrate.service  
+
 # Component-install services (cni, ingress, dashboard, etc.) are now managed
 # by the k4all-operator and are NOT enabled as systemd units.
 
@@ -135,16 +136,16 @@ RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
     echo 'core:core' | chpasswd
 
 #Download latest operator manifest for fallback and prepull images
-RUN curl -L "https://github.com/gpillon/k4all-operator/releases/latest/download/install.yaml" -o /usr/local/share/k4all-operator-install.yaml && \
-    set -eux; \
-    kubeadm config images list > /tmp/k8s-images.txt; \
-    echo 'ghcr.io/gpillon/k4all-operator:latest' >> /tmp/k8s-images.txt; \
-    while read -r img; do \
-    file="$(printf '%s' "$img" | tr '/:@' '_')"; \
-    skopeo --override-os linux --override-arch amd64 copy \
-        "docker://$img" \
-        "docker-archive:/var/opt/k4all/.imagecache/${file}.tar:${img}"; \
-    done < /tmp/k8s-images.txt
+# RUN curl -L "https://github.com/gpillon/k4all-operator/releases/latest/download/install.yaml" -o /usr/local/share/k4all-operator-install.yaml && \
+#     set -eux; \
+#     kubeadm config images list > /tmp/k8s-images.txt; \
+#     echo 'ghcr.io/gpillon/k4all-operator:latest' >> /tmp/k8s-images.txt; \
+#     while read -r img; do \
+#     file="$(printf '%s' "$img" | tr '/:@' '_')"; \
+#     skopeo copy \
+#         "docker://$img" \
+#         "docker-archive:/var/opt/k4all/.imagecache/${file}.tar:${img}"; \
+#     done < /tmp/k8s-images.txt
 
 # ============================================================================
 # BOOTC LABELS
