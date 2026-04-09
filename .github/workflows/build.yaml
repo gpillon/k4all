@@ -88,7 +88,7 @@ jobs:
       - name: Stamp version in k4all-release.yaml
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          RELEASE_FILE="data/k4all-release.yaml"
+          RELEASE_FILE="bootc/overlay/usr/local/share/k4all-release.yaml"
           yq eval ".spec.osImage.imageTag = \"${VERSION}\"" -i "${RELEASE_FILE}"
 
           # Pin k4all-operator to the latest stable (non-prerelease) release
