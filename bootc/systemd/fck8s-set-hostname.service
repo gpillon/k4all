@@ -1,7 +1,7 @@
 [Unit]
 Description=K4All - Set Hostname
-Requires=fck8s-set-static-ip.service
-After=fck8s-set-static-ip.service
+Requires=network-online.target
+After=network-online.target
 ConditionPathExists=!/opt/k4all/setup-hostname.done
 
 [Service]

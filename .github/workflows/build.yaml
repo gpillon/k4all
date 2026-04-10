@@ -317,9 +317,7 @@ jobs:
             ```
 
             ### ISO Downloads
-            ISOs are compressed with zstd. Decompress with: `unzstd <file>.iso.zst`
-            If the ISO was split (x86_64), reassemble first: `cat <file>.iso.zst.part-* > <file>.iso.zst`
-
+            
             | Variant | x86_64 | aarch64 |
             |---------|--------|---------|
             | **Attended** (interactive GUI) | `k4all-attended-*-x86_64.iso.zst*` | `k4all-attended-*-aarch64.iso.zst` |
@@ -327,9 +325,26 @@ jobs:
             | **Control** (unattended, control plane) | `k4all-control-*-x86_64.iso.zst*` | `k4all-control-*-aarch64.iso.zst` |
             | **Worker** (unattended, worker node) | `k4all-worker-*-x86_64.iso.zst*` | `k4all-worker-*-aarch64.iso.zst` |
 
+
+            #### Linux / Mac
+            ISOs are compressed with zstd. Decompress with: `unzstd <file>.iso.zst`
+            If the ISO was split (x86_64), reassemble first: `cat <file>.iso.zst.part-* > <file>.iso.zst`
+
+            #### Windows
+            - combine the ISOs using the following command: `copy /b k4all-attended-${{ needs.build-image.outputs.version }}-x86_64.iso.zst.part-* k4all-attended-v2.1.0-x86_64.iso.zst`
+            - Extract the ISOs from zst using Winrar > 6.10
+
+            ### ISOs list
+
+
             ### Update existing systems
             ```bash
             bootc switch ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.build-image.outputs.version }}
+
+            ### Why file are split ?
+            - The ISOs are split to avoid GitHub Actions timeout when uploading the artifacts.
+            - The ISOs are split to avoid GitHub Actions timeout when downloading the artifacts.
+            - I cant afford to pay for more storage on GitHub.
             ```
           files: isos/k4all-*
         env:

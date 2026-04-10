@@ -77,6 +77,29 @@ spec:
       source: "https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ version }}/standard-install.yaml"
       custom: {}
 
+    nmstate:
+      custom: {}
+      dependsOn:
+        - calico
+        - cilium
+      management: Managed
+      namespace: nmstate
+      inlineManifests:
+        - |
+          apiVersion: nmstate.io/v1
+          kind: NMState
+          metadata:
+            name: nmstate
+      sources:
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/nmstate.io_nmstates.yaml
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/namespace.yaml
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/service_account.yaml
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/role.yaml
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/role_binding.yaml
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/operator.yaml
+      type: manifest
+      version: v0.86.0
+
     # --- HA ---
     kube-vip:
       type: static-pod
@@ -183,7 +206,7 @@ spec:
     metrics-server:
       type: manifest
       version: "latest"
-      source: "https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"
+      source: "https://github.com/kubernetes-sigs/metrics-server/releases/{{ version }}/download/components.yaml"
       namespace: kube-system
       dependsOn:
         - calico

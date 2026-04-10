@@ -240,7 +240,6 @@ info "8. SYSTEMD UNITS - Unit files exist"
 # =============================================================================
 UNITS=(
     fck8s-role-dispatcher.service
-    fck8s-set-static-ip.service
     fck8s-set-hostname.service
     fck8s-setup-proxy.service
     fck8s-k8s-setup-ph2.service

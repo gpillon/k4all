@@ -1,7 +1,7 @@
 [Unit]
 Description=K4All - First Boot Safety Net (ensure config files exist)
 DefaultDependencies=no
-Before=fck8s-role-dispatcher.service fck8s-set-static-ip.service fck8s-setup-proxy.service
+Before=fck8s-role-dispatcher.service fck8s-setup-proxy.service
 After=local-fs.target
 ConditionPathExists=!/opt/k4all/first-boot.done
 

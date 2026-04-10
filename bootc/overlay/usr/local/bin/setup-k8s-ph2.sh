@@ -9,7 +9,9 @@ fi
 
 source /usr/local/bin/k4all-utils
 
-# Function to enable and start systemd services
+# OVS bridge creation is now handled by the k4all operator via nmstate NNCP
+# when the ovsBridge feature flag is enabled.
+
 enable_service_if_not_running() {
   local service_name=$1
   if ! systemctl is-enabled --quiet "$service_name"; then
@@ -17,32 +19,6 @@ enable_service_if_not_running() {
   fi
 }
 
-# Function to check if an nmcli connection exists, and add it if it doesn't
-add_nmcli_connection_if_not_exists() {
-  local con_name=$1
-  shift
-  if ! nmcli con show "$con_name" >/dev/null 2>&1; then
-    nmcli con add "$@"
-  fi
-}
-
-# Function to modify nmcli connection settings only if different
-modify_nmcli_connection_if_needed() {
-  local con_name=$1
-  local key=$2
-  local new_value=$3
-  local current_value
-  if [ "$key" = "ipv4.addresses" ]; then
-    nmcli con modify "$con_name" ipv4.method manual "$key" "$new_value"
-  else
-    current_value=$(nmcli -g "$key" con show "$con_name")
-    if [ "$current_value" != "$new_value" ]; then
-      nmcli con modify "$con_name" "$key" "$new_value"
-    fi
-  fi
-}
-
-# Function to add a firewall rule if it doesn't already exist
 add_firewalld_rule_if_not_exists() {
   local port_protocol=$1
   if ! firewall-cmd --query-port="$port_protocol" >/dev/null 2>&1; then
@@ -50,76 +26,14 @@ add_firewalld_rule_if_not_exists() {
   fi
 }
 
-NET_DEV=$(get_network_device)
-PHYS_NET_DEV=$(get_real_interface)
-
-CURRENT_IP_CONFIG=$(yq e '.spec.networking.iface.ipConfig' "$K4ALL_CONFIG_FILE")
-MAC_ADDR=$(ip link show "${PHYS_NET_DEV}" | awk '/ether/ {print $2}')
-
-enable_service_if_not_running openvswitch
-
-# Add ovs-bridge, ovs-bridge-port, ovs-bridge-int, ovs-port-eth, and ovs-port-eth-int if not exists
-add_nmcli_connection_if_not_exists ovs-bridge type ovs-bridge conn.interface ovs-bridge con-name ovs-bridge
-add_nmcli_connection_if_not_exists ovs-bridge-port type ovs-port conn.interface port-ovs-bridge master ovs-bridge con-name ovs-bridge-port
-add_nmcli_connection_if_not_exists ovs-bridge-int type ovs-interface slave-type ovs-port conn.interface ovs-bridge master ovs-bridge-port con-name ovs-bridge-int
-add_nmcli_connection_if_not_exists ovs-port-eth type ovs-port conn.interface ovs-port-eth master ovs-bridge con-name ovs-port-eth
-add_nmcli_connection_if_not_exists ovs-port-eth-int type ethernet conn.interface "${PHYS_NET_DEV}" master ovs-port-eth con-name ovs-port-eth-int
-
-if [ "$CURRENT_IP_CONFIG" = "static" ]; then
-  IP_ADDR=$(yq e '.spec.networking.iface.ipaddr' "$K4ALL_CONFIG_FILE")
-  GATEWAY=$(yq e '.spec.networking.iface.gateway' "$K4ALL_CONFIG_FILE")
-  DNS=$(yq e '.spec.networking.iface.dns' "$K4ALL_CONFIG_FILE")
-  SUBNET_MASK=$(yq e '.spec.networking.iface.subnetMask' "$K4ALL_CONFIG_FILE")
-  DNS_SEARCH=$(yq e '.spec.networking.iface.dnsSearch' "$K4ALL_CONFIG_FILE" | sed 's/,/ /g')
-  CIDR=$(mask_to_cidr $SUBNET_MASK)
-  IP_CIDR="$IP_ADDR/$CIDR"
-
-  echo "Using static IP configuration from JSON:"
-  echo "IP Address: $IP_ADDR"
-  echo "Gateway: $GATEWAY"
-  echo "DNS: $DNS"
-  echo "Subnet Mask: $SUBNET_MASK"
-  echo "Search Domains: $DNS_SEARCH"
-  echo "IP with CIDR: $IP_CIDR"
-
-  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.addresses "${IP_CIDR}"
-  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.gateway "${GATEWAY}"
-  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns "${DNS}"
-  modify_nmcli_connection_if_needed ovs-bridge-int ipv4.dns-search "${DNS_SEARCH}"
-  
-else
-  # echo "WARNING! this should not happen...."
-  # Retrieve IP, Gateway, DNS, and Domain information from the original network device
-  # IP_CIDR=$(nmcli -g IP4.ADDRESS dev show "${NET_DEV}" | head -n 1 | cut -d'|' -f1)
-  # GATEWAY=$(nmcli -g IP4.GATEWAY dev show "${NET_DEV}")
-  # DNS=$(nmcli -t -f IP4.DNS dev show "${NET_DEV}" | awk -F":" '{print $2}' | paste -sd "," -)
-  # DNS_SEARCH=$(nmcli -g IP4.DOMAIN dev show "${NET_DEV}")
-
-modify_nmcli_connection_if_needed ovs-bridge-int ipv4.method auto
-fi
-
-modify_nmcli_connection_if_needed ovs-bridge-int 802-3-ethernet.cloned-mac-address "${MAC_ADDR}"
-# modify_nmcli_connection_if_needed ovs-port-eth-int ethernet.cloned-mac-address "${MAC_ADDR}"
-
-# Bring up the ovs-port-eth-int and ovs-bridge-int connections
-nmcli con up ovs-port-eth-int
-nmcli con up ovs-bridge-int
-
-# Enable and start kubelet, crio, and openvswitch services
 enable_service_if_not_running crio
 enable_service_if_not_running kubelet
 
-# Check if networking.firewalld.enabled is true in $K4ALL_CONFIG_FILE
 if [ "$(yq e '.spec.networking.firewalld.enabled' "$K4ALL_CONFIG_FILE")" = "true" ]; then
   enable_service_if_not_running firewalld
 else
   echo "Firewalld is disabled. Disabling it..."
   systemctl stop firewalld && systemctl disable firewalld
-fi
-
-# Remove the old NetworkManager connection if it exists
-if [ -f "/etc/NetworkManager/system-connections/${NET_DEV}.nmconnection" ]; then
-  mv -f "/etc/NetworkManager/system-connections/${NET_DEV}.nmconnection" "/etc/NetworkManager/system-connections/${NET_DEV}.nmconnection.disabled"
 fi
 
 # Check if firewalld is enabled

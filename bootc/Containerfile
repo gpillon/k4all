@@ -33,6 +33,7 @@ RUN dnf install -y \
     kubeadm kubelet kubectl \
     cri-o \
     openvswitch NetworkManager-ovs \
+    nmstate \
     skopeo \
     lvm2 \
     jq \
@@ -88,7 +89,6 @@ RUN systemctl enable crio.service && \
 
 # Enable pre-operator bootstrap services (these must run before the operator deploys)
 RUN systemctl enable fck8s-first-boot.service && \
-    systemctl enable fck8s-set-static-ip.service && \
     systemctl enable fck8s-set-hostname.service && \
     systemctl enable fck8s-setup-proxy.service && \
     systemctl enable fck8s-role-dispatcher.service && \
@@ -136,16 +136,16 @@ RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
     echo 'core:core' | chpasswd
 
 #Download latest operator manifest for fallback and prepull images
-# RUN curl -L "https://github.com/gpillon/k4all-operator/releases/latest/download/install.yaml" -o /usr/local/share/k4all-operator-install.yaml && \
-#     set -eux; \
-#     kubeadm config images list > /tmp/k8s-images.txt; \
-#     echo 'ghcr.io/gpillon/k4all-operator:latest' >> /tmp/k8s-images.txt; \
-#     while read -r img; do \
-#     file="$(printf '%s' "$img" | tr '/:@' '_')"; \
-#     skopeo copy \
-#         "docker://$img" \
-#         "docker-archive:/var/opt/k4all/.imagecache/${file}.tar:${img}"; \
-#     done < /tmp/k8s-images.txt
+RUN curl -L "https://github.com/gpillon/k4all-operator/releases/latest/download/install.yaml" -o /usr/local/share/k4all-operator-install.yaml && \
+    set -eux; \
+    kubeadm config images list > /tmp/k8s-images.txt; \
+    echo 'ghcr.io/gpillon/k4all-operator:latest' >> /tmp/k8s-images.txt; \
+    while read -r img; do \
+    file="$(printf '%s' "$img" | tr '/:@' '_')"; \
+    skopeo copy \
+        "docker://$img" \
+        "docker-archive:/var/opt/k4all/.imagecache/${file}.tar:${img}"; \
+    done < /tmp/k8s-images.txt
 
 # ============================================================================
 # BOOTC LABELS

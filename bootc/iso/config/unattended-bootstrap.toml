@@ -28,8 +28,7 @@ services --enabled=sshd
 {
   "networking": {
     "cni": { "type": "calico" },
-    "firewalld": { "enabled": "false" },
-    "iface": { "dev": "auto", "ipconfig": "dhcp" }
+    "firewalld": { "enabled": "false" }
   },
   "storage": {
     "vg_data": { "enabled": "true", "disk": "auto" }

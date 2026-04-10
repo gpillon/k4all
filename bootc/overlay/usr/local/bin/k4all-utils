@@ -146,19 +146,7 @@ finalize_k8s_setup_for_user() {
 }
 
 function get_network_device() {
-    if [ ! -f "$K4ALL_CONFIG_FILE" ]; then
-        ip route show default | awk '/default/ {print $5; exit}'
-        return
-    fi
-
-    local net_dev
-    net_dev=$(yq e '.spec.networking.iface.dev' "$K4ALL_CONFIG_FILE")
-
-    if [ "$net_dev" = "auto" ] || [ "$net_dev" = "null" ] || [ -z "$net_dev" ]; then
-        net_dev=$(ip route show default | awk '/default/ {print $5; exit}')
-    fi
-
-    echo "$net_dev"
+    ip route show default | awk '/default/ {print $5; exit}'
 }
 
 # Function to get the first available physical network interface

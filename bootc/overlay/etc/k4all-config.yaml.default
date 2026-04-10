@@ -8,9 +8,6 @@ spec:
       type: calico
     firewalld:
       enabled: false
-    iface:
-      dev: auto
-      ipConfig: dhcp
   features:
     virt:
       enabled: false
@@ -18,6 +15,8 @@ spec:
     argocd:
       enabled: false
     ovsCni:
+      enabled: false
+    ovsBridge:
       enabled: false
   cluster:
     apiEndPointUseHostName: false

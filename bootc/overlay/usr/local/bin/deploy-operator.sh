@@ -14,7 +14,6 @@ if [ -f "$DONE_FILE" ]; then
     exit 0
 fi
 
-
 RELEASE_MANIFEST="/etc/k4all-release.yaml"
 CONFIG_YAML="/etc/k4all-config.yaml"
 OPERATOR_INSTALL_YAML="/tmp/k4all-operator-install.yaml"
@@ -23,8 +22,6 @@ export KUBECONFIG
 
 MAX_WAIT=300
 INTERVAL=5
-
-
 
 # =========================================================================
 # Wait for the API server to become ready
@@ -52,7 +49,7 @@ apply_cluster_config() {
         echo "ERROR: $CONFIG_YAML not found"
         exit 1
     fi
-    kubectl apply -f "$CONFIG_YAML"
+    kubectl apply --validate=ignore -f "$CONFIG_YAML"
     echo "ClusterConfig CR applied."
 }
 

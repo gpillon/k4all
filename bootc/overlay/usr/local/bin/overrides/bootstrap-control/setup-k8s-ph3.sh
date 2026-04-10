@@ -195,7 +195,7 @@ fi
 echo " - Nodeport Fallback Route: https://$HOST_IP:32323"
 echo ""
 echo "Using this token"
-echo "$(kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath={".data.token"} | base64 -d)"
+echo "$(kubectl get secret headlamp-admin-token -n headlamp -o jsonpath={".data.token"} | base64 -d)"
 echo ""
 #### END K4ALL HELPER ####
 ' >> /root/.bash_profile

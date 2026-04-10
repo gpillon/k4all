@@ -20,7 +20,6 @@ migrate_json_to_yaml() {
 
     local cni_type firewalld_enabled virt_enabled virt_emulation argocd_enabled
     local ha_type ha_interface ha_vip ha_subnet
-    local iface_dev iface_ipconfig
     local custom_api_ep api_hostname
     local http_proxy https_proxy no_proxy
 
@@ -33,8 +32,7 @@ migrate_json_to_yaml() {
     ha_interface=$(jq -r '.cluster.ha.interface // "auto"' "$CONFIG_JSON")
     ha_vip=$(jq -r '.cluster.ha.apiControlEndpoint // ""' "$CONFIG_JSON")
     ha_subnet=$(jq -r '.cluster.ha.apiControlEndpointSubnetSize // ""' "$CONFIG_JSON")
-    iface_dev=$(jq -r '.networking.iface.dev // "auto"' "$CONFIG_JSON")
-    iface_ipconfig=$(jq -r '.networking.iface.ipconfig // "dhcp"' "$CONFIG_JSON")
+    # iface removed: network config now handled by Anaconda/NetworkManager
     custom_api_ep=$(jq -r '.cluster.customApiEndPoint // ""' "$CONFIG_JSON")
     api_hostname=$(jq -r '.cluster.apiEndPointUseHostName // "false"' "$CONFIG_JSON")
     http_proxy=$(jq -r '.proxy.http_proxy // ""' "$CONFIG_JSON")
@@ -51,8 +49,6 @@ migrate_json_to_yaml() {
 
     yq e ".spec.networking.cni.type = \"${cni_type}\"" -i "$CONFIG_YAML"
     yq e ".spec.networking.firewalld.enabled = ${firewalld_enabled}" -i "$CONFIG_YAML"
-    yq e ".spec.networking.iface.dev = \"${iface_dev}\"" -i "$CONFIG_YAML"
-    yq e ".spec.networking.iface.ipConfig = \"${iface_ipconfig}\"" -i "$CONFIG_YAML"
     yq e ".spec.features.virt.enabled = ${virt_enabled}" -i "$CONFIG_YAML"
     yq e ".spec.features.virt.emulation = \"${virt_emulation}\"" -i "$CONFIG_YAML"
     yq e ".spec.features.argocd.enabled = ${argocd_enabled}" -i "$CONFIG_YAML"

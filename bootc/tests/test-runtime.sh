@@ -157,7 +157,6 @@ phase "PHASE 2: PRE-INIT SERVICE CHAIN"
 exec_in "rm -f /opt/k4all/*.done"
 
 info "Layer 0: base services"
-run_svc fck8s-set-static-ip.service   "set-static-ip"    30  || true
 run_svc fck8s-setup-proxy.service     "setup-proxy"       30  || true
 run_svc fck8s-role-dispatcher.service "role-dispatcher"    20  || true
 if exec_in "test -x /var/opt/k4all/bin/enable-cluster.sh"; then
