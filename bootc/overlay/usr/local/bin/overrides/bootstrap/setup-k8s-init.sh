@@ -51,9 +51,9 @@ if [ -f "$K4ALL_CONFIG_FILE" ]; then
   SVC_NET=$(yq e '.spec.cluster.serviceNetwork // "10.96.0.0/16"' "$K4ALL_CONFIG_FILE")
   CNI=$(yq e '.spec.networking.cni.type // "calico"' "$K4ALL_CONFIG_FILE")
 
-  if [ "$CNI" == "cilium" ]; then
-    yq e '(select(.kind == "ClusterConfiguration") | .proxy.disabled) = true' -i "$K8S_CONFIG"
-  fi
+  # if [ "$CNI" == "cilium" ]; then
+  #   yq e '(select(.kind == "ClusterConfiguration") | .proxy.disabled) = true' -i "$K8S_CONFIG"
+  # fi
 
   echo "Setting pod network to $POD_NET and service network to $SVC_NET"
   yq e '(select(.kind == "ClusterConfiguration") | .networking.podSubnet) = "'"$POD_NET"'"' -i "$K8S_CONFIG"

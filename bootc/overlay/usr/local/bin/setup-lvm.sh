@@ -83,6 +83,14 @@ else
     echo "Volume group vg_data already exists."
 fi
 
+# create thinvolume "thin-pool"
+if ! lvdisplay vg_data/thin-pool &>/dev/null; then
+    echo "Creating thin volume group vg_data/thin-pool..."
+    lvcreate -l 100%FREE -T -n thin-pool vg_data
+else
+    echo "Thin volume group vg_data/thin-pool already exists."
+fi
+
 # Mark setup complete
 mkdir -p /opt/k4all
 touch "$DONE_FILE"
