@@ -118,6 +118,8 @@ spec:
       namespace: ingress-nginx
       values:
         controller:
+          extraArgs:
+            - --enable-ssl-passthrough
           allowSnippetAnnotations: true
           ingressClassResource:
             enabled: true
@@ -194,8 +196,9 @@ spec:
             scopes: ""
           pluginsDir: /headlamp/plugins
         service:
-          type: ClusterIP
+          type: NodePort
           port: 4466
+          nodePort: 32323
         ingress:
           enabled: false
       dependsOn:
