@@ -38,6 +38,7 @@ RUN dnf install -y \
     lvm2 \
     jq \
     firewalld \
+    cri-tools \
     etcd \
     keepalived \
     openssl bash-completion tar gzip curl wget git python3 \
