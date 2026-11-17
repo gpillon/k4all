@@ -17,4 +17,3 @@ from com_k4all_installer.service.k4all import K4All
 service = K4All()
 log.info("K4All D-Bus service initialized, running...")
 service.run()
-

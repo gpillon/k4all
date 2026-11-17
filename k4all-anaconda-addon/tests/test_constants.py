@@ -68,8 +68,7 @@ class TestConstants:
         net = DEFAULT_CLUSTER_CONFIG["networking"]
         assert net["cni"]["type"] == "calico"
         assert net["firewalld"]["enabled"] is False
-        assert net["iface"]["dev"] == "auto"
-        assert net["iface"]["ipConfig"] == "dhcp"
+        assert "iface" not in net
 
     def test_cluster_config_features(self):
         from com_k4all_installer.constants import DEFAULT_CLUSTER_CONFIG
@@ -77,6 +76,7 @@ class TestConstants:
         assert features["virt"]["enabled"] is False
         assert features["argocd"]["enabled"] is False
         assert features["ovsCni"]["enabled"] is False
+        assert features["ovsBridge"]["enabled"] is True
 
     def test_cluster_config_cluster(self):
         from com_k4all_installer.constants import DEFAULT_CLUSTER_CONFIG
@@ -110,6 +110,10 @@ class TestConstants:
         assert storage["vg_data"]["enabled"] == "true"
         assert storage["vg_data"]["disk"] == "auto"
         assert storage["vg_data"]["size"] == "remaining"
+
+    def test_install_config_keeps_interactive_20_80_default(self):
+        from com_k4all_installer.constants import DEFAULT_INSTALL_CONFIG
+        assert DEFAULT_INSTALL_CONFIG["disk"]["root"]["size_mib"] == "20%"
 
     def test_cluster_config_is_json_serializable(self):
         from com_k4all_installer.constants import DEFAULT_CLUSTER_CONFIG

@@ -1,6 +1,6 @@
 # K4All bootc-image-builder config — Unattended Bootstrap Node
 # Builds an anaconda-iso that auto-installs a bootstrap (first) K4All node.
-# Disk layout: 20% OS (rootvg) / remaining 80% for vg_data (K4All storage).
+# K4All layout: 80% OS (rootvg) / remaining 20% for vg_data, no swap.
 # Note: customizations.user CANNOT coexist with customizations.installer.kickstart
 
 [customizations.iso]
@@ -21,55 +21,31 @@ timezone UTC --utc
 network --bootproto=dhcp --device=link --activate --onboot=on
 services --enabled=sshd
 
-# Dynamic 20/80 partitioning — calculated in %pre
+# Apply the same K4All storage policy used by the addon's dedicated spoke.
 %include /tmp/part-include
 
 %addon com_k4all_installer --role=bootstrap --cni=calico --ha=none
 {
   "networking": {
     "cni": { "type": "calico" },
-    "firewalld": { "enabled": "false" }
-  },
-  "storage": {
-    "vg_data": { "enabled": "true", "disk": "auto" }
+    "firewalld": { "enabled": false }
   },
   "cluster": {
-    "apiEndPointUseHostName": "false",
+    "apiEndPointUseHostName": false,
     "ha": { "type": "none" }
   },
   "features": {
-    "virt": { "enabled": "false", "emulation": "auto" },
-    "argocd": { "enabled": "false" }
+    "virt": { "enabled": false, "emulation": "auto" },
+    "argocd": { "enabled": false },
+    "ovsBridge": { "enabled": true }
   }
 }
 %end
 
-%pre --interpreter=/bin/bash
-# Calculate 20% of disk for OS, rest for vg_data
-DISK=$(lsblk -ndo NAME,TYPE | awk '/disk/{print $1; exit}')
-DISK_MB=$(lsblk -ndb -o SIZE /dev/$DISK | awk '{printf "%d", $1/1024/1024}')
-BOOT_MB=1024
-EFI_MB=600
-RESERVED=$((BOOT_MB + EFI_MB))
-USABLE=$((DISK_MB - RESERVED))
-OS_MB=$((USABLE * 20 / 100))
-# Minimum 30 GB for OS, cap at 200 GB
-[ "$OS_MB" -lt 30000 ] && OS_MB=30000
-[ "$OS_MB" -gt 200000 ] && OS_MB=200000
-SWAP_MB=4000
-ROOT_MB=$((OS_MB - SWAP_MB))
-
-cat > /tmp/part-include <<EOF
-bootloader --location=mbr
-clearpart --all --initlabel --disklabel=gpt
-part /boot --fstype=xfs --size=${BOOT_MB}
-part /boot/efi --fstype=efi --size=${EFI_MB}
-part pv.01 --size=${OS_MB}
-part pv.02 --size=1 --grow
-volgroup rootvg pv.01
-logvol / --vgname=rootvg --fstype=xfs --size=${ROOT_MB} --name=rootlv
-logvol swap --vgname=rootvg --size=${SWAP_MB} --name=swaplv
-EOF
+%pre --interpreter=/bin/bash --log=/tmp/k4all-storage-layout.log
+set -euo pipefail
+python3 /usr/share/anaconda/addons/com_k4all_installer/storage_layout.py \
+  --output /tmp/part-include --os-percent 80
 %end
 
 %post --nochroot

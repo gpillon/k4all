@@ -21,6 +21,7 @@ class TestK4AllData:
         assert data.cluster_config["cluster"]["ha"]["type"] == "none"
         assert data.cluster_config["features"]["virt"]["enabled"] is False
         assert data.cluster_config["features"]["argocd"]["enabled"] is False
+        assert data.cluster_config["features"]["ovsBridge"]["enabled"] is True
         assert data.cluster_config["networking"]["firewalld"]["enabled"] is False
 
     def test_install_defaults(self):
@@ -120,6 +121,7 @@ class TestK4AllData:
         assert data.cluster_config["cluster"]["ha"]["type"] == "keepalived"
 
     def test_yaml_body_merge(self):
+        pytest.importorskip("yaml")
         data = self._make_data()
         data.handle_header(["--role=bootstrap"])
         data.handle_line("cluster:\n")
@@ -136,12 +138,28 @@ class TestK4AllData:
         assert data.cluster_config["features"]["virt"]["enabled"] is True
         assert data.cluster_config["features"]["argocd"]["enabled"] is False
 
-    def test_body_extra_fields(self):
+    def test_body_extra_fields_rejected(self):
         data = self._make_data()
         data.handle_header([])
         data.handle_line('{"custom_field": "custom_value"}\n')
+        with pytest.raises(ValueError, match="Unknown ClusterConfig field"):
+            data.finalize()
+
+    def test_legacy_string_booleans_are_normalized(self):
+        data = self._make_data()
+        data.handle_header([])
+        data.handle_line('{"features": {"virt": {"enabled": "true"}}, ')
+        data.handle_line('"networking": {"firewalld": {"enabled": "false"}}}\n')
         data.finalize()
-        assert data.cluster_config["custom_field"] == "custom_value"
+        assert data.cluster_config["features"]["virt"]["enabled"] is True
+        assert data.cluster_config["networking"]["firewalld"]["enabled"] is False
+
+    def test_invalid_boolean_string_rejected(self):
+        data = self._make_data()
+        data.handle_header([])
+        data.handle_line('{"features": {"virt": {"enabled": "yes"}}}\n')
+        with pytest.raises(ValueError, match="must be a boolean"):
+            data.finalize()
 
     def test_empty_body(self):
         data = self._make_data()
@@ -150,12 +168,12 @@ class TestK4AllData:
         assert data.role == "worker"
         assert data.cluster_config["networking"]["cni"]["type"] == "cilium"
 
-    def test_invalid_body_ignored(self):
+    def test_invalid_body_rejected(self):
         data = self._make_data()
         data.handle_header(["--role=bootstrap"])
         data.handle_line("this is not valid yaml or json\n")
-        data.finalize()
-        assert data.cluster_config["networking"]["cni"]["type"] == "calico"
+        with pytest.raises(ValueError, match="valid JSON mapping"):
+            data.finalize()
 
     # -------------------------------------------------------------------------
     # __str__ roundtrip tests

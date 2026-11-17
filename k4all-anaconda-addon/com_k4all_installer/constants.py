@@ -39,13 +39,13 @@ VALID_INGRESS_IP_MODES = ("auto", "dedicated")
 DEFAULT_CLUSTER_CONFIG = {
     "networking": {
         "cni": {"type": "calico"},
-        "firewalld": {"enabled": False},
-        "iface": {"dev": "auto", "ipConfig": "dhcp"}
+        "firewalld": {"enabled": False}
     },
     "features": {
         "virt": {"enabled": False, "emulation": "auto"},
         "argocd": {"enabled": False},
-        "ovsCni": {"enabled": False}
+        "ovsCni": {"enabled": False},
+        "ovsBridge": {"enabled": True}
     },
     "cluster": {
         "apiEndPointUseHostName": False,

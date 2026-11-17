@@ -20,6 +20,7 @@ from pyanaconda.core.kickstart.addon import AddonData
 
 from com_k4all_installer.constants import (
     VALID_ROLES, VALID_CNI_TYPES, VALID_HA_TYPES,
+    VALID_EMULATION_VALUES,
     DEFAULT_CLUSTER_CONFIG, DEFAULT_INSTALL_CONFIG,
 )
 
@@ -29,15 +30,13 @@ log = logging.getLogger(__name__)
 class K4AllData(AddonData):
     """The kickstart data for the K4All addon.
 
-    Example kickstart syntax:
+    Example kickstart syntax (JSON is always available; YAML requires PyYAML):
 
     %addon com_k4all_installer --role=bootstrap --cni=calico
-    networking:
-      cni:
-        type: calico
-    features:
-      virt:
-        enabled: true
+    {
+      "networking": {"cni": {"type": "calico"}},
+      "features": {"virt": {"enabled": true}}
+    }
     %end
     """
 
@@ -144,30 +143,95 @@ class K4AllData(AddonData):
         self._body_lines.append(line)
 
     def finalize(self):
-        """Parse the body as YAML (preferred) or JSON and deep-merge into cluster_config."""
-        if not self._body_lines:
-            return
+        """Parse, merge, normalize, and validate the ClusterConfig body."""
+        if self._body_lines:
+            body_text = "".join(self._body_lines)
+            user_config = None
+            parse_error = None
 
-        body_text = "".join(self._body_lines)
-        user_config = None
+            # Try YAML first, then JSON.
+            if yaml is not None:
+                try:
+                    user_config = yaml.safe_load(body_text)
+                except Exception as e:
+                    parse_error = e
 
-        # Try YAML first, then JSON
-        if yaml is not None:
-            try:
-                user_config = yaml.safe_load(body_text)
-            except Exception:
-                pass
+            if user_config is None:
+                try:
+                    user_config = json.loads(body_text)
+                except (json.JSONDecodeError, ValueError) as e:
+                    parse_error = e
 
-        if user_config is None:
-            try:
-                user_config = json.loads(body_text)
-            except (json.JSONDecodeError, ValueError) as e:
-                log.warning("Failed to parse kickstart body as YAML or JSON: %s", e)
-                return
+            if not isinstance(user_config, dict):
+                raise ValueError(
+                    "K4All kickstart body must be a valid JSON mapping "
+                    "(YAML also works when PyYAML is installed)"
+                ) from parse_error
 
-        if isinstance(user_config, dict):
             self._deep_merge(self.cluster_config, user_config)
             log.debug("Merged user config from kickstart body")
+
+        self._normalize_and_validate_cluster_config(
+            self.cluster_config, DEFAULT_CLUSTER_CONFIG
+        )
+
+        cni_type = self.cluster_config["networking"]["cni"]["type"]
+        if cni_type not in VALID_CNI_TYPES:
+            raise ValueError(f"Invalid ClusterConfig CNI type: {cni_type}")
+
+        ha_type = self.cluster_config["cluster"]["ha"]["type"]
+        if ha_type not in VALID_HA_TYPES:
+            raise ValueError(f"Invalid ClusterConfig HA type: {ha_type}")
+
+        emulation = self.cluster_config["features"]["virt"]["emulation"]
+        if emulation not in VALID_EMULATION_VALUES:
+            raise ValueError(
+                f"Invalid ClusterConfig virtualization emulation value: {emulation}"
+            )
+
+    def _normalize_and_validate_cluster_config(self, config, schema, path=()):
+        """Validate against the built-in CRD shape and normalize legacy booleans.
+
+        Older kickstarts represented booleans as the strings ``"true"`` and
+        ``"false"``.  Accept those exact values for backward compatibility,
+        but reject other type mismatches and fields unknown to the CRD.  The
+        componentOverrides map is intentionally open-ended.
+        """
+        if not isinstance(config, dict):
+            dotted = ".".join(path) or "spec"
+            raise ValueError(f"ClusterConfig field {dotted} must be a mapping")
+
+        if path == ("componentOverrides",):
+            return
+
+        unknown = sorted(set(config) - set(schema))
+        if unknown:
+            dotted = ".".join(path) or "spec"
+            raise ValueError(
+                f"Unknown ClusterConfig field(s) below {dotted}: "
+                + ", ".join(unknown)
+            )
+
+        for key, value in config.items():
+            expected = schema[key]
+            field_path = (*path, key)
+            dotted = ".".join(field_path)
+
+            if isinstance(expected, bool):
+                if isinstance(value, str) and value.lower() in ("true", "false"):
+                    config[key] = value.lower() == "true"
+                elif not isinstance(value, bool):
+                    raise ValueError(
+                        f"ClusterConfig field {dotted} must be a boolean"
+                    )
+            elif isinstance(expected, dict):
+                self._normalize_and_validate_cluster_config(
+                    value, expected, field_path
+                )
+            elif isinstance(expected, str) and not isinstance(value, str):
+                raise ValueError(
+                    f"ClusterConfig field {dotted} must be a string"
+                )
 
     def _deep_merge(self, base, override):
         """Deep merge override into base dict."""
@@ -245,6 +309,7 @@ class K4AllData(AddonData):
             section += yaml.safe_dump(cfg, default_flow_style=False, sort_keys=False)
         else:
             section += json.dumps(cfg, indent=2)
+            section += "\n"
         section += "%end\n"
 
         return section

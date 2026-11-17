@@ -128,6 +128,7 @@ class TestK4AllService:
         assert svc.config["features"]["virt"]["enabled"] is True
 
     def test_process_kickstart_with_yaml_body(self):
+        pytest.importorskip("yaml")
         svc = self._make_service()
 
         from com_k4all_installer.service.kickstart import K4AllData

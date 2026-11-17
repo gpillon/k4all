@@ -9,12 +9,12 @@
 #   podman run --rm k4all-addon-test
 # =============================================================================
 
-FROM quay.io/centos/centos:stream9
+FROM registry.fedoraproject.org/fedora:43
 
 # Install anaconda and test dependencies
 RUN dnf install -y \
     anaconda-core \
-    python3-pykickstart \
+    pykickstart \
     python3-dasbus \
     python3-pip \
     python3-pytest \
@@ -28,7 +28,7 @@ RUN pip3 install pytest || true
 COPY com_k4all_installer/ /usr/share/anaconda/addons/com_k4all_installer/
 
 # Copy tests (without conftest.py, since we use real anaconda)
-COPY tests/test_constants.py tests/test_kickstart.py tests/test_installation.py tests/test_service.py /tests/
+COPY tests/test_constants.py tests/test_kickstart.py tests/test_installation.py tests/test_service.py tests/test_storage_layout.py /tests/
 
 # Set PYTHONPATH so imports work
 ENV PYTHONPATH="/usr/share/anaconda/addons:/usr/share/anaconda"

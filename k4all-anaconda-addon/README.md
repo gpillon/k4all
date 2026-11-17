@@ -32,8 +32,9 @@ Add the following to your kickstart file:
 %addon com_k4all_installer --role=bootstrap --cni=calico --ha=none
 {
   "features": {
-    "virt": { "enabled": "false" },
-    "argocd": { "enabled": "false" }
+    "virt": { "enabled": false },
+    "argocd": { "enabled": false },
+    "ovsBridge": { "enabled": true }
   }
 }
 %end
@@ -56,7 +57,7 @@ The JSON body allows fine-grained configuration that will be merged with default
 
 During installation, the addon writes:
 
-- `/etc/k4all-config.json` - Full K4All configuration
+- `/etc/k4all-config.yaml` - Full K4All ClusterConfig resource
 - `/etc/node-type` - Node role (bootstrap/control/worker)
 
 These files are used by K4All systemd services at first boot.
@@ -113,4 +114,3 @@ This runs basic Python syntax checks on all modules.
 ## License
 
 GPL-2.0-or-later
-

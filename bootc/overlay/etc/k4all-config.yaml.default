@@ -17,7 +17,7 @@ spec:
     ovsCni:
       enabled: false
     ovsBridge:
-      enabled: false
+      enabled: true
   cluster:
     apiEndPointUseHostName: false
     customApiEndPoint: ""

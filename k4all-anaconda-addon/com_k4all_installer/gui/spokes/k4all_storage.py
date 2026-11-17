@@ -21,6 +21,9 @@ from pyanaconda.modules.common.constants.objects import DEVICE_TREE, DISK_SELECT
 
 from com_k4all_installer.categories.k4all import K4AllCategory
 from com_k4all_installer.constants import K4ALL
+from com_k4all_installer.storage_layout import (
+    StorageLayoutError, build_kickstart_layout,
+)
 
 log = logging.getLogger(__name__)
 
@@ -659,8 +662,7 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalSpoke):
             self._set_status("Please select a target disk first.")
             return
 
-        preserved_vgs = self._get_preserved_vg_names()
-        vg_data_preserved = "vg_data" in preserved_vgs
+        preserved_vg_names = self._get_preserved_vg_names()
         is_efi = os.path.isdir("/sys/firmware/efi")
 
         try:
@@ -669,78 +671,47 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalSpoke):
         except Exception:
             disk_mb = 100000
 
-        boot_mb = 1024
-        efi_mb = 600 if is_efi else 0
-        biosboot_mb = 1 if not is_efi else 0
-        overhead = boot_mb + efi_mb + biosboot_mb + 100
+        preserved_vgs = {}
+        pv_parent_disks = {}
+        for vg in self._existing_vgs:
+            if vg["name"] not in preserved_vg_names:
+                continue
+            preserved_vgs[vg["name"]] = list(vg.get("parents", []))
+            for pv in vg.get("parents", []):
+                try:
+                    pv_data = self._dt_proxy.GetDeviceData(pv)
+                    parents = _unpack(pv_data.get("parents", []))
+                    if parents:
+                        pv_parent_disks[pv] = parents[0]
+                except Exception:
+                    pass
 
-        # Determine space for OS vs data
-        create_vg_data = True
-        existing_vg_names = {vg["name"] for vg in self._existing_vgs}
+        try:
+            disk_partitions = _unpack(
+                self._dt_proxy.GetDeviceData(disk_name).get("children", []))
+        except Exception:
+            disk_partitions = []
 
-        if vg_data_preserved:
-            create_vg_data = False
-            # OS gets all remaining space on target disk
-            os_mb = disk_mb - overhead
-        elif "vg_data" in existing_vg_names:
-            if not self._vg_lives_on_disk("vg_data", disk_name):
-                create_vg_data = False
-                os_mb = disk_mb - overhead
-            else:
-                os_pct = int(self._os_scale.get_value()) if self._os_scale else 20
-                usable = disk_mb - overhead
-                os_mb = max(8000, usable * os_pct // 100)
-        else:
-            os_pct = int(self._os_scale.get_value()) if self._os_scale else 20
-            usable = disk_mb - overhead
-            os_mb = max(8000, usable * os_pct // 100)
-
-        os_mb = max(8000, os_mb)
-        swap_mb = min(4096, max(1024, os_mb // 4))
+        os_pct = int(self._os_scale.get_value()) if self._os_scale else 20
 
         try:
             self._storage_proxy.ResetPartitioning()
         except Exception:
             pass
 
-        ks_lines = [
-            "ignoredisk --only-use=%s" % disk_name,
-            "clearpart --all --initlabel --disklabel=gpt --drives=%s"
-            % disk_name,
-            "bootloader --location=mbr --boot-drive=%s" % disk_name,
-        ]
-        if is_efi:
-            ks_lines.append(
-                "part /boot/efi --fstype=efi --size=%d --ondisk=%s"
-                % (efi_mb, disk_name))
-        else:
-            ks_lines.append(
-                "part biosboot --fstype=biosboot --size=%d --ondisk=%s"
-                % (biosboot_mb, disk_name))
-        ks_lines.append(
-            "part /boot --fstype=xfs --size=%d --ondisk=%s"
-            % (boot_mb, disk_name))
-
-        if create_vg_data:
-            ks_lines.append(
-                "part pv.01 --size=%d --ondisk=%s" % (os_mb, disk_name))
-            ks_lines.append(
-                "part pv.02 --size=1 --grow --ondisk=%s" % disk_name)
-        else:
-            ks_lines.append(
-                "part pv.01 --size=1 --grow --ondisk=%s" % disk_name)
-
-        ks_lines.append("volgroup rootvg pv.01")
-        ks_lines.append(
-            "logvol swap --vgname=rootvg --size=%d --name=swaplv" % swap_mb)
-        ks_lines.append(
-            "logvol / --vgname=rootvg --fstype=xfs --size=1 --grow "
-            "--name=rootlv")
-
-        if create_vg_data:
-            ks_lines.append("volgroup vg_data pv.02")
-
-        ks_text = "\n".join(ks_lines)
+        try:
+            ks_text = build_kickstart_layout(
+                disk_name=disk_name,
+                disk_mib=disk_mb,
+                is_efi=is_efi,
+                os_percent=os_pct,
+                disk_partitions=disk_partitions,
+                preserved_vgs=preserved_vgs,
+                pv_parent_disks=pv_parent_disks,
+            )
+        except StorageLayoutError as error:
+            self._set_status("ERROR: %s" % error)
+            return
         log.info("K4AllStorage: applying KS:\n%s", ks_text)
 
         try:
@@ -780,8 +751,9 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalSpoke):
 
             self._disk_layout_applied = True
             vg_note = ""
-            if preserved_vgs:
-                vg_note = " Preserved: %s." % ", ".join(preserved_vgs)
+            if preserved_vg_names:
+                vg_note = " Preserved: %s." % ", ".join(
+                    preserved_vg_names)
 
             if apply_ok:
                 status_text = (
