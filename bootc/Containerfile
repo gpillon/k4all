@@ -1,12 +1,20 @@
 # K4All bootc image
-# Base: CentOS Stream 9 bootc
+# Base: Fedora bootc
 # This image contains all required packages for Kubernetes nodes (kubeadm, kubelet, kubectl, CRI-O, etc.)
 # The actual cluster configuration is done at install time via Anaconda addon or at first boot.
 
-#FROM quay.io/centos-bootc/centos-bootc:stream9
-FROM quay.io/fedora/fedora-bootc:43
+# Version lines of this release. They must match the release's entry in
+# upgrade/releases.yaml (checked by bootc/tests/upgrade/test_image_contract.py).
+ARG FEDORA_MAJOR=43
+FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR}
 
-ARG K4ALL_OPERATOR_VERSION=ghcr.io/gpillon/k4all-operator:latest
+ARG FEDORA_MAJOR
+ARG K4ALL_VERSION=dev
+ARG KUBERNETES_VERSION=1.35.6
+ARG CRIO_PACKAGE=cri-o
+ARG CRIO_MINOR=1.32
+ARG YQ_VERSION=v4.53.3
+ARG HELM_VERSION=v3.22.1
 # ============================================================================
 # REPOS
 # ============================================================================
@@ -30,8 +38,8 @@ COPY overlay/etc/yum.repos.d/kubernetes.repo /etc/yum.repos.d/kubernetes.repo
 # Kubernetes components, CRI-O, networking, LVM, firewall, HA, tools
 
 RUN dnf install -y \
-    kubeadm kubelet kubectl \
-    cri-o \
+    kubeadm-${KUBERNETES_VERSION} kubelet-${KUBERNETES_VERSION} kubectl-${KUBERNETES_VERSION} \
+    ${CRIO_PACKAGE} \
     openvswitch NetworkManager-ovs \
     nmstate \
     skopeo \
@@ -45,14 +53,19 @@ RUN dnf install -y \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 
-# Install yq (not available in standard repos)
+# Install yq (not available in standard repos), pinned
 RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then YQ_ARCH="amd64"; else YQ_ARCH="arm64"; fi && \
-    curl -L "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${YQ_ARCH}" -o /usr/local/bin/yq && \
+    if [ "$ARCH" = "x86_64" ]; then GOARCH="amd64"; else GOARCH="arm64"; fi && \
+    curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${GOARCH}" -o /usr/local/bin/yq && \
     chmod +x /usr/local/bin/yq
 
-# Install Helm (build-time instead of runtime)
-RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash && \
+# Install Helm (build-time instead of runtime), pinned
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then GOARCH="amd64"; else GOARCH="arm64"; fi && \
+    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${GOARCH}.tar.gz" | \
+        tar -xz -C /tmp "linux-${GOARCH}/helm" && \
+    install -m 0755 "/tmp/linux-${GOARCH}/helm" /usr/local/bin/helm && \
+    rm -rf "/tmp/linux-${GOARCH}" && \
     helm completion bash > /etc/bash_completion.d/helm
 
 # ============================================================================
@@ -75,6 +88,13 @@ COPY overlay/usr/local/share/ /usr/local/share/
 COPY overlay/etc/k4all-config.yaml.default /usr/local/share/k4all-config.yaml.default
 
 # k4all-release.yaml is already in overlay/usr/local/share/ (copied above)
+
+# Upgrade graph and the release this image is (read by k4all-upgrade)
+COPY upgrade/releases.yaml /tmp/k4all-releases.yaml
+RUN mkdir -p /usr/local/share/k4all-upgrade && \
+    yq -o=json '.' /tmp/k4all-releases.yaml > /usr/local/share/k4all-upgrade/releases.json && \
+    rm -f /tmp/k4all-releases.yaml && \
+    printf '%s\n' "${K4ALL_VERSION}" > /usr/local/share/k4all-upgrade/version
 
 # ============================================================================
 # SYSTEMD UNITS
@@ -103,7 +123,14 @@ RUN systemctl enable fck8s-first-boot.service && \
     # systemctl enable fck8s-auto-join.service && \
     # systemctl enable fck8s-operator-deploy.service && \
     # systemctl enable fck8s-update-routes.timer && \
-    systemctl enable fck8s-migrate.service  
+    systemctl enable fck8s-migrate.service
+
+# Upgrades: k4all-upgrade walks release hops (kubeadm first, then reboot).
+# bootc's own timer runs `bootc upgrade --apply`, which would reboot into a
+# new Kubernetes minor without kubeadm: it stays masked.
+RUN systemctl mask bootc-fetch-apply-updates.timer && \
+    systemctl enable k4all-upgrade.timer && \
+    systemctl enable k4all-upgrade-resume.service
 
 # Component-install services (cni, ingress, dashboard, etc.) are now managed
 # by the k4all-operator and are NOT enabled as systemd units.
@@ -111,7 +138,7 @@ RUN systemctl enable fck8s-first-boot.service && \
 # ============================================================================
 # DIRECTORIES (bootc composefs makes / read-only; use /var for writable paths)
 # ============================================================================
-RUN mkdir -p /var/opt/k4all /var/opt/k4all/bin /var/opt/k4all/.imagecache /var/opt/cni/bin /var/opt/libexec/kubernetes/kubelet-plugins/volume/exec/ && \
+RUN mkdir -p /var/opt/k4all /var/opt/k4all/bin /var/opt/cni/bin /var/opt/libexec/kubernetes/kubelet-plugins/volume/exec/ && \
     rm -rf /opt/k4all /opt/cni /opt/libexec && \
     ln -sf /var/opt/k4all /opt/k4all && \
     ln -sf /var/opt/cni /opt/cni && \
@@ -136,23 +163,38 @@ RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
     mkdir -p /var/home/core/.kube /var/roothome/.kube && \
     echo 'core:core' | chpasswd
 
-#Download latest operator manifest for fallback and prepull images
-RUN curl -L "https://github.com/gpillon/k4all-operator/releases/latest/download/install.yaml" -o /usr/local/share/k4all-operator-install.yaml && \
-    set -eux; \
-    kubeadm config images list > /tmp/k8s-images.txt; \
-    echo 'ghcr.io/gpillon/k4all-operator:latest' >> /tmp/k8s-images.txt; \
+# Operator manifest (fallback for deploy-operator.sh) and pre-pulled images.
+# The operator follows the version pinned in k4all-release.yaml (CI stamps it).
+# Images live under /usr: bootc refreshes /usr on every upgrade, never /var,
+# and k4all-upgrade loads the next release's images from the staged image.
+RUN set -eux; \
+    OPERATOR_VERSION="$(yq '.spec.components.k4all-operator.version' /usr/local/share/k4all-release.yaml)"; \
+    case "$OPERATOR_VERSION" in ""|null|latest) \
+        OPERATOR_URL="https://github.com/gpillon/k4all-operator/releases/latest/download/install.yaml"; \
+        OPERATOR_VERSION=latest ;; \
+    *) OPERATOR_URL="https://github.com/gpillon/k4all-operator/releases/download/${OPERATOR_VERSION}/install.yaml" ;; \
+    esac; \
+    curl -fsSL "$OPERATOR_URL" -o /usr/local/share/k4all-operator-install.yaml; \
+    mkdir -p /usr/local/share/k4all-images; \
+    kubeadm config images list --kubernetes-version "v${KUBERNETES_VERSION}" > /tmp/k8s-images.txt; \
+    echo "ghcr.io/gpillon/k4all-operator:${OPERATOR_VERSION}" >> /tmp/k8s-images.txt; \
     while read -r img; do \
     file="$(printf '%s' "$img" | tr '/:@' '_')"; \
     skopeo copy \
         "docker://$img" \
-        "docker-archive:/var/opt/k4all/.imagecache/${file}.tar:${img}"; \
-    done < /tmp/k8s-images.txt
+        "docker-archive:/usr/local/share/k4all-images/${file}.tar:${img}"; \
+    done < /tmp/k8s-images.txt; \
+    rm -f /tmp/k8s-images.txt
 
 # ============================================================================
 # BOOTC LABELS
 # ============================================================================
-LABEL com.redhat.bootc.base="quay.io/fedora/fedora-bootc:43"
+LABEL com.redhat.bootc.base="quay.io/fedora/fedora-bootc:${FEDORA_MAJOR}"
 LABEL org.opencontainers.image.title="K4All - Kubernetes for All"
 LABEL org.opencontainers.image.description="Bootc image with Kubernetes (kubeadm/kubelet/kubectl), CRI-O, and K4All tooling"
-LABEL org.opencontainers.image.version="2.0.0-bootc"
+LABEL org.opencontainers.image.version="${K4ALL_VERSION}"
+LABEL io.k4all.version="${K4ALL_VERSION}"
+LABEL io.k4all.kubernetes="${KUBERNETES_VERSION}"
+LABEL io.k4all.crio="${CRIO_MINOR}"
+LABEL io.k4all.fedora="${FEDORA_MAJOR}"
 LABEL org.opencontainers.image.source https://github.com/gpillon/k4all
