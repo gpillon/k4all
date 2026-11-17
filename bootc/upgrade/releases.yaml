@@ -39,3 +39,17 @@ releases:
       Bridge release: adds k4all-upgrade, masks the bootc auto-update timer
       and fixes the scripts that later hops rely on. Kubernetes, CRI-O and
       Fedora lines are unchanged.
+
+  - version: v2.3.0
+    kind: minor
+    minFrom: v2.2.4
+    kubernetes: "1.35.10"
+    crio: "1.35"
+    fedora: 43
+    syncManifest: false
+    notes: >-
+      CRI-O moves from 1.32 to 1.35, matching Kubernetes 1.35 (from Fedora's
+      versioned cri-o1.35 package); from here CRI-O follows the Kubernetes
+      minor. The control plane goes to the latest 1.35 patch. Image names
+      without a registry resolve on docker.io only: CRI-O 1.35 rejects them
+      as ambiguous with Fedora's three search registries.

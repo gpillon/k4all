@@ -43,7 +43,7 @@ The 2.x upgrade path:
 | Release | What changes |
 |---|---|
 | v2.2.4 | bridge: `k4all-upgrade`, bootc timer masked, script fixes (Kubernetes 1.35, CRI-O 1.32, Fedora 43 unchanged) |
-| v2.3.0 | CRI-O 1.35, matching Kubernetes 1.35, plus the latest 1.35 patch |
+| v2.3.0 | CRI-O 1.35, matching Kubernetes 1.35, plus the latest 1.35 patch; image names without a registry (`nginx:latest`) resolve on docker.io only |
 | v2.4.0 | cluster components updated and pinned; first ReleaseManifest sync |
 | v2.5.0 | Fedora 45 |
 | v2.6.0 | Traefik replaces ingress-nginx |

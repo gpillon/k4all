@@ -10,9 +10,9 @@ FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR}
 
 ARG FEDORA_MAJOR
 ARG K4ALL_VERSION=dev
-ARG KUBERNETES_VERSION=1.35.6
-ARG CRIO_PACKAGE=cri-o
-ARG CRIO_MINOR=1.32
+ARG KUBERNETES_VERSION=1.35.10
+ARG CRIO_PACKAGE=cri-o1.35
+ARG CRIO_MINOR=1.35
 ARG YQ_VERSION=v4.53.3
 ARG HELM_VERSION=v3.22.1
 # ============================================================================
@@ -72,6 +72,10 @@ RUN ARCH=$(uname -m) && \
 # SYSCTL CONFIGURATION
 # ============================================================================
 COPY overlay/etc/sysctl.d/k8s.conf /etc/sysctl.d/k8s.conf
+
+# Short image names resolve on docker.io only (see the file for why)
+COPY overlay/etc/containers/registries.conf.d/50-k4all-short-names.conf \
+     /etc/containers/registries.conf.d/50-k4all-short-names.conf
 
 # ============================================================================
 # SCRIPTS AND MANIFESTS
