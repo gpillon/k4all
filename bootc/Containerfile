@@ -5,7 +5,7 @@
 
 # Version lines of this release. They must match the release's entry in
 # upgrade/releases.yaml (checked by bootc/tests/upgrade/test_image_contract.py).
-ARG FEDORA_MAJOR=43
+ARG FEDORA_MAJOR=45
 FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR}
 
 ARG FEDORA_MAJOR
@@ -36,6 +36,8 @@ COPY overlay/etc/yum.repos.d/kubernetes.repo /etc/yum.repos.d/kubernetes.repo
 # ============================================================================
 # Install all required packages in a single layer for efficiency
 # Kubernetes components, CRI-O, networking, LVM, firewall, HA, tools
+# No etcd package (Fedora 45 has none): k4all-backup.sh and k4all-restore.sh
+# run etcdctl/etcdutl from the control plane's etcd image through podman.
 
 RUN dnf install -y \
     kubeadm-${KUBERNETES_VERSION} kubelet-${KUBERNETES_VERSION} kubectl-${KUBERNETES_VERSION} \
@@ -47,11 +49,30 @@ RUN dnf install -y \
     jq \
     firewalld \
     cri-tools \
-    etcd \
     keepalived \
     openssl bash-completion tar gzip curl wget git python3 \
     && dnf clean all \
-    && rm -rf /var/cache/dnf
+    && rm -rf /var/cache/dnf /run/dnf
+
+# Fedora 45 keeps its repo files in /usr/share/dnf5/repos.d. bootc-image-builder
+# resolves the installer's packages only from /etc/yum.repos.d, so the ISO
+# build finds no Fedora repo without these links. dnf5 reads both directories.
+# The links are relative: bootc-image-builder reads the image mounted under
+# another root, where an absolute link would point outside the image.
+RUN for f in /usr/share/dnf5/repos.d/*.repo; do \
+        [ -e "$f" ] || continue; \
+        b="$(basename "$f")"; \
+        [ -e "/etc/yum.repos.d/$b" ] || ln -s "../../usr/share/dnf5/repos.d/$b" "/etc/yum.repos.d/$b"; \
+    done
+
+# Fedora 45's containers-common keeps policy.json and registries.conf in
+# /usr/share/containers. CRI-O reads the signature policy only from
+# /etc/containers/policy.json: without it every image pull fails ("no
+# policy.json file found"). Relative links, as for the repo files above.
+RUN for f in policy.json registries.conf; do \
+        [ -e "/etc/containers/$f" ] || [ ! -e "/usr/share/containers/$f" ] || \
+            ln -s "../../usr/share/containers/$f" "/etc/containers/$f"; \
+    done
 
 # CRI-O's example networks (100-crio-bridge.conflist, 200-loopback.conflist)
 # stay out of /etc/cni/net.d. Pods that start on the bridge before the
