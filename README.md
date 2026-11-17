@@ -93,6 +93,9 @@ While waiting you could listen to a nice Kubernetes song:
   token with
   `kubectl get secret admin-user -n headlamp -o jsonpath='{.data.token}' | base64 -d`
   (as root).
+- From v2.4.0, Headlamp's **k4all** section shows the cluster's state, runs
+  upgrades and changes the common settings: see
+  [docs/headlamp-plugin.md](docs/headlamp-plugin.md).
 - A sample pod is created in the `default` namespace when the LVM setup works.
   You can delete it.
 
@@ -102,6 +105,9 @@ Nodes upgrade one release at a time with `k4all-upgrade`. Patch releases
 install automatically in the Saturday 02:30 window. Minor releases (a new
 Kubernetes minor, a new Fedora) wait for `sudo k4all-upgrade run`. Nodes on
 v2.0 – v2.2.3 first move to the v2.2.4 bridge with `k4all-bridge.sh`.
+
+From v2.4.0 the whole cluster can also be upgraded from Headlamp
+(**k4all > Upgrades**), one node at a time, drained first.
 
 The rules, the policy file and what to do when an upgrade stops are in
 [docs/upgrades.md](docs/upgrades.md). Don't run `bootc upgrade` by hand: it

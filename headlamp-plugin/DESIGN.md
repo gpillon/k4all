@@ -1,0 +1,727 @@
+# k4all Headlamp plugin: design
+
+Status: built and unit-tested (233 tests), not yet run against a live
+cluster. Ships from k4all v2.4.0 (k4all-operator v0.4.0, Headlamp chart
+0.46.0, Kubernetes 1.35 and later). User guide: `docs/headlamp-plugin.md`.
+Packaging and release: `DISTRIBUTION.md`.
+
+## 1. Summary
+
+A Headlamp plugin that adds a **k4all** section to the sidebar, so the common
+k4all tasks are done through guided screens instead of editing
+`ClusterConfig`, `ReleaseManifest` and `ClusterUpgrade` by hand:
+
+- **Overview**: release, upgrade summary, health, component state, features,
+  ingress, nodes with their release and upgrade phase, in one screen.
+- **Upgrades**: move every node to a newer k4all release through the
+  operator's `ClusterUpgrade`: choose a target, review the path, the node
+  order, the drain and the downtime, then follow the hops node by node,
+  pause, resume, stop, retry, with guidance when a node gets stuck.
+- **Settings**: features, ingress, Cilium options as forms with validation.
+  Install-time fields are shown read-only with the reason; those a newer
+  operator can change live (CNI, OVS bridge) turn into controls by
+  themselves once the cluster runs that operator.
+- **Components**: the ReleaseManifest components with state, versions and
+  upgrade paths; per component: Helm value overrides (stored in the
+  ClusterConfig, so they survive upgrades), management policy, re-apply.
+- A **k4all** section on Headlamp's Node page (role, release, upgrade phase,
+  interfaces).
+
+Every save is a JSON Patch checked by a server-side dry run, shown as a
+human-readable change list plus a YAML diff, guarded against concurrent edits.
+
+## 2. Users and what they come for
+
+| Who | Context | Needs |
+|---|---|---|
+| Home-lab / edge admin (main user) | 1-3 nodes installed from the k4all ISO; logs in to Headlamp with the `headlamp-admin` token; knows Kubernetes a little | "Is there a new release, what does it change, how long are my apps down?", run the upgrade without SSH, "is my cluster fine after the upgrade?", turn Virtualization or Argo CD on, give the ingress a LoadBalancer IP, tweak a component's Helm values without losing them at the next upgrade |
+| Platform operator | several k4all clusters, kubectl-fluent | the same tasks faster and with guard rails: dry run, diff, conflict detection, a clear list of what a change re-applies, the node commands when a hop holds |
+| Viewer | read-only access | status of release, upgrade, components, nodes |
+
+The common settings were chosen from what the installer exposes
+(`k4all-anaconda-addon/.../constants.py`, `kickstart.py`: CNI, HA, virt,
+Argo CD, ingress IPs/default, firewalld, networks), the default node config
+(`k4all-config.yaml.default`), what k4all-operator applies live (its hooks),
+and `docs/upgrades.md` (release ladder, node upgrade hops, the sync rules of
+the ReleaseManifest).
+
+Jobs, most frequent first:
+
+1. Check health after an upgrade: release version, components installed or
+   failed, a component walking its `upgradePath`, a node mid-hop.
+2. Upgrade the cluster to a newer k4all release, and follow it.
+3. Turn a feature on or off: Virtualization (with emulation mode), Argo CD,
+   OVS secondary networks.
+4. Ingress: dedicated IP and default IngressClass of the release's ingress
+   controller (ingress-nginx up to v2.5.x, Traefik from v2.6.0); Cilium
+   ingress IP.
+5. Cilium options: L2 announcements, Hubble, Gateway API, devices.
+6. Customize a component's Helm values so the customization survives k4all
+   upgrades (`componentOverrides`).
+7. Take a component out of the operator's hands (Unmanaged), or put it back;
+   re-apply a component that drifted (force-resync).
+
+Non-goals (and why):
+
+- **Running a hop on a node directly.** The node's `k4all-upgrade` runs the
+  hop; the plugin only sets the ClusterUpgrade target, and the operator asks
+  the nodes one at a time (node annotations). When a node holds, the fix is
+  on the node, and the plugin gives the commands.
+- **Editing ReleaseManifest versions or values.** The release sync of
+  `k4all-upgrade` replaces every component spec except `custom` and
+  `management: Unmanaged`, so such edits would silently vanish at the next
+  upgrade. Customization goes to `componentOverrides` instead.
+- **Install-time settings** (pod/service networks, API endpoint, HA,
+  firewalld, proxy): shown read-only, see 4. CNI and OVS bridge are
+  read-only until k4all-operator v0.5.0 (4.1).
+- **NodeConfig**: it has no spec, only status, shown on the Node page.
+
+## 3. Screens
+
+Sidebar (cluster scope): `k4all` (icon `mdi:hexagon-multiple-outline`) with
+Overview, Upgrades, Settings, Components. Routes, all cluster-prefixed by
+Headlamp:
+
+| Route name | Path | Screen |
+|---|---|---|
+| `k4all-overview` | `/k4all` | Overview |
+| `k4all-upgrades` | `/k4all/upgrades` | Upgrades |
+| `k4all-settings` | `/k4all/settings?tab=features\|ingress\|networking\|install` | Settings |
+| `k4all-components` | `/k4all/components` | Components |
+| `k4all-component` | `/k4all/components/:name` | Component detail |
+| (details section) | Headlamp `/node/:name` | k4all section on the Node page |
+
+### 3.1 Overview
+
+```
+ [hex] k4all                                [k4all v2.4.0] [Kubernetes v1.35.10] (● Healthy)
+       Kubernetes for All: release, components and node upgrades
+ ┌ banners: upgrade hop on node X (v2.4.0 → v2.5.0) · settings being applied ·
+ │          operator idle for 40 min · N components failed (list)
+ ├─────────────────────────────────────────────────────────────────────────────┤
+ │ [⟳] Upgrades (● Upgrade available)  The cluster runs k4all v2.4.0.          │
+ │     4 newer releases, latest v2.7.0 (Kubernetes 1.36.4, Fedora 45). [Plan →]│
+ ├────────────────┬──────────────────┬───────────────────┬────────────────────┤
+ │ Components     │ Features  [Change]│ Ingress  [Change] │ Release            │
+ │ 14/14 active   │ Virtualization ●On│ ingress-nginx addr│ k4all-operator     │
+ │ installed      │ Argo CD      ○Off │ 192.168.1.240     │ v0.4.0             │
+ │ ▇▇▇▇▇▇▇▇▇▁▁    │ OVS networks ○Off │ ● Default class   │ Operator status    │
+ │ cert-manager → │ OVS bridge   ●On  │ CNI: calico       │ 14/14 installed    │
+ │ v1.18.6 (+3)   │ (set at install)  │                   │ Last reconcile 2m  │
+ ├────────────────┴──────────────────┴───────────────────┴────────────────────┤
+ │ Nodes: name · role · Ready · Kubernetes · OS · runtime · address ·          │
+ │        k4all release · k4all upgrade (idle / host phase / v2.4.0 → v2.5.0)  │
+ └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+The upgrade card follows the upgrade while one runs (current → target, hop
+x of y, nodes done, progress bar). With an operator older than v0.4.0 it
+says which release brings upgrades from Headlamp.
+
+Health headline: Healthy, Reconciling (components busy, settings not yet
+applied, Ready not True), Upgrading (node annotation or Ready reason
+`UpgradeInProgress`), Needs attention (failed components,
+`ClusterConfigNotFound`, `DependencyCycle`). The operator is called idle when
+`ClusterConfig.status.lastReconcileTime` is older than 15 minutes (it requeues
+every 5) and no hop is running.
+
+### 3.2 Upgrades
+
+```
+ [⟳] Upgrades                          [k4all v2.4.1] [Kubernetes v1.35.10] (◌ Upgrading)
+     Move every node to a newer k4all release, one hop and one node at a time
+ ┌ banner per state: waiting for the operator · stopped (message, Retry) ·
+ │ paused (Resume) · complete · spec not processed yet · False conditions
+ ├ v2.4.1 → v2.6.0 ────────────────────────────── [Retry] [Pause] [Stop] ┐
+ │ (◌ Upgrading) [hop 2 of 3: v2.5.0] [1 of 3 nodes done in this hop]    │
+ │  (✓)v2.4.1 ──── (◌)v2.5.0 ──── ( )v2.6.0      ← hop trail             │
+ │  ▇▇▇▇▇▇▇▇▁▁▁▁▁▁▁  44% of the node hops                                │
+ │  ⓘ Draining cp-2                              ← status.message        │
+ │  [guidance per stuck node, with copyable commands and Retry]          │
+ │  # node  role  release  upgrade   on the node  node status  detail    │
+ │  1 cp-1  boot  v2.5.0   ● Done    —            ● Ready                │
+ │  2 cp-2  ctrl  v2.4.1   ◌ Draining —           ● Ready, cordoned  ▇▇▁ 6 min of 30 min │
+ │  3 w-1   work  v2.4.1   ○ Waiting —            ● Ready                │
+ ├ Available releases (newest first) ─────────┬ How upgrades run [Change] ┤
+ │ v2.7.0 [minor][latest]     [Change target]  │ node order 1.cp-1 › 2.cp-2│
+ │  Kubernetes 1.35.10 → 1.36.4 · Fedora 45    │ drain: 30 min, then fail  │
+ │  3 hops: v2.5.0 → v2.6.0 → v2.7.0           │ graph: k4all releases     │
+ │  release notes…                             │                           │
+ └─────────────────────────────────────────────┴───────────────────────────┘
+```
+
+- **Targets**: `status.availableReleases` (newer than `currentRelease`,
+  blocked releases left out), newest first, with kind (minor/patch, with
+  what that means), Kubernetes and Fedora (as a change from what the nodes
+  run), the hops the plugin plans to it, and the notes (collapsed when
+  long). The newest is marked latest; during an upgrade the target is
+  marked and the others offer "Change target to".
+- **Review dialog** (on "Upgrade to vX"): from → to with the Kubernetes and
+  Fedora change, then
+  1. the path, hop by hop: from → release, kind, what it changes
+     (Kubernetes, Fedora, CRI-O when known), its notes, reboots per hop;
+     a note when the path comes from the versioning rules rather than
+     `minFrom` (4.3);
+  2. the node order (bootstrap, control planes, workers, one at a time);
+  3. the drain: what happens (cordon and evict with PodDisruptionBudgets,
+     timeout, then fail or continue), with the timeout and
+     continue-on-timeout editable; editing them turns the main button into
+     "Check again with these options" (a new dry run); a single node is
+     only cordoned, and the options are hidden;
+  4. reboots and downtime: hops × nodes reboots, a rough time
+     (5-15 minutes per node and hop plus drains, labelled as an estimate),
+     what goes down (single node: everything, API and dashboard included;
+     one control plane: the API while it reboots; two: etcd quorum on each
+     reboot), that this page loses its connection while Headlamp's node
+     reboots, and that Kubernetes minor hops run kubeadm upgrade;
+  5. the ClusterUpgrade changes in words, the dry-run YAML diff and the JSON
+     Patch, as in Settings; a warning when a target is already set.
+
+  "Start upgrade" needs the acknowledgement "every node reboots once per
+  hop …".
+- **Progress** (Progressing, Paused, Failed): the hop trail from
+  `status.path` (Done ✓, InProgress spinning, Pending), overall progress
+  (hops done × nodes + nodes done in the current hop), `status.message`,
+  "pausing" while a paused upgrade waits for the node mid-hop, the
+  guidance (4.3), and the nodes table: order, release, operator phase
+  (Waiting, Draining, Upgrading, Done, Failed), host phase (PREFLIGHT …
+  COMMIT, HOLD, ABANDONED, ROLLBACK_REBOOT with a tooltip of what it does),
+  the Node's readiness and cordon from the core Node, and the drain timer
+  (elapsed of timeout, and what happens at the timeout) or the node message.
+- **Actions**: Pause / Resume (`spec.paused`), Stop (clears
+  `spec.targetRelease`, after a confirmation that explains the mixed
+  releases it leaves and suggests Pause), Retry (the retry annotation; shown
+  only when it helps: a failed drain, an abandoned hop, or a failed upgrade
+  with no node on hold).
+- **How upgrades run** panel: node order, drain settings, graph; "Change"
+  opens a small form for the drain timeout, continue-on-timeout and the graph
+  URL (empty = k4all releases), saved through the same review.
+- **Nodes** panel when no upgrade runs: the same table, with each node's
+  release.
+
+### 3.3 Settings
+
+Tabs with a badge counting pending changes per tab; an unsaved-changes bar
+slides up from the bottom (N changes, their names, Discard, Review changes).
+Every row carries an apply badge: **Live** (the operator applies it),
+**Install-time** (lock) or **Node file** (read by the nodes from
+`/etc/k4all-config.yaml`). Changed rows get a coloured edge and a "changed" chip.
+
+- **Features**: one card per feature with a switch, live status from
+  `ClusterConfig.status.features` (Ready / Installing / Off, or "Will be
+  installed/removed" while pending), the components it brings (read from the
+  ReleaseManifest `featureGate`s, so it follows the release), and for
+  Virtualization the emulation select. The OVS bridge card is dashed and
+  locked with "Coming with k4all-operator v0.5.0"; with that operator it
+  gets a switch (4.1).
+- **Ingress**: the release's ingress controller, from the ReleaseManifest
+  (`traefik` active → Traefik; else `ingress-nginx` active → ingress-nginx):
+  dedicated IP (validated) and default IngressClass, and a computed
+  "Result:" line that mirrors the operator's hook (host ports 80/443,
+  LoadBalancer on the node address, through kube-vip, or on the dedicated
+  IP; both hooks follow the same rules). ingress-nginx clusters (k4all
+  v2.4.0, v2.5.x) edit `spec.ingress.nginx`, with a note that Traefik takes
+  these settings over in v2.6.0. Traefik clusters installed before v2.6.0
+  (only `spec.ingress.nginx`) get a banner and a one-click move to
+  `spec.ingress.traefik`. Cilium ingress IP (only shown on Cilium clusters,
+  or when set).
+- **Networking**: a CNI panel (read-only with "Coming with k4all-operator
+  v0.5.0", a select with that operator), then on Cilium clusters switches for
+  L2 announcements, Hubble, Gateway API and a chip input for devices, with
+  suggestions from the interfaces the nodes report (NodeConfig status).
+- **Install-time**: four read-only panels (cluster network, API endpoint,
+  control plane HA, nodes) with a help tooltip giving the reason for each;
+  CNI and OVS bridge carry the capability note.
+
+### 3.4 Components
+
+Filter (All / Needs attention / Active / Off) and a sortable, searchable table
+(Headlamp's `Table`): component (with icons for "has overrides" and "re-apply
+requested"), category, state pill (with the operator message as tooltip),
+version (`installed → release` with the upgrade path as tooltip), management
+chip, notes (why a component is off, or its failure message). "Re-apply all"
+sets `force-resync: all` after a confirmation.
+
+### 3.5 Component detail
+
+Header with state, management chip, **Re-apply** (only Installed and Managed
+components, as the operator only resyncs those) and **Management**. Banners for
+a failure (full message), an inactive component (with "Open features" when a
+feature gates it), Unmanaged and Removed (what they mean, including the sync
+rule). Panels:
+
+- Version: release version, installed version, last change, and the upgrade
+  path as a stepper (installed → next → … → target), computed like the
+  operator's `UpgradeStep`.
+- Source: repo/chart/sources/image, namespace (link to Headlamp's namespace
+  page), feature gate, depends on / required by (links; dependencies on
+  inactive components are hidden, as the operator ignores them).
+- **Your overrides** (Helm components only): Helm values as YAML and `--set`
+  arguments, one per line, validated as you type, then the same review flow as
+  Settings.
+- Release definition (read-only, collapsed): values, helmArgs, upgradePath,
+  patches, inline manifests, with a note that edits there are lost at the next
+  release sync.
+
+Management dialog: three radio cards (Managed, Unmanaged, Removed) with what
+each does. Removed is disabled with the reasons when the component is
+protected (k4all-operator, headlamp itself), is the active CNI, is gated by a
+feature (use the feature switch), or is required by an active component; when
+allowed it needs the component name typed in.
+
+### 3.6 Node page section
+
+On Headlamp's Node details: k4all role (bootstrap/control/worker from
+NodeConfig), release (`k4all.magesgate.com/release`), upgrade phase on the
+node (`upgrade-phase`, with its message in HOLD), or the hop in progress
+(`upgrade-in-progress`), interfaces with MAC addresses. Hidden on non-k4all
+clusters.
+
+### 3.7 Look and feel
+
+Built from Headlamp's CommonComponents (`Table`, `Link`, `SectionBox`) and MUI
+with the Headlamp theme, so it follows light/dark mode. A small visual
+vocabulary is reused everywhere: tone pills (dot or spinner + label), panels
+with icon titles, setting rows (label and help left, control right, apply
+badge), a segmented bar for component states, gradient icon tiles in page
+headers, kind chips (minor filled, patch outlined), the hop trail, copyable
+command lines. Icons are `mdi:` names; the plugin registers the 62 it uses
+with Headlamp's Iconify instance (`src/icons.ts`), because Headlamp bundles
+only a handful and fetches the rest from api.iconify.design, which an
+air-gapped cluster cannot reach (a test keeps the list complete). All
+controls carry accessible names; dialogs use RadioGroup/FormControlLabel;
+destructive actions (feature off, CNI/OVS change, starting an upgrade,
+stopping one) need an explicit acknowledgement or confirmation.
+
+## 4. Field mapping
+
+Paths are under `ClusterConfig.spec` unless stated. "Consumer" is what acts
+on the field with k4all-operator v0.4.0.
+
+| UI control | CR path | Plugin | Consumer and effect |
+|---|---|---|---|
+| Virtualization switch | `features.virt.enabled` | edit | operator feature gate: installs/uninstalls kubevirt, cdi, kubevirt-manager, virtctl |
+| Software emulation | `features.virt.emulation` (`auto`/`true`/`false`) | edit | operator virt hook patches KubeVirt `useEmulation` |
+| Argo CD switch | `features.argocd.enabled` | edit | operator feature gate: argocd chart |
+| OVS secondary networks | `features.ovsCni.enabled` | edit | operator feature gate: multus-cni, ovs-cni |
+| OVS bridge | `features.ovsBridge.enabled` | read-only; edit with operator ≥ v0.5.0 | today: NodeConfig controller creates per-node NNCPs when on, never removes them; Cilium hook adds `ovs-bridge` to devices |
+| CNI | `networking.cni.type` | read-only; edit with operator ≥ v0.5.0 | today: switching would re-create every pod network; kubeadm/firewall set up at install |
+| Ingress dedicated IP (ingress-nginx) | `ingress.nginx.dedicatedIP` | edit (ingress-nginx releases) | ingress-nginx hook: LoadBalancer on that IP; MetalLB pool |
+| Default IngressClass (ingress-nginx) | `ingress.nginx.isDefault` (always written) | edit (ingress-nginx releases) | ingress-nginx hook: `ingressClassResource.default`, host ports vs LoadBalancer |
+| Traefik dedicated IP | `ingress.traefik.dedicatedIP` (+ mirror to `ingress.nginx.dedicatedIP` with operators before v0.4.0, 5.4) | edit (Traefik releases) | Traefik hook: LoadBalancer Service on that IP; MetalLB pool (`DedicatedIPs`, v0.4.0) |
+| Traefik default class | `ingress.traefik.isDefault` (always written) | edit (Traefik releases) | Traefik hook: `ingressClass.isDefaultClass`, host ports vs LoadBalancer |
+| (legacy) | `ingress.nginx.*` on Traefik releases | adopted | Traefik falls back to it while `ingress.traefik` is absent; "Move" writes `ingress.traefik` with the same values |
+| Cilium ingress IP | `ingress.cilium.dedicatedIP` | edit | MetalLB pool only; Cilium's ingress controller is not enabled by the operator (O-6) |
+| L2 announcements | `networking.cni.cilium.l2announcements` | edit (Cilium) | Cilium hook values |
+| Hubble | `networking.cni.cilium.hubble` | edit (Cilium) | Cilium hook values (relay + UI) |
+| Gateway API | `networking.cni.cilium.gatewayAPI` | edit (Cilium) | Cilium hook values |
+| Additional devices | `networking.cni.cilium.additionalDevices` | edit (Cilium) | Cilium hook `devices` (plus `ovs-bridge`) |
+| firewalld | `networking.firewalld.enabled` | read-only | node scripts at install |
+| Pod / service network | `cluster.podNetwork`, `cluster.serviceNetwork` | read-only | kubeadm init; Calico Installation at first install |
+| API endpoint | `cluster.apiEndPointUseHostName`, `cluster.customApiEndPoint` | read-only | kubeadm certificates and kubeconfigs |
+| HA | `cluster.ha.type`, `.apiControlEndpoint`, `.apiControlEndpointSubnetSize`, `.interface` | read-only | install-time VIP (keepalived/kube-vip); `type` also selects the kube-vip component and the ingress loadBalancerClass |
+| Proxy | `proxy.httpProxy`, `.httpsProxy`, `.noProxy` | read-only | `setup-proxy.sh`, once per node at install, from `/etc/k4all-config.yaml`; not used in-cluster (H-3) |
+| Overrides of component X | `componentOverrides.X.values`, `componentOverrides.X.helmArgs` | edit (Helm components) | operator deep-merges values over the release values, then applies helmArgs with Helm's `--set` parser |
+| Management | ReleaseManifest `spec.components.X.management` | edit | operator: Managed / Unmanaged / Removed (uninstall) |
+| Re-apply | ReleaseManifest annotation `k4all.magesgate.com/force-resync: X\|all` | write | operator resets Installed+Managed components to Pending and removes the annotation |
+| (status) | ClusterConfig `status.{observedGeneration,lastReconcileTime,features}` | read | applied/stale indicators, feature readiness |
+| (status) | ReleaseManifest `status.{conditions,components}`, `spec.osImage.imageTag`, `status.resolvedOSImageTag` | read | health, states, versions, k4all release, operator version (4.1) |
+| (status) | Node annotations `k4all.magesgate.com/upgrade-in-progress`, `release`, `node-type`, `upgrade-phase`, `upgrade-message` | read | hop per node, release, role, host phase and HOLD reason |
+| (status) | NodeConfig `status.{nodeType,availableInterfaces}` | read | node role, device suggestions |
+
+### 4.1 Capabilities of the installed operator
+
+The plugin is pinned per k4all release, the operator moves with the
+ReleaseManifest sync. What the plugin offers is read from the operator
+version (`status.components["k4all-operator"].installedVersion`, else the
+release's spec version) in one table, `src/model/capabilities.ts`:
+
+| Capability | Since | Effect in the plugin |
+|---|---|---|
+| `clusterUpgrade` | v0.4.0 (k4all v2.4.0) | explains a missing ClusterUpgrade API (the API itself is detected by discovery) |
+| `metallbReadsTraefikIP` | v0.4.0 (k4all-operator#7) | no mirror of the Traefik IP into the nginx key |
+| `cniSwitch` | v0.5.0 | CNI select in Networking, change reviewed as dangerous |
+| `ovsBridgeToggle` | v0.5.0 | OVS bridge switch in Features, change reviewed as dangerous |
+
+An unknown or unparsable version has no optional capability. Fields that
+turn live carry `liveWith: <capability>` in `fields.ts`; the controls and
+the review texts for them already exist. Enabling them for real therefore
+needs no plugin change, only that operator v0.5.0 implements the switch on
+these same fields (`networking.cni.type`, `features.ovsBridge.enabled`);
+if it chooses other fields or a different flow, the paths in `fields.ts`
+and the consequence texts in `changes.ts` (`LIVE_DANGER`) are the places to
+adjust, before the plugin version pinned with v0.5.0 is released.
+
+### 4.2 ClusterUpgrade
+
+`k4all.magesgate.com/v1alpha1`, cluster-scoped, one object named `k4all`
+that the operator creates (v0.4.0+).
+
+| UI | Path | Plugin | Consumer |
+|---|---|---|---|
+| Upgrade to / Change target | `spec.targetRelease` | write (review, dry run) | operator plans the path and drives the nodes; lowering or clearing stops after the node in progress |
+| Pause / Resume | `spec.paused` (removed on resume and on start) | write | no new node starts its hop |
+| Stop | `spec.targetRelease` removed (and `paused`) | write (confirmed) | stops after the node in progress |
+| Drain timeout, continue on timeout | `spec.drain.{timeoutMinutes,continueOnTimeout}` | write (review) | operator's drain |
+| Upgrade graph | `spec.graphUrl` (empty = default) | write (review) | operator's planner; must match the nodes' graph |
+| Retry | annotation `k4all.magesgate.com/retry` (timestamp) | write (merge patch) | operator retries failed nodes and removes it |
+| (status) | `phase`, `message`, `currentRelease`, `currentHop`, `path[]`, `availableReleases[]`, `nodes[]`, `graphUrl`, `observedGeneration`, `conditions` | read | all of 3.2 |
+
+### 4.3 Upgrade logic in the plugin (`src/model/upgrades.ts`)
+
+- **Path**: `planPath` is a port of `plan_path` in
+  `bootc/overlay/usr/local/bin/k4all-upgrade`: never skip a minor, take the
+  stream's latest patch before crossing to the next, never a blocked
+  release. The API's `ReleaseInfo` has no `minFrom`, so when it is missing
+  the plugin uses the k4all versioning rules for it (a patch starts at
+  X.Y.0, a minor follows the newest older release), which is what the graph
+  encodes today; the review says so. Once the upgrade starts, the operator's
+  `status.path` is what the page shows.
+- **What a hop changes**: Kubernetes, Fedora and CRI-O of each target
+  against the previous step; the start comes from the nodes (oldest kubelet,
+  `Fedora Linux NN` in osImage, `cri-o://X.Y`), since the API has no field
+  for the current release's details.
+- **Node order**: `status.nodes` sorted bootstrap, control, worker (stable);
+  before the operator lists them, the Nodes (node-type annotation, NodeConfig,
+  control-plane label).
+- **View**: one stage per state: waiting (no phase yet), available /
+  up to date (Idle), progressing, pausing (Progressing with `spec.paused`),
+  paused, failed, succeeded; `stale` while `observedGeneration < generation`.
+- **Guidance** per node:
+  - HOLD: the HOLD message, then on the node `sudo k4all-upgrade status`,
+    `sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume`, or
+    `sudo k4all-upgrade clear-hold --abandon`; the upgrade goes on by
+    itself after a resume, so no Retry;
+  - HOLD whose message starts with `upgrade-target` (the node refused the
+    target): the graphs differ; `sudo k4all-upgrade plan`; the node retries
+    every minute;
+  - ABANDONED: the node stays on its release; Retry or Stop;
+  - ROLLBACK_REBOOT: the node goes back to its previous image and then holds;
+  - Failed with `drainStartedAt`: the drain timed out; `kubectl get pods
+    -A -o wide --field-selector spec.nodeName=<node>`, `kubectl get pdb -A`;
+    Retry, or continue on timeout;
+  - other Failed: the message, `k4all-upgrade status`, Retry.
+- **Writes** are built from the user's intent (start vX with drain options,
+  settings, pause, resume, stop) on the current object: `desiredSpec` →
+  `buildSpecPatch` (generation test + minimal ops). Fields the plugin does
+  not touch are kept.
+
+## 5. How edits are applied
+
+### 5.1 Patch semantics
+
+- **JSON Patch (RFC 6902)**, computed as the minimal diff between the object
+  the user started from and the draft: per-key `add`/`remove`/`replace`
+  for objects, whole-value `replace` for arrays and scalars. Fields the plugin
+  does not manage are never in the patch, so unknown or newer fields survive.
+- Why not merge patch: a JSON merge patch cannot set a literal `null`, and
+  Helm uses `null` in values to delete a chart default. Why not apply
+  (server-side apply): SSA would make the plugin the owner of every field it
+  sends and conflict with `kubectl apply` users and `k4all-upgrade`'s field
+  manager; a precise patch touches only what changed.
+- Every write sends `fieldManager=k4all-headlamp` (visible in `managedFields`)
+  and `fieldValidation=Strict` (a field the installed CRD does not know is an
+  error, not silently pruned).
+- Exceptions: re-apply sets the `force-resync` annotation and Retry the
+  `retry` annotation, each with a JSON merge patch on that single key. A JSON
+  Patch `add /metadata/annotations` would replace the whole map when the
+  object had none at load time, wiping annotations someone added meanwhile.
+
+### 5.2 Dry run and review
+
+"Review changes" (and "Upgrade to vX", and the upgrade settings) sends the
+same patch with `dryRun=All`. The API server runs defaulting, validation and
+admission and returns the object it would store. The review dialog shows:
+
+1. the changes in words, each with severity (info / warning / danger) and its
+   consequence (e.g. "Uninstalls cdi, kubevirt, kubevirt-manager, virtctl.
+   Virtual machines stop and are deleted…"), with the components a feature
+   brings read from the ReleaseManifest;
+2. for settings: "After saving, k4all-operator applies these components
+   again": every active component with an operator hook when settings change
+   (their `appliedHash` includes the whole ClusterConfig spec), or the
+   overridden component; with a note when headlamp is among them (its hook
+   resets the dashboard Ingress, see O-2); for an upgrade: the plan of 3.2;
+3. values the server stores differently from what was sent (defaults, prunes);
+4. non-blocking validation warnings;
+5. a unified YAML diff of `spec`, current vs dry-run result, with folded context;
+6. the JSON Patch itself (collapsed).
+
+Danger items (turning a feature off, a CNI or OVS bridge change, starting an
+upgrade) need an "I understand" checkbox before the apply button is enabled.
+Apply sends the same patch without `dryRun`.
+
+### 5.3 Concurrency and conflicts
+
+- The first operation is `test /metadata/generation == <generation when
+  editing started>`. Generation only moves on spec changes, so the operator's
+  status writes (every reconcile) never cause a false conflict.
+- While the draft is clean, the form follows the watch. Once edited, it keeps
+  its base; a banner says when someone saved a newer generation meanwhile.
+- Settings: a failed test (HTTP 422 "testing value … failed", or 409)
+  triggers a three-way rebase: the latest object is fetched; each path the
+  user changed is checked. If the server still holds the original value there
+  (or already the user's value), the user's change is replayed on the newer
+  spec and the review opens again (with a note). If both sides changed the
+  same path, a conflict table shows original / saved meanwhile / yours, and
+  the user keeps theirs or mine for those fields; the other side's other
+  changes are kept either way.
+- ClusterUpgrade: the patch is rebuilt from the same intent on the latest
+  object and dry-run again; the review reopens with "the upgrade changed
+  while you were choosing". Pause, resume and stop are applied at once and
+  retried once on a conflict.
+- Management changes test the ReleaseManifest generation too: a release sync
+  between loading and clicking fails cleanly with "reload and try again".
+  Re-apply and Retry only set one annotation key (merge patch) and need no
+  precondition.
+- Closing the dialog while a dry run, rebase or apply is in flight ends that
+  attempt: late results are dropped instead of reopening the dialog (an
+  applied write is still recorded, so the form does not go stale).
+
+### 5.4 Compatibility rules baked into the draft
+
+- `isDefault` is always written explicitly for both controllers. Operator
+  v0.3.0 read a missing value as false; from v0.4.0 the CRD defaults it to
+  true. Explicit values mean the same to both.
+- Setting the ingress IP materializes the controller's key with both fields.
+- **MetalLB mirror** (operators before v0.4.0 only): they built the MetalLB
+  address pool from `ingress.nginx.dedicatedIP` and `ingress.cilium.dedicatedIP`
+  only, so a Traefik IP set alone would get a Service stuck in Pending. With
+  such an operator the plugin also writes the Traefik IP to
+  `ingress.nginx.dedicatedIP` when that key is empty or held the previous
+  Traefik IP, says so under the field, and leaves it out of the change list.
+  From v0.4.0 (`metallbReadsTraefikIP`) it does not.
+- Settings that are only for Cilium clusters are only offered there; a Cilium
+  ingress IP on a Calico cluster is a warning.
+
+### 5.5 Validation
+
+Errors block "Review changes", warnings are repeated in the review:
+
+- dedicated IPs: IPv4/IPv6 syntax (no leading zeros, no CIDR); not inside the
+  pod or service network; not the control plane VIP; ingress and Cilium IPs
+  differ (errors); equal to a node address (warning: leave it empty instead);
+- Cilium devices: Linux interface names (1-15 chars, no space or `/`, a
+  trailing `+` wildcard allowed), no duplicates (errors); `ovs-bridge` when the
+  OVS bridge is on (warning: added automatically);
+- emulation mode in `auto|true|false`;
+- overrides: values must parse as a YAML mapping (YAML 1.2 core rules, so
+  `yes`/`on` stay strings; error with line number); each helmArg must be
+  `--set key=value`, `--set=key=value` or `key=value` (the operator strips
+  only those prefixes; `--set-string` & co. would become bogus keys or fail
+  the component); values on a non-Helm component and, for headlamp, overriding
+  `initContainers`/`volumes`/`volumeMounts` (lists replace, which would drop
+  this plugin) are warnings;
+- upgrades: the drain timeout is a whole number ≥ 1; the graph URL is
+  http(s) or empty; targets come from `availableReleases` only.
+
+### 5.6 What survives what
+
+| Change made in the plugin | k4all release sync (`k4all-upgrade`) | Operator |
+|---|---|---|
+| ClusterConfig settings and overrides | untouched (the sync only writes the ReleaseManifest) | applied on next reconcile |
+| `management: Unmanaged` | kept explicitly by `merge_release_manifest` | leaves the component alone |
+| `management: Removed` | not kept explicitly; the server-side apply overwrites it when the release entry sets `management` for that component (today: nmstate, ingress-nginx, k4all-operator), otherwise the plugin's field manager keeps owning it and it stays (H-2) | uninstalls |
+| force-resync annotation | untouched (the sync only applies spec fields it owns) | consumed and removed |
+| ClusterUpgrade spec | untouched | drives the upgrade |
+
+The UI words the Removed caveat as "a later release can set it back"; the
+server-side-apply detail comes from reading `k4all-upgrade` and should be
+confirmed on the lab cluster.
+
+## 6. RBAC
+
+| Action | Verbs |
+|---|---|
+| All pages | `get,list,watch` on `clusterconfigs`, `releasemanifests`, `nodeconfigs`, `clusterupgrades` (`k4all.magesgate.com`) and core `nodes` |
+| Save settings / overrides | `patch` on `clusterconfigs` |
+| Management, re-apply | `patch` on `releasemanifests` |
+| Start, pause, resume, stop, retry upgrades; upgrade settings | `patch` on `clusterupgrades`, name `k4all` |
+
+The plugin asks the API server (SelfSubjectAccessReview via
+`getAuthorization('patch')`, with the name `k4all` for the ClusterUpgrade)
+and disables the controls with an explanation instead of failing on click.
+`distribution/rbac.yaml` has `k4all-viewer`, `k4all-editor` and
+`k4all-upgrader` (patch on the ClusterUpgrade `k4all` only; an upgrade
+reboots every node, so it is a role of its own). k4all's default login
+(`headlamp-admin` token, cluster-admin) needs none of this.
+
+## 7. Error and edge states
+
+| Situation | Behaviour |
+|---|---|
+| k4all CRDs missing (404) | one discovery request on `/apis/k4all.magesgate.com/v1alpha1` decides it at once (the list hooks would retry a 404 for seconds): "k4all-operator is not installed"; the Node section renders nothing and sends no NodeConfig request |
+| ClusterUpgrade not served (operator before v0.4.0) | the same discovery lists the group's resources: the Upgrades page says "Upgrades from Headlamp need k4all-operator v0.4.0", which operator runs, that k4all v2.4.0 brings it, and `sudo k4all-upgrade run --to v2.4.0` per node meanwhile (bridge first on v2.0-v2.2.3); with an operator that should serve it, it points at the installation instead; the Overview card says the same in a line. A list without clusterupgrades is asked again on the next mount |
+| ClusterUpgrade `k4all` missing | "No ClusterUpgrade yet": the operator creates it at start; `kubectl -n k4all-operator-system get pods` |
+| ClusterUpgrade without status | "Waiting for k4all-operator"; targets disabled |
+| Single-node cluster | review: cordon only, everything down while it reboots; drain options hidden |
+| No list permission (slow path) | Headlamp's query client retries failed list requests (about 7 s) before the 403 shows; acceptable, noted |
+| No list permission (403) | "No access to the k4all resources" (or "to the cluster upgrade") with the role to ask for |
+| No patch permission | read-only notice, controls disabled, tooltips name the missing verb |
+| No ClusterConfig / ReleaseManifest | explanation (created by `deploy-operator.sh`); Settings works without a ReleaseManifest |
+| Several ClusterConfigs | warning: the operator uses the first by name; the plugin edits that one |
+| Operator idle | banner after 15 minutes without a reconcile |
+| Settings saved but not applied | "Applying settings" banner while `status.observedGeneration < generation`; same on the Upgrades page |
+| Node upgrade hop | banner and per-node pill; the operator is paused, which the overview says |
+| Node in HOLD / ABANDONED / drain timed out | guidance with commands, Retry where it helps (4.3) |
+| Component failed | Overview banner, attention list, full message on the detail page |
+| Dry run rejected (400/422) | message from the API server; unknown fields get "upgrade k4all first" |
+| Conflict | rebase or conflict table (5.3) |
+| API unreachable / 5xx | "could not be reached, try again" with Retry; during a reboot of the node that runs Headlamp the review says this will happen |
+| Session expired (401) | Headlamp's own logout flow; hint in the dialog |
+| Component name in URL not found | warning with a link back to the list |
+
+## 8. Changes needed outside the plugin (proposals)
+
+None is required for the plugin to work; each improves correctness or lets the
+plugin do more. O = k4all-operator (coordinate with its session), H = k4all
+host side (this repo), U = ClusterUpgrade API (before operator v0.4.0 is
+tagged, if possible).
+
+| Id | Where | Proposal | Plugin impact today |
+|---|---|---|---|
+| ~~O-1~~ | operator | MetalLB counts the Traefik IP. **Done** in v0.4.0 (k4all-operator#7). | mirror only for older operators (5.4) |
+| **O-2** | operator `headlamp_hook.go` + H `update-routes.sh` | Dashboard routes have two owners that disagree. The headlamp hook replaces the whole Ingress spec with one rule `dashboard.<node-ip>.nip.io` on every re-apply, and any ClusterConfig change re-applies headlamp (hash). `update-routes.sh` (timer, every 10 min, `set -e`) patches `/spec/rules/1/host` first, which a one-rule Ingress does not have, so it stops before rule 0. Proposal: one owner, e.g. the hook builds both rules from the effective ingress IP and the node FQDN, and update-routes.sh only writes the MOTD. From reading the code: needs a lab check. | review dialog warns when headlamp is re-applied |
+| **O-3** | operator `appliedHash` | Hash only the ClusterConfig fields each hook reads, so turning on Argo CD does not `helm upgrade` the ingress controller, Headlamp, MetalLB, Calico… | the review lists what gets re-applied |
+| **O-4** | CRD (kubebuilder markers) | `format: ipv4/ipv6` (or CEL) on dedicated IPs; CEL `self == oldSelf` with a message on install-time fields (networks, API endpoint, `ha.*`), not on fields a migration rewrites | the plugin already treats them as read-only; server messages would show up in the dry run |
+| **O-5** | operator status | Set `status.features.ovsBridgeReady` (declared, never written); per-component `observedGeneration` or a ReleaseManifest `status.observedGeneration` | Overview could show a sync in progress |
+| **O-6** | operator `cilium_hook.go` | Enable Cilium's ingress controller when `ingress.cilium.dedicatedIP` is set; today the IP only reaches the MetalLB pool | the field is labelled "added to the MetalLB address pool" |
+| **O-7** | operator v0.5.0 | CNI switch and OVS bridge on/off on the existing fields `networking.cni.type` and `features.ovsBridge.enabled` (the plugin's controls turn on by version, 4.1), with progress in status | read-only with "coming with k4all-operator v0.5.0" |
+| **U-1** | `ReleaseInfo` | Add `minFrom` (and `crio`): the plugin then plans the exact path the operator and the nodes will take before the target is set, and shows the CRI-O change per hop | path from the versioning rules, labelled as such (4.3) |
+| **U-2** | status | The current release's own `ReleaseInfo` (Kubernetes, Fedora, CRI-O), e.g. `status.current` | taken from the nodes' kubelet, osImage and runtime |
+| **U-3** | `nodes[]` | A machine-readable `reason` for Failed (`DrainTimeout`, `Hold`, `Abandoned`, `TargetRefused`, …) | guessed from `hostPhase`, `drainStartedAt` and the message prefix `upgrade-target` |
+| **U-4** | retry annotation | Document that it also restarts an ABANDONED hop (the host side treats a re-written target as a retry) and any Failed node, not only drains | Retry offered for drains and abandoned hops |
+| **U-5** | `path[]`, `nodes[]` | `startedAt`/`completedAt` per hop and per node (or a node `lastTransitionTime`) | no elapsed time per hop or node, only the drain timer |
+| **U-6** | conditions | Document the condition types (e.g. `GraphAvailable=False` when the graph cannot be read, `Progressing`, `Degraded`) | any condition with status False and a message is shown as a warning |
+| **U-7** | status | Keep `availableReleases` filled while Idle and Succeeded (the target list), and say when the graph is unreachable | "no newer release" otherwise |
+| **H-1** | `k4all-upgrade` | Node annotations for release and HOLD reason. **Done** in the v2.4.0 host tool (`release`, `upgrade-phase`, `upgrade-message`). | shown on Overview, Upgrades and the Node page |
+| **H-2** | `k4all-upgrade` `merge_release_manifest` | Make the Removed rule explicit: keep a cluster-side `management: Removed` unless the release changed that component's management itself | the UI warns that a release can set it back |
+| **H-3** | node scripts | Proxy: read `spec.proxy` from the ClusterConfig on boot (or document it as install-time in the CRD) | read-only with explanation |
+| **H-4** | bootc `Containerfile` | Pre-load the plugin image with the other images (DISTRIBUTION.md) | the first Headlamp start after a sync pulls it |
+
+## 9. Decisions (made without asking, revisit as needed)
+
+1. **Patch, not update; JSON Patch, not merge patch or SSA** (5.1).
+2. **Precondition on `metadata.generation`, not `resourceVersion`**: status
+   writes bump resourceVersion every reconcile and would make every save a
+   conflict.
+3. **CNI type and OVS bridge are read-only** until operator v0.5.0 (user
+   decision: editable from the plugin once the operator supports it), gated
+   by the installed operator version (4.1).
+4. **Proxy is read-only**: the cluster resource does not reach the nodes.
+5. **No ReleaseManifest value/version editing**; overrides go to
+   `componentOverrides` so they survive upgrades. Values editor only for Helm
+   components (the operator ignores values elsewhere).
+6. **Removed is guarded**: protected components (k4all-operator, headlamp),
+   the active CNI, feature-gated components (use the switch) and components
+   another active one depends on cannot be removed from the plugin; others need
+   the name typed.
+7. **MetalLB mirror** of the Traefik IP only with operators before v0.4.0 (5.4).
+8. **Plain text editor for YAML** (monospace TextField) instead of Monaco: no
+   dependency on how Headlamp configures the Monaco loader, works offline;
+   validation gives line numbers. Monaco is a later nicety.
+9. **YAML 1.2 core schema** for override values: `yes`/`on` stay strings.
+10. **English only** for now; strings are plain so Headlamp's i18n can be added.
+11. **Plugin name** `k4all-headlamp-plugin` (folder and package name), API
+    `@kinvolk/headlamp-plugin` **0.14.0**, the version Headlamp v0.46.0 ships
+    in its own tree (chart 0.46.0 → appVersion 0.46.0). Headlamp loads plugins
+    whose declared headlamp-plugin version is `>=0.8.0-alpha.3`.
+12. **License** `GPL-3.0-only` in package.json, like the k4all repo.
+13. **Upgrade writes are intent-based**: a conflict rebuilds the patch from
+    "target vX" on the newest object and shows the review again, instead of
+    a three-way merge of a draft.
+14. **Starting an upgrade lifts a pause** left in the spec: the user asked to
+    go, and the review lists it.
+15. **Retry only where it helps**: a hold resumes by itself on the node, so
+    Retry is not offered for it.
+16. **Downtime is an estimate** (5-15 minutes per node and hop plus drains),
+    labelled as such; it exists to set expectations, not to schedule.
+17. **Stop asks for a confirmation**, Pause does not: stopping leaves the
+    nodes on two releases until the next start.
+18. **`k4all-upgrader` is a role of its own** in `rbac.yaml`, limited to the
+    ClusterUpgrade `k4all`.
+
+## 10. Code layout, build, tests
+
+```
+plugin/
+  package.json, package-lock.json, tsconfig.json
+  src/index.tsx                     registrations (sidebar, routes, Node section)
+  src/model/                        pure logic, no React, fully unit-tested
+    types.ts                        CRD types (mirror of api/v1alpha1, v0.4.0)
+    capabilities.ts                 what the installed operator supports
+    objects.ts                      path get/set, JSON equality, JSON pointers
+    patch.ts                        diff → JSON Patch, preconditions, applyOps, query
+    rebase.ts                       three-way rebase and conflict resolution
+    editor.ts                       edit-session reducer (base / latest / draft)
+    settings.ts                     draft setters: ingress controller, Traefik fallback,
+                                    mirror, overrides
+    fields.ts                       field catalog: labels, help, live/install/node, why,
+                                    liveWith capability
+    validation.ts, net.ts           IP/CIDR, devices, helmArgs, YAML values
+    changes.ts                      change list, consequences, re-applied components
+    components.ts, semver.ts        activation (port of shouldInstall), rows,
+                                    upgrade path (port of UpgradeStep), guards
+    upgrades.ts                     path (port of plan_path), view, node order, drain
+                                    timer, estimate, guidance, ClusterUpgrade writes
+    health.ts                       health headline, banners, node rows
+    overrides.ts                    overrides form <-> componentOverrides
+    textDiff.ts                     line diff, folding, YAML dump
+    errors.ts                       API error classification
+  src/icons.ts                      offline registration of the mdi icons used
+  src/api/                          KubeObject classes, discovery, hooks, writes
+  src/components/                   pages and widgets (MUI + Headlamp)
+    upgrades/                       Upgrades page, review and settings dialogs,
+                                    progress, release list, Overview card, write flow
+```
+
+```bash
+cd plugin
+npm ci
+npm run lint && npm run tsc && npm test && npm run build   # dist/main.js
+```
+
+Tests: 233 (vitest, jsdom). The model tests cover patch generation and
+application, preconditions, rebase/conflicts, the editor reducer, the
+ingress controller of the release (ingress-nginx and Traefik), Traefik
+fallback/mirror/exposure, capabilities, overrides form round-trips
+(including Helm nulls), validation (IPs, CIDRs, devices, helmArgs, YAML),
+operator parity (`shouldInstall` of v0.4.0, `UpgradeStep`, semver), change
+descriptions and re-applied components, health and node rows, error
+classification, text diff, and the upgrade logic (path planning against
+`plan_path`'s rules and with `minFrom`, hop changes, cluster facts, node
+order, estimates, drain timer, stages, guidance for HOLD, refused targets,
+ABANDONED, drain timeouts, Retry, and the spec of every intent). Rendering
+tests (Testing Library) cover the Ingress (both controllers), Features and
+Networking sections (including the capability-gated controls), the review
+dialog's acknowledgement gate, the conflict table, and for upgrades the
+release list, the review dialog (path, order, drain, downtime, single node,
+the acknowledgement, re-checking with new drain options), the progress panel
+(order, drain timer, pause, stop, retry, HOLD guidance), the states without
+ClusterUpgrade and the Overview card. The two save flows run against a fake
+API server applying the patches (dry run then apply, rebase or rebuild on a
+newer version, conflict then "keep mine", late results after closing, API
+errors, pause with a conflict retried once, the retry annotation), and the
+ClusterUpgrade requests are checked as sent (path, query, content type,
+body). One more test checks that every icon used is registered for offline
+use.
+
+An independent review of the Headlamp integration (against the 0.14.0 lib
+sources) found two bugs, both fixed: Headlamp keeps a route mounted when only
+`:name` changes, so the component page is now keyed by name (otherwise unsaved
+overrides of one component could be saved into the next one); and closing the
+dialog during a dry run let the result reopen it. The upgrade flow uses the
+same session guard.
+
+Not done: a run against a live Headlamp/cluster (planned on the lab cluster,
+see DISTRIBUTION.md), and against the real ClusterUpgrade controller (its
+branch has the API with a scaffold controller).
+
+## 11. Later
+
+- An app-bar indicator while an upgrade runs (needs a cheap watch).
+- Exact paths before the start (U-1), elapsed times per hop and node (U-5).
+- Overrides editor with Monaco and the chart's values schema for completion.
+- CNI switch and OVS bridge once operator v0.5.0 ships (4.1).
+- Italian (and other) translations through Headlamp's i18n.
+- Storybook stories for the pages with mocked resources.
