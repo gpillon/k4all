@@ -182,11 +182,11 @@ export function describeChanges(
   if (controller === 'traefik' && tBase.source !== 'traefik' && tDraft.source === 'traefik') {
     add({
       key: 'ingress.traefik',
-      label: 'Ingress settings key',
-      from: 'spec.ingress.nginx (before v2.6.0)',
+      label: 'Traefik settings',
+      from: 'inherited',
       to: 'spec.ingress.traefik',
       severity: 'info',
-      consequence: 'The Traefik settings get their own key; the values are the same.',
+      consequence: 'Traefik keeps the same values; from now on they are its own.',
     });
   }
 

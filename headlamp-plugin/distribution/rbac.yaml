@@ -4,7 +4,9 @@
 #
 # k4all-viewer:   sees every plugin page, cannot change anything.
 # k4all-editor:   also saves settings and overrides, sets the management
-#                 policy, re-applies components.
+#                 policy, re-applies components, and moves Ingresses from the
+#                 nginx class to traefik (patch on ingresses, and on services
+#                 for backend-protocol HTTPS).
 # k4all-upgrader: also starts, pauses, resumes, stops and retries cluster
 #                 upgrades (ClusterUpgrade, k4all v2.4.0+). An upgrade reboots
 #                 every node, so it is a role of its own.
@@ -21,6 +23,10 @@ rules:
     verbs: [get, list, watch]
   - apiGroups: [""]
     resources: [nodes]
+    verbs: [get, list, watch]
+  # "Ingresses still on the nginx class" (Settings > Ingress, Overview).
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
     verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -42,6 +48,14 @@ rules:
   - apiGroups: [""]
     resources: [nodes]
     verbs: [get, list, watch]
+  # Switch to traefik: the Ingress (class, annotations) and, for
+  # backend-protocol HTTPS, an annotation on its Services.
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

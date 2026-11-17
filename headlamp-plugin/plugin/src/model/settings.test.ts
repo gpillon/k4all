@@ -7,7 +7,6 @@ import {
 import { setIn } from './objects';
 import {
   activeIngress,
-  adoptTraefikKey,
   draftFrom,
   effectiveIngress,
   effectiveTraefik,
@@ -62,35 +61,14 @@ describe('setTraefik', () => {
     expect(draft.ingress?.nginx).toEqual({ dedicatedIP: '192.168.1.240', isDefault: true });
   });
 
-  it('mirrors the IP into the legacy nginx key so MetalLB (operator v0.3.0) announces it', () => {
-    const draft = setTraefik(defaultClusterConfig().spec!, { dedicatedIP: '192.168.1.240' });
-    expect(draft.ingress?.traefik?.dedicatedIP).toBe('192.168.1.240');
-    expect(draft.ingress?.nginx?.dedicatedIP).toBe('192.168.1.240');
-  });
-
-  it('keeps the mirror in sync on later changes and clears it with the Traefik IP', () => {
+  it('writes spec.ingress.traefik only, never the ingress-nginx key', () => {
     let draft = setTraefik(defaultClusterConfig().spec!, { dedicatedIP: '192.168.1.240' });
-    draft = setTraefik(draft, { dedicatedIP: '192.168.1.241' });
-    expect(draft.ingress?.nginx?.dedicatedIP).toBe('192.168.1.241');
-    draft = setTraefik(draft, { dedicatedIP: '' });
-    expect(draft.ingress?.nginx?.dedicatedIP).toBe('');
-  });
-
-  it('does not create the nginx key just to store an empty IP', () => {
-    const draft = setTraefik(defaultClusterConfig().spec!, { dedicatedIP: '' });
+    expect(draft.ingress?.traefik).toEqual({ dedicatedIP: '192.168.1.240', isDefault: true });
     expect(draft.ingress?.nginx).toBeUndefined();
-  });
-
-  it('leaves a different legacy IP alone', () => {
-    const spec: ClusterConfigSpec = {
-      ingress: {
-        traefik: { dedicatedIP: '10.0.0.1', isDefault: true },
-        nginx: { dedicatedIP: '10.0.0.9' },
-      },
-    };
-    expect(setTraefik(spec, { dedicatedIP: '10.0.0.2' }).ingress?.nginx?.dedicatedIP).toBe(
-      '10.0.0.9'
-    );
+    // inherited values: the first change saves them to the traefik key, nginx stays as it was
+    draft = setTraefik(legacySpec(), { dedicatedIP: '192.168.1.241' });
+    expect(draft.ingress?.traefik).toEqual({ dedicatedIP: '192.168.1.241', isDefault: true });
+    expect(draft.ingress?.nginx).toEqual(legacySpec().ingress?.nginx);
   });
 
   it('does not mutate its input', () => {
@@ -98,20 +76,6 @@ describe('setTraefik', () => {
     const copy = draftFrom(spec);
     setTraefik(spec, { dedicatedIP: '192.168.1.240', isDefault: false });
     expect(spec).toEqual(copy);
-  });
-});
-
-describe('adoptTraefikKey', () => {
-  it('copies the effective settings to spec.ingress.traefik', () => {
-    expect(adoptTraefikKey(legacySpec()).ingress?.traefik).toEqual({
-      dedicatedIP: '192.168.1.240',
-      isDefault: true,
-    });
-  });
-
-  it('is a no-op when the key exists', () => {
-    const spec = defaultClusterConfig().spec!;
-    expect(adoptTraefikKey(spec)).toBe(spec);
   });
 });
 
@@ -210,17 +174,5 @@ describe('ingress-nginx clusters (k4all v2.4.0 and v2.5.x)', () => {
     });
     expect(effectiveIngress(spec, 'nginx').dedicatedIP).toBe('');
     expect(ingressExposure(spec, 'nginx').kind).toBe('host-ports');
-  });
-});
-
-describe('MetalLB mirror of the Traefik IP', () => {
-  it('is skipped for operators that read spec.ingress.traefik (v0.4.0+)', () => {
-    const draft = setTraefik(
-      defaultClusterConfig().spec!,
-      { dedicatedIP: '192.168.1.240' },
-      { mirrorToNginx: false }
-    );
-    expect(draft.ingress?.traefik?.dedicatedIP).toBe('192.168.1.240');
-    expect(draft.ingress?.nginx).toBeUndefined();
   });
 });

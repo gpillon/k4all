@@ -8,7 +8,9 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  FormControlLabel,
   Stack,
+  Switch,
   ToggleButton,
   ToggleButtonGroup,
   Tooltip,
@@ -18,7 +20,7 @@ import { useSnackbar } from 'notistack';
 import React from 'react';
 import { K4allData, useK4allData, usePermissions } from '../../api/hooks';
 import { forceResync } from '../../api/k4allApi';
-import { buildRows, ComponentRow, summarize } from '../../model/components';
+import { buildRows, ComponentRow, summarize, visibleRows } from '../../model/components';
 import { classifyError } from '../../model/errors';
 import { sameVersion } from '../../model/semver';
 import { K4allGate } from '../common/states';
@@ -82,9 +84,12 @@ export function ComponentsPage() {
 
 function ComponentsContent({ data }: { data: K4allData }) {
   const rm = data.rm!;
-  const rows = React.useMemo(() => buildRows(rm, data.cc?.spec ?? {}), [rm, data.cc]);
-  const summary = summarize(rows);
+  const allRows = React.useMemo(() => buildRows(rm, data.cc?.spec ?? {}), [rm, data.cc]);
+  const summary = summarize(allRows);
   const [filter, setFilter] = React.useState<Filter>('all');
+  const [showRemoved, setShowRemoved] = React.useState(false);
+  const removed = allRows.length - visibleRows(allRows, false).length;
+  const rows = visibleRows(allRows, showRemoved);
   const [confirmAll, setConfirmAll] = React.useState(false);
   const perms = usePermissions();
   const { enqueueSnackbar } = useSnackbar();
@@ -135,21 +140,43 @@ function ComponentsContent({ data }: { data: K4allData }) {
         }
       />
 
-      <ToggleButtonGroup
-        size="small"
-        exclusive
-        value={filter}
-        onChange={(_, v) => v && setFilter(v)}
-        aria-label="Filter components"
+      <Stack
+        direction="row"
+        spacing={2}
+        alignItems="center"
+        flexWrap="wrap"
+        useFlexGap
         sx={{ mb: 2 }}
       >
-        <ToggleButton value="all">All {rows.length}</ToggleButton>
-        <ToggleButton value="attention">
-          Needs attention {rows.filter(FILTERS.attention).length}
-        </ToggleButton>
-        <ToggleButton value="active">Active {summary.active}</ToggleButton>
-        <ToggleButton value="off">Off {rows.length - summary.active}</ToggleButton>
-      </ToggleButtonGroup>
+        <ToggleButtonGroup
+          size="small"
+          exclusive
+          value={filter}
+          onChange={(_, v) => v && setFilter(v)}
+          aria-label="Filter components"
+        >
+          <ToggleButton value="all">All {rows.length}</ToggleButton>
+          <ToggleButton value="attention">
+            Needs attention {rows.filter(FILTERS.attention).length}
+          </ToggleButton>
+          <ToggleButton value="active">Active {rows.filter(FILTERS.active).length}</ToggleButton>
+          <ToggleButton value="off">Off {rows.filter(FILTERS.off).length}</ToggleButton>
+        </ToggleButtonGroup>
+        {removed > 0 && (
+          <Tooltip title="Components the release took out (management: Removed), e.g. ingress-nginx from k4all v2.6.0.">
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={showRemoved}
+                  onChange={(_, checked) => setShowRemoved(checked)}
+                />
+              }
+              label={`Show removed (${removed})`}
+            />
+          </Tooltip>
+        )}
+      </Stack>
 
       <Table<ComponentRow>
         data={rows.filter(FILTERS[filter])}

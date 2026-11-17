@@ -315,6 +315,14 @@ export function buildRows(
     .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 }
 
+/**
+ * The rows the Components page lists: components with management Removed
+ * (e.g. ingress-nginx from v2.6.0) are hidden unless asked for.
+ */
+export function visibleRows(rows: ComponentRow[], showRemoved: boolean): ComponentRow[] {
+  return showRemoved ? rows : rows.filter(r => r.management !== 'Removed');
+}
+
 export interface Summary {
   total: number;
   active: number;

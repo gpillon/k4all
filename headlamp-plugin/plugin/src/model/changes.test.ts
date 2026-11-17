@@ -49,7 +49,7 @@ describe('describeChanges', () => {
     expect(needsAcknowledgement(items)).toBe(true);
   });
 
-  it('describes a Traefik address change once, hiding the nginx compatibility mirror', () => {
+  it('describes a Traefik address change once', () => {
     const items = describeChanges(
       base(),
       setTraefik(base(), { dedicatedIP: '192.168.1.240' }),

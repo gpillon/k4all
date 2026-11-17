@@ -46,7 +46,7 @@ function applied(update: ReturnType<typeof vi.fn>, draft: Draft): Draft {
 }
 
 describe('IngressSection', () => {
-  it('writes the Traefik IP, mirrored for MetalLB, when the user types it', () => {
+  it('writes the Traefik IP to spec.ingress.traefik only', () => {
     const draft = defaultClusterConfig().spec!;
     const update = vi.fn();
     render(<IngressSection {...sectionProps(draft, update)} />);
@@ -55,7 +55,7 @@ describe('IngressSection', () => {
     });
     const next = applied(update, draft);
     expect(next.ingress?.traefik).toEqual({ dedicatedIP: '192.168.1.240', isDefault: true });
-    expect(next.ingress?.nginx?.dedicatedIP).toBe('192.168.1.240');
+    expect(next.ingress?.nginx).toBeUndefined();
   });
 
   it('shows validation errors next to the field', () => {
@@ -68,18 +68,6 @@ describe('IngressSection', () => {
   it('explains how Traefik is exposed', () => {
     render(<IngressSection {...sectionProps(defaultClusterConfig().spec!)} />);
     expect(screen.getByText(/Host ports 80 and 443/)).toBeTruthy();
-  });
-
-  it('does not mirror the IP for operators that read the traefik key (v0.4.0+)', () => {
-    const draft = defaultClusterConfig().spec!;
-    const update = vi.fn();
-    render(<IngressSection {...sectionProps(draft, update, capabilitiesOf('v0.4.0'))} />);
-    fireEvent.change(screen.getByLabelText('Traefik dedicated IP'), {
-      target: { value: '192.168.1.240' },
-    });
-    const next = applied(update, draft);
-    expect(next.ingress?.traefik?.dedicatedIP).toBe('192.168.1.240');
-    expect(next.ingress?.nginx).toBeUndefined();
   });
 
   it('edits spec.ingress.nginx on clusters that run ingress-nginx (k4all v2.4.0)', () => {
@@ -103,15 +91,23 @@ describe('IngressSection', () => {
     });
   });
 
-  it('offers to move pre-v2.6.0 settings to spec.ingress.traefik', () => {
+  it('shows the inherited values and saves a change straight to spec.ingress.traefik', () => {
     const legacy: Draft = {
       networking: { cni: { type: 'calico' } },
-      ingress: { nginx: { dedicatedIP: '', isDefault: true } },
+      ingress: { nginx: { dedicatedIP: '192.168.1.240', isDefault: true } },
     };
     const update = vi.fn();
     render(<IngressSection {...sectionProps(legacy, update)} base={legacy} />);
-    fireEvent.click(screen.getByRole('button', { name: /Move to spec.ingress.traefik/ }));
-    expect(applied(update, legacy).ingress?.traefik).toEqual({ dedicatedIP: '', isDefault: true });
+    expect(screen.queryByRole('button', { name: /Move to/ })).toBeNull();
+    expect(screen.getByText(/settings it inherited/)).toBeTruthy();
+    expect((screen.getByLabelText('Traefik dedicated IP') as HTMLInputElement).value).toBe(
+      '192.168.1.240'
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Traefik is the default IngressClass' }));
+    expect(applied(update, legacy).ingress).toEqual({
+      nginx: { dedicatedIP: '192.168.1.240', isDefault: true },
+      traefik: { dedicatedIP: '192.168.1.240', isDefault: false },
+    });
   });
 });
 
