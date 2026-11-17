@@ -123,6 +123,92 @@ def test_traefik_image_ships_with_the_image():
     assert '"docker.io/traefik:${TRAEFIK_TAG}"' in text
 
 
+# --- ingress: Traefik only, from v2.6.0 ---------------------------------------
+REDIRECT = "traefik-redirect-https@kubernetescrd"
+MIDDLEWARE_ANNOTATION = "traefik.ingress.kubernetes.io/router.middlewares"
+
+
+def release_components():
+    with open(os.path.join(BOOTC, "overlay", "usr", "local", "share",
+                           "k4all-release.yaml"), encoding="utf-8") as fh:
+        return yaml.safe_load(fh)["spec"]["components"]
+
+
+def nginx_leftovers(node, path="values"):
+    """Paths of ingress-nginx classes and annotations inside chart values."""
+    found = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            here = "%s.%s" % (path, key)
+            if str(key).startswith("nginx.ingress.kubernetes.io/"):
+                found.append(here)
+            elif key in ("ingressClassName", "className", "ingressClass") \
+                    and value == "nginx":
+                found.append(here)
+            else:
+                found += nginx_leftovers(value, here)
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            found += nginx_leftovers(value, "%s[%d]" % (path, i))
+    return found
+
+
+def test_k4all_routes_use_the_traefik_class():
+    # From v2.6.0 k4all no longer points at ingress-nginx: its own routes use
+    # the traefik class and the redirect Middleware. Only traefik's nginx
+    # IngressClass stays, for users' Ingresses.
+    components = release_components()
+    for name, comp in components.items():
+        if name == "ingress-nginx":
+            continue
+        values = dict(comp.get("values") or {})
+        if name == "traefik":
+            values["extraObjects"] = [o for o in values["extraObjects"]
+                                      if o["kind"] != "IngressClass"]
+        assert nginx_leftovers(values) == [], name
+    for name, ingress in (
+            ("headlamp", components["headlamp"]["values"]["ingress"]),
+            ("argocd", components["argocd"]["values"]["server"]["ingress"])):
+        assert ingress["ingressClassName"] == "traefik", name
+        assert ingress["annotations"] == {MIDDLEWARE_ANNOTATION: REDIRECT}, name
+    # The headlamp hook writes the dashboard route once the Middleware is there.
+    assert "traefik" in components["headlamp"]["dependsOn"]
+    assert "traefik" in components["argocd"]["dependsOn"]
+
+
+def test_traefik_ships_the_redirect_middleware():
+    values = release_components()["traefik"]["values"]
+    assert values["providers"]["kubernetesCRD"]["enabled"] is True
+    middlewares = [o for o in values["extraObjects"] if o["kind"] == "Middleware"]
+    assert middlewares == [{
+        "apiVersion": "traefik.io/v1alpha1", "kind": "Middleware",
+        "metadata": {"name": "redirect-https", "namespace": "traefik"},
+        "spec": {"redirectScheme": {"scheme": "https", "permanent": True}}}]
+    meta = middlewares[0]["metadata"]
+    assert REDIRECT == "%s-%s@kubernetescrd" % (meta["namespace"], meta["name"])
+    script = read(BIN, "update-routes.sh")
+    assert "REDIRECT_NAMESPACE=%s\n" % meta["namespace"] in script
+    assert "REDIRECT_NAME=%s\n" % meta["name"] in script
+    nginx = [o for o in values["extraObjects"] if o["kind"] == "IngressClass"]
+    assert [o["metadata"]["name"] for o in nginx] == ["nginx"]
+    assert nginx[0]["metadata"]["annotations"] == {
+        "ingressclass.kubernetes.io/is-default-class": "false"}
+
+
+def test_ingress_nginx_is_removed_by_this_release():
+    # Every cluster passes v2.6.0 (a minor): its sync uninstalls ingress-nginx
+    # on clusters that come from v2.5.0.
+    assert release_components()["ingress-nginx"]["management"] == "Removed"
+
+
+def test_update_routes_timer_needs_only_shipped_units():
+    # A Requires= on a unit that does not exist keeps the timer from starting.
+    timer = read(BOOTC, "systemd", "fck8s-update-routes.timer")
+    for name in re.findall(r"^Requires=(.+)$", timer, re.M):
+        for unit in name.split():
+            assert os.path.exists(os.path.join(BOOTC, "systemd", unit)), unit
+
+
 def test_image_records_its_release():
     _, text = containerfile_args()
     assert '"${K4ALL_VERSION}" > /usr/local/share/k4all-upgrade/version' in text

@@ -157,12 +157,14 @@ spec:
 
     traefik:
       type: helm
-      # Traefik v3.7.18. Its Ingress-NGINX provider serves the Ingresses of
-      # class "nginx" with their nginx.ingress.kubernetes.io annotations
-      # (ssl-passthrough included), so routes made for ingress-nginx keep
-      # working. The operator's Traefik hook adds the service, the host ports
-      # and the default class from ClusterConfig spec.ingress.traefik (or
-      # spec.ingress.nginx on clusters installed before v2.6.0).
+      # Traefik v3.7.18. k4all's own routes (Headlamp, Argo CD) use the
+      # traefik class. Its Ingress-NGINX provider still serves users'
+      # Ingresses of class "nginx" with their nginx.ingress.kubernetes.io
+      # annotations (ssl-passthrough included), until they move to traefik.
+      # The operator's Traefik hook adds the service, the host ports and the
+      # default class from ClusterConfig spec.ingress.traefik (or
+      # spec.ingress.nginx on clusters installed before v2.6.0, until the
+      # operator moves it).
       version: "42.4.0"
       repo: "https://traefik.github.io/charts"
       chart: traefik
@@ -183,16 +185,32 @@ spec:
         ingressClass:
           enabled: true
           name: traefik
-        # The provider only follows Ingresses whose class has the
-        # ingress-nginx controller; the chart creates only the traefik class.
-        # Not the default class: the hook makes traefik the default instead.
         extraObjects:
+          # For users' Ingresses only. The provider only follows Ingresses
+          # whose class has the ingress-nginx controller; the chart creates
+          # only the traefik class. Never the default class: the hook makes
+          # traefik the default instead.
           - apiVersion: networking.k8s.io/v1
             kind: IngressClass
             metadata:
               name: nginx
+              annotations:
+                ingressclass.kubernetes.io/is-default-class: "false"
             spec:
               controller: k8s.io/ingress-nginx
+          # What ingress-nginx's force-ssl-redirect did: routes name it with
+          # traefik.ingress.kubernetes.io/router.middlewares:
+          # traefik-redirect-https@kubernetescrd. On the websecure entry
+          # point the request is already https and goes through.
+          - apiVersion: traefik.io/v1alpha1
+            kind: Middleware
+            metadata:
+              name: redirect-https
+              namespace: traefik
+            spec:
+              redirectScheme:
+                scheme: https
+                permanent: true
       dependsOn:
         - cert-manager
         - metallb
@@ -286,8 +304,16 @@ spec:
           type: NodePort
           port: 4466
           nodePort: 32323
+        # The dashboard route is the Ingress of the operator's headlamp hook
+        # (class traefik and the redirect Middleware from k4all-operator
+        # v0.4.2), plus the FQDN rule of update-routes.sh: the chart's own
+        # Ingress stays off. Turned on through componentOverrides, it uses
+        # Traefik too.
         ingress:
           enabled: false
+          ingressClassName: traefik
+          annotations:
+            traefik.ingress.kubernetes.io/router.middlewares: traefik-redirect-https@kubernetescrd
         # The k4all Headlamp plugin (headlamp-plugin/ in this repo), pinned
         # like every component: an initContainer copies it from its image
         # into an emptyDir mounted read-only at <pluginsDir>/k4all-headlamp-plugin,
@@ -332,8 +358,11 @@ spec:
           - name: k4all-plugin
             mountPath: /headlamp/plugins/k4all-headlamp-plugin
             readOnly: true
+      # traefik: its Middleware traefik/redirect-https exists by the time
+      # the headlamp hook writes the dashboard route.
       dependsOn:
         - cert-manager
+        - traefik
       custom: {}
 
     # --- Monitoring ---
@@ -442,13 +471,15 @@ spec:
         configs:
           params:
             server.insecure: true
+        # server.insecure: the backend is plain HTTP on the service's http
+        # port, Traefik's default scheme (no serversscheme needed). The
+        # Middleware replaces ingress-nginx's force-ssl-redirect.
         server:
           ingress:
             enabled: true
-            ingressClassName: nginx
+            ingressClassName: traefik
             annotations:
-              nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-              nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+              traefik.ingress.kubernetes.io/router.middlewares: traefik-redirect-https@kubernetescrd
       featureGate: argocd
       dependsOn:
         - calico
@@ -501,7 +532,7 @@ spec:
       type: manifest
       management: Managed
       # A release tag, never "latest" (the image build refuses it).
-      version: "v0.4.1"
+      version: "v0.4.2"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system

@@ -46,7 +46,7 @@ The 2.x upgrade path:
 | v2.3.0 | CRI-O 1.35, matching Kubernetes 1.35, plus the latest 1.35 patch; image names without a registry (`nginx:latest`) resolve on docker.io only |
 | v2.4.0 | first ReleaseManifest sync: k4all-operator v0.4.1 (ClusterUpgrade: from here every upgrade can run from the Headlamp plugin), the k4all Headlamp plugin, then every cluster component pinned and updated (intermediate versions where upstream needs them) |
 | v2.5.0 | Fedora 45 |
-| v2.6.0 | Traefik replaces ingress-nginx |
+| v2.6.0 | Traefik replaces ingress-nginx; k4all's routes and `spec.ingress` move to Traefik |
 | v2.7.0 | Kubernetes 1.36 |
 | v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
 | v2.9.0 | Kubernetes 1.37 |
@@ -216,13 +216,34 @@ hop the operator uninstalls ingress-nginx, then installs Traefik on the same
 LoadBalancer IP (or the same host ports). The routes are down for a few
 seconds; the Traefik image ships with the node image.
 
-- Ingresses with `ingressClassName: nginx` and `nginx.ingress.kubernetes.io/*`
-  annotations keep working: Traefik serves them through its Ingress-NGINX
-  provider, ssl-passthrough included. The `nginx` IngressClass stays. New
-  Ingresses can use the `traefik` class.
+- k4all's own routes, the Headlamp dashboard and Argo CD, use the `traefik`
+  class. Where ingress-nginx had `force-ssl-redirect`, they name the
+  Middleware `traefik/redirect-https` that comes with Traefik
+  (`traefik.ingress.kubernetes.io/router.middlewares:
+  traefik-redirect-https@kubernetescrd`). The dashboard route has a rule for
+  `dashboard.<FQDN>` and one for `dashboard.<IP>.nip.io`: the IP is Traefik's
+  dedicated IP, or the node's address when there is none.
+- Your own Ingresses with `ingressClassName: nginx` and
+  `nginx.ingress.kubernetes.io/*` annotations keep working: Traefik serves
+  them through its Ingress-NGINX provider, ssl-passthrough included. The
+  `nginx` IngressClass stays for them, never as the default class. Move them
+  to the `traefik` class (the Headlamp plugin will have a button for that):
+
+  | ingress-nginx | Traefik |
+  |---|---|
+  | `ingressClassName: nginx` | `ingressClassName: traefik` |
+  | `nginx.ingress.kubernetes.io/force-ssl-redirect: "true"` | `traefik.ingress.kubernetes.io/router.middlewares: traefik-redirect-https@kubernetescrd` |
+  | `nginx.ingress.kubernetes.io/backend-protocol: HTTPS` | `traefik.ingress.kubernetes.io/service.serversscheme: https` on the backend Service; Traefik verifies the backend certificate, so a self-signed one also needs a `ServersTransport` with `insecureSkipVerify` |
+  | `nginx.ingress.kubernetes.io/ssl-passthrough: "true"` | an `IngressRouteTCP` with `tls.passthrough: true` |
+
 - Settings: `spec.ingress.traefik` (`dedicatedIP`, `isDefault`) in the
-  ClusterConfig. Clusters installed before v2.6.0 have only
-  `spec.ingress.nginx`, and Traefik follows it until a `traefik` key exists.
+  ClusterConfig. Clusters installed before v2.6.0 have `spec.ingress.nginx`
+  instead, which moves to `spec.ingress.traefik` with the same values: on
+  each node `k4all-migrate-config.sh` moves it in `/etc/k4all-config.yaml` at
+  the first boot of v2.6.0 (the file as it was stays in
+  `/etc/k4all-config.yaml.ingress-nginx.migrated`), and the k4all-operator
+  moves it in the ClusterConfig. Until then Traefik follows
+  `spec.ingress.nginx`.
 - Kickstart: `--ingress-traefik-ip`, `--no-ingress-traefik` and
   `--ingress-default=traefik|cilium`. The old `--ingress-nginx*` options are
   still accepted.

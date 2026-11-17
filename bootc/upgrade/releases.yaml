@@ -91,9 +91,10 @@ releases:
     syncManifest: true
     notes: >-
       Traefik replaces ingress-nginx, whose last release is tested only up to
-      Kubernetes 1.35. The operator (v0.4.1 since v2.4.0) uninstalls
-      ingress-nginx, then installs Traefik on the same IP or host ports; the
-      Ingresses of class nginx keep
-      working through Traefik's Ingress-NGINX provider. Routes are down for
+      Kubernetes 1.35. Operator v0.4.2 uninstalls ingress-nginx, then installs
+      Traefik on the same IP or host ports. k4all's own routes (Headlamp,
+      Argo CD) move to the traefik class and spec.ingress.nginx moves to
+      spec.ingress.traefik; Ingresses of class nginx keep working through
+      Traefik's Ingress-NGINX provider until they move. Routes are down for
       a few seconds during the sync. A minor because it replaces a platform
       component.

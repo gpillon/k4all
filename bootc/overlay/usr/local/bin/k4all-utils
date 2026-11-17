@@ -18,6 +18,15 @@ _k4all_release_file() {
     fi
 }
 
+# traefik_is_active [manifest]: true when the release manifest (default: the
+# one in the image) runs Traefik as the ingress controller, as k4all does from
+# v2.6.0, unless the component is Removed.
+traefik_is_active() {
+    local manifest="${1:-$K4ALL_RELEASE_BASE}"
+    [ -f "$manifest" ] || return 1
+    [ "$(yq e '(.spec.components.traefik != null) and ((.spec.components.traefik.management // "Managed") != "Removed")' "$manifest" 2>/dev/null)" = "true" ]
+}
+
 get_component_version() {
     local component="$1"
     local rf
