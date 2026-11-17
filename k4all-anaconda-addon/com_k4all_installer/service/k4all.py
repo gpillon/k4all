@@ -205,42 +205,47 @@ class K4All(KickstartService):
         self._config["cluster"]["ha"]["apiControlEndpointSubnetSize"] = value
         self.config_changed.emit()
 
-    # --- Cilium-specific (stored in componentOverrides) ---
-    def _cilium_overrides(self):
-        co = self._config.setdefault("componentOverrides", {})
-        cil = co.setdefault("cilium", {})
-        return cil.setdefault("values", {})
+    # --- Cilium-specific (spec.networking.cni.cilium, translated by the operator) ---
+    def _cilium_options(self):
+        networking = self._config.setdefault("networking", {})
+        cni = networking.setdefault("cni", {})
+        return cni.setdefault("cilium", {})
 
     @property
     def cilium_additional_devices(self):
-        return self._cilium_overrides().get("additionalDevices", "")
+        """Comma-separated, as shown in the installer text field."""
+        return ",".join(self._cilium_options().get("additionalDevices", []))
 
     def set_cilium_additional_devices(self, value):
-        self._cilium_overrides()["additionalDevices"] = value
+        devices = [d.strip() for d in value.replace(" ", ",").split(",") if d.strip()]
+        if devices:
+            self._cilium_options()["additionalDevices"] = devices
+        else:
+            self._cilium_options().pop("additionalDevices", None)
         self.config_changed.emit()
 
     @property
     def cilium_gateway_api(self):
-        return bool(self._cilium_overrides().get("gatewayApi", False))
+        return bool(self._cilium_options().get("gatewayAPI", False))
 
     def set_cilium_gateway_api(self, enabled):
-        self._cilium_overrides()["gatewayApi"] = bool(enabled)
+        self._cilium_options()["gatewayAPI"] = bool(enabled)
         self.config_changed.emit()
 
     @property
     def cilium_l2_announcements(self):
-        return bool(self._cilium_overrides().get("l2announcements", False))
+        return bool(self._cilium_options().get("l2announcements", False))
 
     def set_cilium_l2_announcements(self, enabled):
-        self._cilium_overrides()["l2announcements"] = bool(enabled)
+        self._cilium_options()["l2announcements"] = bool(enabled)
         self.config_changed.emit()
 
     @property
     def cilium_hubble(self):
-        return bool(self._cilium_overrides().get("hubble", False))
+        return bool(self._cilium_options().get("hubble", False))
 
     def set_cilium_hubble(self, enabled):
-        self._cilium_overrides()["hubble"] = bool(enabled)
+        self._cilium_options()["hubble"] = bool(enabled)
         self.config_changed.emit()
 
     # --- Ingress configuration ---
