@@ -15,7 +15,7 @@ VNC_DISPLAY ?= :1
 
 .PHONY: all image iso iso-attended iso-unattended-bootstrap iso-unattended-control iso-unattended-worker \
         addon remaster clean help test test-addon run run-start build-run stop test-runtime \
-        bootstrap kubeconfig token dashboard shell test-iso-install test-iso-install-attended
+        bootstrap kubeconfig token dashboard shell test-iso-install test-iso-install-attended test-upgrade
 
 all: image
 
@@ -229,8 +229,13 @@ test-iso-install-attended:
 	VNC_DISPLAY=$(VNC_DISPLAY) KEEP_VM_RUNNING=true NO_AUTO_REBOOT=false KS_FILE= \
 		./tests/test-iso-install.sh $(if $(ISO),$(ISO),$(OUTPUT_DIR)/k4all-bootstrap.iso)
 
+# Unit, graph and contract tests of the upgrade path (no build needed)
+test-upgrade:
+	@echo "=== Running k4all-upgrade tests ==="
+	python3 -m pytest -q tests/upgrade
+
 # Test everything
-test-all: test test-addon
+test-all: test test-addon test-upgrade
 	@echo ""
 	@echo "=== All tests passed ==="
 
@@ -284,6 +289,7 @@ help:
 	@echo "  test-iso-install-attended - Same test with live VNC; keep installed VM running"
 	@echo "                              (VNC_DISPLAY=:1 -> 127.0.0.1:5901)"
 	@echo "  test-addon               - Run Anaconda addon unit tests"
+	@echo "  test-upgrade             - Run k4all-upgrade, graph and contract tests"
 	@echo "  test-all                 - Run all tests"
 	@echo ""
 	@echo "Other:"

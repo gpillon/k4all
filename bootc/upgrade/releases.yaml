@@ -1,0 +1,41 @@
+# k4all upgrade graph (source).
+#
+# One entry per release, oldest first. The CI turns this file into
+# upgrade-graph.json (with the multi-arch digest of every release) and
+# publishes it with each GitHub release; a copy without digests is baked into
+# the image at /usr/local/share/k4all-upgrade/releases.json.
+# `k4all-upgrade` reads it to plan hops; the rules are enforced by
+# bootc/tests/upgrade/test_graph.py.
+#
+# Versioning rules (see docs/upgrades.md):
+#   minor: changes the Kubernetes minor, the Fedora major or the CRI-O minor,
+#          replaces a platform component, or carries a migration that
+#          `bootc rollback` cannot undo. Minor releases are X.Y.0 and are
+#          mandatory stops.
+#   patch: everything else, inside one X.Y stream. A patch has
+#          minFrom >= X.Y.0, so it never crosses a minor.
+#
+# Fields:
+#   version       release tag
+#   kind          minor | patch
+#   minFrom       oldest release that may switch straight to this one
+#   kubernetes    exact kubelet/kubeadm version in the image
+#   crio          CRI-O minor in the image
+#   fedora        Fedora major of the base image
+#   syncManifest  apply this image's ReleaseManifest to the cluster after
+#                 the hop (bootstrap node)
+#   blocked       true withdraws a release: k4all-upgrade never picks it
+releases:
+  - version: v2.2.4
+    kind: patch
+    # Reached from v2.0.0-beta1 .. v2.2.3 with k4all-bridge.sh, not with
+    # k4all-upgrade (older images do not have it).
+    minFrom: v2.0.0-beta1
+    kubernetes: "1.35.6"
+    crio: "1.32"
+    fedora: 43
+    syncManifest: false
+    notes: >-
+      Bridge release: adds k4all-upgrade, masks the bootc auto-update timer
+      and fixes the scripts that later hops rely on. Kubernetes, CRI-O and
+      Fedora lines are unchanged.

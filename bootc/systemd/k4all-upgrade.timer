@@ -1,0 +1,11 @@
+[Unit]
+Description=K4All - Check for release upgrades (policy in /etc/k4all-upgrade.yaml)
+
+[Timer]
+OnBootSec=15min
+OnCalendar=*:0/15
+RandomizedDelaySec=120
+Persistent=false
+
+[Install]
+WantedBy=timers.target

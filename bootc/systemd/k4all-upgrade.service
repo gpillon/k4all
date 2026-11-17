@@ -1,0 +1,8 @@
+[Unit]
+Description=K4All - Run allowed release upgrades inside the maintenance window
+After=network-online.target kubelet.service k4all-upgrade-resume.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/k4all-upgrade auto
