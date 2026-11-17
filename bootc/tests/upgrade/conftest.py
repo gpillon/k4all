@@ -87,6 +87,11 @@ class FakeHost(ku.Host):
         self.node_is_ready = True
         self.healthy_after_boot = True
         self.annotations = {}
+        self.node_rv = 1            # resourceVersion of this Node
+        self.patches = []           # annotation changes, in order
+        self.kubelet_name = None    # Node name when it is not the hostname
+        self.apiserver_up = True
+        self.forbid_patch = False   # NodeRestriction refusing the patch
         self.cluster_config = {
             "apiVersion": "kubeadm.k8s.io/v1beta4",
             "kind": "ClusterConfiguration",
@@ -250,13 +255,40 @@ class FakeHost(ku.Host):
             return Proc()
         return Proc(returncode=1, stderr="kubeadm %s" % args)
 
+    def node_name(self):
+        return self.kubelet_name or self.hostname()
+
     def _node(self):
-        return {"metadata": {"name": self.hostname(),
+        return {"metadata": {"name": self.node_name(),
+                             "resourceVersion": str(self.node_rv),
                              "annotations": dict(self.annotations)},
                 "status": {"conditions": [{"type": "Ready", "status":
                                            "True" if self.node_is_ready else "False"}]}}
 
     def _kubectl(self, args, input_text):
+        if not self.apiserver_up:
+            return Proc(returncode=1, stderr="The connection to the server "
+                        "10.0.0.1:6443 was refused")
+        if args[:2] in (["get", "node"], ["patch", "node"], ["annotate", "node"]) \
+                and args[2] != self.node_name():
+            return Proc(returncode=1, stderr='nodes "%s" not found' % args[2])
+        if args[:2] == ["patch", "node"]:
+            if self.forbid_patch:
+                return Proc(returncode=1, stderr='nodes "%s" is forbidden: '
+                            'node restriction' % args[2])
+            meta = json.loads(args[args.index("-p") + 1])["metadata"]
+            if meta.get("resourceVersion") not in (None, str(self.node_rv)):
+                return Proc(returncode=1, stderr="Operation cannot be "
+                            "fulfilled: the object has been modified")
+            changes = meta.get("annotations") or {}
+            for key, value in changes.items():
+                if value is None:
+                    self.annotations.pop(key, None)
+                else:
+                    self.annotations[key] = value
+            self.patches.append(dict(changes))
+            self.node_rv += 1
+            return Proc()
         if args[:1] == ["-n"] and args[1] == "k4all-operator-system":
             rest = args[2:]
             if rest[:2] == ["get", "deployment"]:
@@ -289,6 +321,7 @@ class FakeHost(ku.Host):
             else:
                 k, v = key.split("=", 1)
                 self.annotations[k] = v
+            self.node_rv += 1
             return Proc()
         if "configmap" in args and "kubeadm-config" in args and "get" in args:
             return Proc(json.dumps({

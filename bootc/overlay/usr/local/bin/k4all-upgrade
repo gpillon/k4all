@@ -19,6 +19,7 @@ rollback). ``k4all-upgrade resume`` runs at boot and continues the hop.
 """
 
 import argparse
+import base64
 import datetime
 import fcntl
 import hashlib
@@ -35,7 +36,7 @@ import urllib.request
 
 TOOL_VERSION = "1"
 CAPABILITIES = ["stage-download-only", "kubeadm-from-staged", "sync-manifest",
-                "node-annotation"]
+                "node-annotation", "upgrade-target"]
 
 STATE_DIR = "/var/lib/k4all/upgrade"
 CONFIG_FILE = "/etc/k4all-upgrade.yaml"
@@ -47,10 +48,31 @@ NODE_TYPE_FILE = "/etc/node-type"
 ADMIN_KUBECONFIG = "/etc/kubernetes/admin.conf"
 KUBELET_KUBECONFIG = "/etc/kubernetes/kubelet.conf"
 KUBEADM_CONFIG_FILE = "/etc/k8s-config.yaml"
+KUBELET_FLAG_FILES = ("/var/lib/kubelet/kubeadm-flags.env",
+                      "/etc/sysconfig/kubelet")
 OSTREE_REPO = "/sysroot/ostree/repo"
 IMAGE_CACHE_DIR = "/usr/local/share/k4all-images"
 
 ANNOTATION_IN_PROGRESS = "k4all.magesgate.com/upgrade-in-progress"
+# The ClusterUpgrade protocol (contract with the k4all-operator, which holds
+# the same names in api/v1alpha1). The operator writes these two:
+ANNOTATION_TARGET = "k4all.magesgate.com/upgrade-target"
+ANNOTATION_CORDONED = "k4all.magesgate.com/upgrade-cordoned"
+# ...and k4all-upgrade writes these:
+ANNOTATION_RELEASE = "k4all.magesgate.com/release"
+ANNOTATION_NODE_TYPE = "k4all.magesgate.com/node-type"
+ANNOTATION_PHASE = "k4all.magesgate.com/upgrade-phase"
+ANNOTATION_MESSAGE = "k4all.magesgate.com/upgrade-message"
+ANNOTATION_DONE = "k4all.magesgate.com/upgrade-done"
+PHASE_HOLD = "HOLD"
+PHASE_ABANDONED = "ABANDONED"
+MESSAGE_MAX = 1000
+# kubectl calls of the agent and of the phase reports must not hang on an
+# unreachable apiserver.
+KUBECTL_TIMEOUT = "--request-timeout=20s"
+# Lock waits (seconds): resume must not lose the hop to a short agent pass.
+LOCK_WAIT = 30
+RESUME_LOCK_WAIT = 600
 RELEASE_MANIFEST_NAME = "k4all"
 FIELD_MANAGER = "k4all-upgrade"
 OPERATOR_COMPONENT = "k4all-operator"
@@ -698,6 +720,113 @@ def kubeconfig_for(host, role):
     return None
 
 
+_CN_OID = b"\x06\x03\x55\x04\x03"            # id-at-commonName
+_DER_STRINGS = {0x0c: "utf-8", 0x13: "ascii", 0x14: "latin-1", 0x16: "ascii",
+                0x1e: "utf-16-be"}
+_PEM_CERT_RE = re.compile(r"-----BEGIN CERTIFICATE-----(.*?)"
+                          r"-----END CERTIFICATE-----", re.S)
+_HOSTNAME_OVERRIDE_RE = re.compile(r"--hostname-override(?:=|\s+)[\"']?"
+                                   r"([^\s\"']+)")
+NODE_CN_PREFIX = "system:node:"
+
+
+def certificate_common_names(der):
+    """Every commonName in a DER certificate, issuer's and subject's.
+
+    A scan for the attribute OID is enough here: the kubelet's client
+    certificate has the CA ("kubernetes") as issuer CN and
+    ``system:node:<name>`` as subject CN.
+    """
+    names, start = [], 0
+    while True:
+        i = der.find(_CN_OID, start)
+        if i < 0:
+            return names
+        j = start = i + len(_CN_OID)
+        if j + 2 > len(der) or der[j] not in _DER_STRINGS:
+            continue
+        length, k = der[j + 1], j + 2
+        if length & 0x80:
+            count = length & 0x7f
+            if count not in (1, 2) or k + count > len(der):
+                continue
+            length = int.from_bytes(der[k:k + count], "big")
+            k += count
+        value = der[k:k + length]
+        if len(value) != length:
+            continue
+        try:
+            names.append(value.decode(_DER_STRINGS[der[j]]))
+        except UnicodeDecodeError:
+            continue
+
+
+def pem_certificates(text):
+    """The DER bytes of every certificate in a PEM text."""
+    out = []
+    for body in _PEM_CERT_RE.findall(text or ""):
+        try:
+            out.append(base64.b64decode("".join(body.split()), validate=True))
+        except ValueError:
+            continue
+    return out
+
+
+def _kubelet_client_pems(host):
+    """PEM texts of the client certificates kubelet.conf points at."""
+    if not host.exists(KUBELET_KUBECONFIG):
+        return []
+    try:
+        cfg = load_yaml_file(host, KUBELET_KUBECONFIG)
+    except Exception:  # pylint: disable=broad-except
+        return []
+    if not isinstance(cfg, dict):
+        return []
+    texts = []
+    for entry in cfg.get("users") or []:
+        user = (entry or {}).get("user") or {}
+        data = user.get("client-certificate-data")
+        if data:
+            try:
+                texts.append(base64.b64decode(data).decode("ascii", "replace"))
+            except ValueError:
+                pass
+        path = user.get("client-certificate")
+        if path:
+            if not path.startswith("/"):
+                path = os.path.join(os.path.dirname(KUBELET_KUBECONFIG), path)
+            try:
+                if host.exists(path):
+                    texts.append(host.read(path))
+            except (OSError, UnicodeDecodeError):
+                pass
+    return texts
+
+
+def kubelet_node_name(host):
+    """The name of this node's Node object: the kubelet's own identity.
+
+    1. the CN ``system:node:<name>`` of the kubelet client certificate in
+       kubelet.conf (the name NodeRestriction lets the kubelet patch);
+    2. ``--hostname-override`` in the kubelet flags;
+    3. the hostname, lowercased as kubeadm registers it.
+    """
+    for text in _kubelet_client_pems(host):
+        for der in pem_certificates(text):
+            for name in certificate_common_names(der):
+                if name.startswith(NODE_CN_PREFIX) and name != NODE_CN_PREFIX:
+                    return name[len(NODE_CN_PREFIX):]
+    for path in KUBELET_FLAG_FILES:
+        try:
+            text = host.read(path) if host.exists(path) else ""
+        except (OSError, UnicodeDecodeError):
+            text = ""
+        match = _HOSTNAME_OVERRIDE_RE.search(text)
+        if match:
+            return match.group(1).strip().lower()
+    return host.hostname()
+
+
 def kubectl(host, kubeconfig, args, check=True, input_text=None):
     return host.run(["kubectl", "--kubeconfig", host.path(kubeconfig)] + args,
                     check=check, input_text=input_text)
@@ -788,6 +917,120 @@ def put_on_hold(host, state, reason):
 
 
 # =========================================================================
+# Node annotations (ClusterUpgrade protocol)
+# =========================================================================
+def operator_driven(state):
+    """True for a plan the k4all-operator asked for with upgrade-target."""
+    return bool(state) and state.get("mode") == "operator"
+
+
+def _active(state):
+    return state and state.get("phase") not in (None, "DONE") and \
+        (state.get("hop") or state.get("pending"))
+
+
+def short_message(text):
+    """One line, bounded: annotation values end up in tables and UIs."""
+    text = " ".join(str(text or "").split())
+    if len(text) > MESSAGE_MAX:
+        text = text[:MESSAGE_MAX - 3] + "..."
+    return text
+
+
+def abandoned_message(abandoned):
+    text = "hop %s->%s abandoned with `k4all-upgrade clear-hold --abandon`" % (
+        abandoned.get("from") or "?", abandoned.get("target") or "?")
+    if abandoned.get("reason"):
+        text += "; it was on hold: %s" % abandoned["reason"]
+    return short_message(text)
+
+
+def node_report(state, role=None, release=None, problem=None, done=None):
+    """The annotations k4all-upgrade owns on its Node for ``state``.
+
+    None removes an annotation. ``release`` defaults to the last committed
+    release; ``problem`` is an upgrade-target the agent refused; ``done`` is
+    a target the node already runs. upgrade-done is never removed: it is the
+    record of the last hop the operator asked for and the node finished.
+    """
+    state = state or {}
+    want = {ANNOTATION_PHASE: None, ANNOTATION_MESSAGE: None}
+    release = release or state.get("current")
+    if release:
+        want[ANNOTATION_RELEASE] = release
+    if role:
+        want[ANNOTATION_NODE_TYPE] = role
+    if _active(state) and state.get("hold"):
+        want[ANNOTATION_PHASE] = PHASE_HOLD
+        want[ANNOTATION_MESSAGE] = short_message(state["hold"].get("reason"))
+    elif state.get("hop"):
+        want[ANNOTATION_PHASE] = state["phase"]
+    elif problem:
+        want[ANNOTATION_PHASE] = PHASE_HOLD
+        want[ANNOTATION_MESSAGE] = short_message(problem)
+    elif state.get("abandoned"):
+        want[ANNOTATION_PHASE] = PHASE_ABANDONED
+        want[ANNOTATION_MESSAGE] = abandoned_message(state["abandoned"])
+    if done:
+        want[ANNOTATION_DONE] = done
+    elif operator_driven(state) and not _active(state) \
+            and not state.get("abandoned") and state.get("current") \
+            and state.get("current") == state.get("target"):
+        # Only once the hop is committed, in the same patch as release.
+        want[ANNOTATION_DONE] = state["current"]
+    return want
+
+
+def annotation_changes(observed, want):
+    """The part of ``want`` that differs from the Node's annotations."""
+    observed = observed or {}
+    changes = {}
+    for key, value in want.items():
+        if value is None:
+            if key in observed:
+                changes[key] = None
+        elif observed.get(key) != value:
+            changes[key] = value
+    return changes
+
+
+def same_target(a, b):
+    try:
+        return parse_target(a) == parse_target(b)
+    except ValueError:
+        return str(a or "").strip() == str(b or "").strip()
+
+
+def parse_target(value):
+    """A normalized release from the upgrade-target annotation.
+    Raises ValueError when it is not a release version."""
+    text = str(value or "").strip()
+    if not is_version(text):
+        raise ValueError("upgrade-target %r is not a release version" % text)
+    return normalize_version(text)
+
+
+def check_single_hop(releases, current, target):
+    """The release of the hop ``current -> target``, when it is one legal
+    hop under the rules of plan_path (minFrom, no skipped minor, no blocked
+    release, a stream finished before the next one). Raises NoPathError
+    with the reason otherwise."""
+    errors = validate_graph(releases)
+    if errors:
+        raise NoPathError("the upgrade graph is invalid: %s" % "; ".join(errors))
+    if parse_version(target) < parse_version(current):
+        raise NoPathError("upgrade-target %s is older than %s, the release "
+                          "this node runs: k4all never downgrades"
+                          % (target, current))
+    path = plan_path(releases, current, target)
+    if len(path) != 1 or path[0].key != parse_version(target):
+        raise NoPathError("%s -> %s is not one hop: the path is %s"
+                          % (current, target, " -> ".join(
+                              [current] + [r.version for r in path])))
+    return path[0]
+
+
+# =========================================================================
 # Phases
 # =========================================================================
 class Upgrader:
@@ -795,6 +1038,7 @@ class Upgrader:
         self.host = host
         self.cfg = cfg
         self.graph_loader = graph_loader or (lambda: load_best_graph(host, cfg))
+        self._name = None
 
     # --- helpers ---------------------------------------------------------
     def _role(self):
@@ -804,7 +1048,9 @@ class Upgrader:
         return kubeconfig_for(self.host, self._role())
 
     def _node_name(self):
-        return self.host.hostname()
+        if self._name is None:
+            self._name = kubelet_node_name(self.host)
+        return self._name
 
     def _cluster_nodes(self):
         kc = self._kubeconfig()
@@ -824,6 +1070,83 @@ class Upgrader:
             else ANNOTATION_IN_PROGRESS + "-"
         kubectl(self.host, kc, ["annotate", "node", self._node_name(), arg,
                                 "--overwrite"], check=False)
+
+    # --- ClusterUpgrade protocol -----------------------------------------
+    def read_node(self):
+        """(Node, None) for this node, or (None, why) when it cannot be read,
+        e.g. while the apiserver is down."""
+        kc = self._kubeconfig()
+        if not kc:
+            return None, "no kubeconfig on this node"
+        got = kubectl(self.host, kc, ["get", "node", self._node_name(), "-o",
+                                      "json", KUBECTL_TIMEOUT], check=False)
+        if got.returncode != 0:
+            return None, ((got.stderr or got.stdout or "").strip()[-300:]
+                          or "kubectl rc=%d" % got.returncode)
+        try:
+            return json.loads(got.stdout), None
+        except ValueError as exc:
+            return None, "unreadable Node: %s" % exc
+
+    def patch_annotations(self, changes, resource_version=None):
+        """Merge-patch annotations of this Node (None removes one). Best
+        effort: returns False when the apiserver refuses or is down."""
+        if not changes:
+            return True
+        kc = self._kubeconfig()
+        if not kc:
+            return False
+        meta = {"annotations": changes}
+        if resource_version:
+            meta["resourceVersion"] = resource_version
+        got = kubectl(self.host, kc, ["patch", "node", self._node_name(),
+                                      "--type", "merge", "-p",
+                                      json.dumps({"metadata": meta},
+                                                 sort_keys=True),
+                                      KUBECTL_TIMEOUT], check=False)
+        if got.returncode != 0:
+            self.host.log("cannot annotate Node %s: %s"
+                          % (self._node_name(),
+                             (got.stderr or got.stdout or "").strip()[-300:]))
+            return False
+        return True
+
+    def report(self, state, **extra):
+        """Publish the hop's phase (and release, node type, done) on the
+        Node. Never fails the hop: the agent catches up later."""
+        try:
+            role = self._role()
+        except UpgradeError:
+            role = None
+        return self.patch_annotations(node_report(state, role, **extra))
+
+    def _save(self, state):
+        save_state(self.host, state)
+        self.report(state)
+
+    def drop_abandoned_target(self, state, node=None):
+        """Remove upgrade-target while it still names the abandoned hop, then
+        record that it is gone: a target written after that is the
+        operator's retry, a new request."""
+        abandoned = state.get("abandoned") or {}
+        if not abandoned or abandoned.get("targetRemoved"):
+            return True
+        if node is None:
+            node, why = self.read_node()
+            if node is None:
+                self.host.log("cannot remove %s now (%s); the agent retries"
+                              % (ANNOTATION_TARGET, why))
+                return False
+        meta = node.get("metadata") or {}
+        value = (meta.get("annotations") or {}).get(ANNOTATION_TARGET)
+        if value is not None and same_target(value, abandoned.get("target")):
+            # resourceVersion: never remove a target rewritten meanwhile
+            if not self.patch_annotations({ANNOTATION_TARGET: None},
+                                          meta.get("resourceVersion")):
+                return False
+        abandoned["targetRemoved"] = True
+        save_state(self.host, state)
+        return True
 
     def _backup_dir(self, hop):
         return "%s/backup/%s-%s" % (STATE_DIR, hop["from"], hop["to"])
@@ -874,8 +1197,10 @@ class Upgrader:
                 if k8s_key(cluster) < k8s_key(target):
                     raise UpgradeError("the cluster is at %s; run the upgrade on "
                                        "the bootstrap node first" % cluster)
+        # A hop the k4all-operator asked for comes after its cordon and
+        # drain: the admin kubeconfig is not needed for that.
         if len(nodes) > 1 and k8s_minor(target) != k8s_minor(running) \
-                and kc != ADMIN_KUBECONFIG:
+                and kc != ADMIN_KUBECONFIG and not operator_driven(state):
             raise UpgradeError("a kubelet minor upgrade needs a drain, and this "
                                "node has no admin kubeconfig: drain it from a "
                                "control plane or let the k4all-operator drive it")
@@ -906,7 +1231,9 @@ class Upgrader:
         hop["startedAt"] = hop.get("startedAt") or host.now().isoformat(
             timespec="seconds")
         self.annotate("%s->%s" % (hop["from"], hop["to"]))
-        if k8s_key(hop["kubernetes"]) != k8s_key(kubelet_version(host)):
+        # The operator that asked for the hop knows the pause gate.
+        if k8s_key(hop["kubernetes"]) != k8s_key(kubelet_version(host)) \
+                and not operator_driven(state):
             self.pause_operator(hop)
 
     # --- operator pause --------------------------------------------------
@@ -952,6 +1279,7 @@ class Upgrader:
                                   "DRAIN") and state.get("hop"):
             self.resume_operator(state["hop"])
         put_on_hold(self.host, state, reason)
+        self.report(state)
 
     # --- PRE_REBOOT ------------------------------------------------------
     def pre_reboot(self, state):
@@ -987,6 +1315,11 @@ class Upgrader:
     # --- DRAIN -----------------------------------------------------------
     def drain(self, state):
         host, hop = self.host, state["hop"]
+        if operator_driven(state):
+            # The operator cordoned and drained the node (upgrade-cordoned)
+            # and uncordons it after upgrade-done: leave both to it.
+            host.log("the k4all-operator drained this node: no drain")
+            return
         nodes = self._cluster_nodes()
         if len(nodes) <= 1:
             host.log("single-node cluster: no drain")
@@ -1005,7 +1338,7 @@ class Upgrader:
     def reboot(self, state):
         host = self.host
         state["phase"] = "REBOOT"
-        save_state(host, state)
+        self._save(state)
         host.log("rebooting into %s" % state["hop"]["to"])
         try:
             host.run(["bootc", "upgrade", "--from-downloaded", "--apply"])
@@ -1100,7 +1433,7 @@ class Upgrader:
         state["rollbacks"] = state.get("rollbacks", 0) + 1
         state["phase"] = "ROLLBACK_REBOOT"
         state["rollbackReason"] = reason
-        save_state(host, state)
+        self._save(state)
         host.log("rolling back to the previous image: %s" % reason)
         host.run(["bootc", "rollback"])
         host.run(["systemctl", "reboot"])
@@ -1290,14 +1623,14 @@ class Upgrader:
             if phase == "IDLE":
                 if not state["pending"]:
                     state["phase"] = "DONE"
-                    save_state(host, state)
+                    self._save(state)
                     host.log("upgrade finished: %s" % state["current"])
                     return state
                 if state["mode"] == "auto" and not self._auto_may_continue(state):
-                    save_state(host, state)
+                    self._save(state)
                     return state
                 start_next_hop(state)
-                save_state(host, state)
+                self._save(state)
                 host.log("hop %s -> %s (%s)" % (state["hop"]["from"],
                                                  state["hop"]["to"],
                                                  state["hop"]["kind"]))
@@ -1329,10 +1662,14 @@ class Upgrader:
             except UpgradeError as exc:
                 self.hold(state, str(exc))
                 return state
-            save_state(host, state)
+            self._save(state)
 
     def _auto_may_continue(self, state):
         nxt = state["pending"][0]["version"]
+        if self.cfg["mode"] == "managed":
+            self.host.log("mode is managed: the hops left by the timer wait "
+                          "for the k4all-operator or `k4all-upgrade run`")
+            return False
         if self.cfg["autoAllow"] != "minor" and \
                 hop_kind(state["current"], nxt) != "patch":
             self.host.log("next hop %s -> %s is a minor: waiting for "
@@ -1522,28 +1859,37 @@ def load_config(host):
 # =========================================================================
 # CLI
 # =========================================================================
+class LockBusy(UpgradeError):
+    """Another k4all-upgrade holds the lock."""
+
+
 class Lock:
-    def __init__(self, host):
+    """One k4all-upgrade at a time. ``wait`` seconds are spent retrying, so
+    a short agent pass does not make `resume` or `run` fail."""
+
+    def __init__(self, host, wait=0):
+        self.host = host
         self.path = host.path(STATE_DIR + "/lock")
+        self.wait = wait
         self.fh = None
 
     def __enter__(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         self.fh = open(self.path, "w", encoding="utf-8")
-        try:
-            fcntl.flock(self.fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise UpgradeError("another k4all-upgrade is running") from exc
-        return self
+        deadline = self.host.now() + datetime.timedelta(seconds=self.wait)
+        while True:
+            try:
+                fcntl.flock(self.fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except BlockingIOError as exc:
+                if self.host.now() >= deadline:
+                    self.fh.close()
+                    raise LockBusy("another k4all-upgrade is running") from exc
+            self.host.sleep(5)
 
     def __exit__(self, *exc):
         fcntl.flock(self.fh, fcntl.LOCK_UN)
         self.fh.close()
-
-
-def _active(state):
-    return state and state.get("phase") not in (None, "DONE") and \
-        (state.get("hop") or state.get("pending"))
 
 
 def cmd_status(host, cfg, args):
@@ -1564,7 +1910,9 @@ def cmd_status(host, cfg, args):
     if not state:
         print("Upgrade:   none")
         return 0
-    print("Upgrade:   target %s, phase %s" % (state.get("target"), state.get("phase")))
+    print("Upgrade:   target %s, phase %s%s"
+          % (state.get("target"), state.get("phase"),
+             " (asked by the k4all-operator)" if operator_driven(state) else ""))
     if state.get("hop"):
         print("Hop:       %s -> %s (%s)" % (state["hop"]["from"], state["hop"]["to"],
                                            state["hop"]["kind"]))
@@ -1572,6 +1920,8 @@ def cmd_status(host, cfg, args):
         print("Then:      %s" % " -> ".join(r["version"] for r in state["pending"]))
     if state.get("hold"):
         print("HOLD:      %s" % state["hold"]["reason"])
+    if state.get("abandoned"):
+        print("Abandoned: %s" % abandoned_message(state["abandoned"]))
     return 0
 
 
@@ -1661,17 +2011,127 @@ def cmd_clear_hold(host, cfg, args, upgrader):
     if not state:
         return 0
     if args.abandon:
+        by_operator = operator_driven(state) and _active(state)
+        target = (state.get("hop") or {}).get("to") or state.get("target")
         state["history"].append({"from": state.get("current"),
                                  "to": (state.get("hop") or {}).get("to"),
                                  "result": "abandoned",
                                  "at": host.now().isoformat(timespec="seconds")})
+        if by_operator:
+            # The operator retries by writing upgrade-target again; until
+            # then the agent must not pick the abandoned target up.
+            state["abandoned"] = {
+                "from": state.get("current"), "target": target,
+                "reason": (state.get("hold") or {}).get("reason"),
+                "at": host.now().isoformat(timespec="seconds"),
+                "targetRemoved": False}
         upgrader.resume_operator(state.get("hop"))
         state.update({"hop": None, "pending": [], "phase": "DONE", "hold": None})
         upgrader.annotate(None)
+        save_state(host, state)
+        if by_operator:
+            upgrader.drop_abandoned_target(state)
     else:
         state["hold"] = None
-    save_state(host, state)
+        save_state(host, state)
+    upgrader.report(state)
     return 0
+
+
+def _release_now(host, state):
+    """The release to publish: the committed one while a plan is open,
+    otherwise the one the node boots."""
+    if _active(state):
+        return state.get("current")
+    try:
+        return current_version(host)
+    except UpgradeError:
+        return (state or {}).get("current")
+
+
+def _agent_may_start(state):
+    """A hop is never interrupted, and resume owns every phase after a
+    reboot: the agent may only (re)plan between hops."""
+    if not _active(state):
+        return True
+    return not state.get("hold") and state.get("phase") in ("IDLE", "PREFLIGHT")
+
+
+def _close_stale_plan(host, state, why):
+    """An operator plan that never left PREFLIGHT, superseded by a new
+    upgrade-target: forget it, so that resume does not run it at boot."""
+    if _active(state) and operator_driven(state):
+        state["history"].append({"from": state.get("current"),
+                                 "to": state.get("target"), "result": why,
+                                 "at": host.now().isoformat(timespec="seconds")})
+        state.update({"hop": None, "pending": [], "phase": "DONE"})
+        save_state(host, state)
+
+
+def cmd_agent(host, cfg, args, upgrader):
+    """One pass of k4all-upgrade-agent.timer.
+
+    Publishes release, node type and the hop phase on this Node, and runs
+    the hop named by upgrade-target when it is one legal hop from the
+    running release, in any mode and outside the window. Without a target
+    it never starts anything.
+    """
+    role = node_role(host)
+    if not upgrader._kubeconfig():
+        return 0
+    node, why = upgrader.read_node()
+    if node is None:
+        # The apiserver is down or restarting: try again next minute.
+        host.log("agent: cannot read Node %s: %s" % (upgrader._node_name(), why))
+        return 0
+    observed = (node.get("metadata") or {}).get("annotations") or {}
+    state = load_state(host)
+    raw = observed.get(ANNOTATION_TARGET)
+    abandoned = (state or {}).get("abandoned")
+    if abandoned and not abandoned.get("targetRemoved") and raw is not None:
+        if same_target(raw, abandoned.get("target")):
+            upgrader.drop_abandoned_target(state, node)
+            raw = None
+        else:
+            abandoned["targetRemoved"] = True       # a newer request
+            save_state(host, state)
+    problem = done = None
+    if raw is not None and str(raw).strip() and _agent_may_start(state):
+        try:
+            target = parse_target(raw)
+            current = current_version(host)
+            if parse_version(target) == parse_version(current):
+                done = target
+            else:
+                rel = check_single_hop(upgrader.graph_loader(), current, target)
+                return _agent_start_hop(host, cfg, upgrader, state, current, rel)
+        except (ValueError, UpgradeError, NoPathError) as exc:
+            problem = str(exc)
+            if not problem.startswith("upgrade-target"):
+                problem = "upgrade-target %s: %s" % (str(raw).strip(), problem)
+        _close_stale_plan(host, state, "superseded")
+        if state and (done or problem) and state.get("abandoned"):
+            state.pop("abandoned")
+            save_state(host, state)
+    want = node_report(state, role, _release_now(host, state), problem=problem,
+                       done=done)
+    changes = annotation_changes(observed, want)
+    if changes:
+        if problem and observed.get(ANNOTATION_MESSAGE) != want[ANNOTATION_MESSAGE]:
+            host.log("agent: HOLD: %s" % problem)
+        if done and observed.get(ANNOTATION_DONE) != done:
+            host.log("agent: already on %s: upgrade-done" % done)
+        upgrader.patch_annotations(changes)
+    return 0
+
+
+def _agent_start_hop(host, cfg, upgrader, old, current, rel):
+    state = new_state(rel.version, "operator", [rel], current, cfg["image"])
+    state["history"] = list((old or {}).get("history") or [])
+    host.log("agent: the k4all-operator asks for %s -> %s" % (current, rel.version))
+    save_state(host, state)
+    upgrader.drive(state)
+    return 1 if state.get("hold") else 0
 
 
 def cmd_sync_manifest(host, cfg, args, upgrader):
@@ -1701,6 +2161,8 @@ def build_parser():
     p.add_argument("--to", default="latest", help=argparse.SUPPRESS)
     p.add_argument("--from", dest="from_version", help=argparse.SUPPRESS)
     sub.add_parser("resume", help="continue an upgrade (used at boot)")
+    sub.add_parser("agent", help="follow the k4all-operator's upgrade-target "
+                   "(used by k4all-upgrade-agent.timer)")
     p = sub.add_parser("clear-hold", help="clear a HOLD after fixing its cause")
     p.add_argument("--abandon", action="store_true",
                    help="forget the remaining hops")
@@ -1719,10 +2181,20 @@ def main(argv=None, host=None):
             return cmd_status(host, cfg, args)
         handlers = {"plan": cmd_plan, "run": cmd_run, "auto": cmd_auto,
                     "resume": cmd_resume, "clear-hold": cmd_clear_hold,
-                    "sync-manifest": cmd_sync_manifest}
+                    "sync-manifest": cmd_sync_manifest, "agent": cmd_agent}
         if args.command == "plan":
             return handlers["plan"](host, cfg, args, upgrader)
-        with Lock(host):
+        if args.command == "agent":
+            # Every minute: when a hop or a resume is running, it is the one
+            # publishing the phases. Skip this pass.
+            try:
+                with Lock(host):
+                    return cmd_agent(host, cfg, args, upgrader)
+            except LockBusy:
+                host.log("agent: another k4all-upgrade is running; skipped")
+                return 0
+        wait = RESUME_LOCK_WAIT if args.command == "resume" else LOCK_WAIT
+        with Lock(host, wait):
             return handlers[args.command](host, cfg, args, upgrader)
     except (UpgradeError, NoPathError) as exc:
         host.log("error: %s" % exc)
