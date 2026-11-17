@@ -27,18 +27,16 @@ describe('operator capabilities', () => {
     expect(atLeast('main', 'v0.4.0')).toBe(false);
   });
 
-  it('gates ClusterUpgrade and the MetalLB fix on v0.4.0, CNI and OVS bridge on v0.5.0', () => {
+  it('gates ClusterUpgrade on v0.4.0, CNI and OVS bridge on v0.5.0', () => {
     const v030 = capabilities(releaseManifest());
     expect(v030).toMatchObject({
       operatorVersion: 'v0.3.0',
       clusterUpgrade: false,
-      metallbReadsTraefikIP: false,
       cniSwitch: false,
     });
     const v040 = capabilities(releaseManifestV240());
     expect(v040).toMatchObject({
       clusterUpgrade: true,
-      metallbReadsTraefikIP: true,
       cniSwitch: false,
       ovsBridgeToggle: false,
     });

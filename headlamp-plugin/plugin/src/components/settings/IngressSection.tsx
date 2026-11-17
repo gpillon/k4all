@@ -1,17 +1,14 @@
 import { Icon } from '@iconify/react';
-import { Alert, Box, Button, Stack, Switch, TextField, Typography } from '@mui/material';
+import { Alert, Box, Stack, Switch, TextField, Typography } from '@mui/material';
 import React from 'react';
 import { FIELDS } from '../../model/fields';
 import { setIn } from '../../model/objects';
 import {
-  adoptTraefikKey,
   effectiveIngress,
-  effectiveTraefik,
   INGRESS_LABEL,
   IngressController,
   ingressExposure,
   isCilium,
-  nginxFollowsTraefik,
   setIngress,
 } from '../../model/settings';
 import { ApplyBadge, Mono, Panel, SettingRow } from '../common/ui';
@@ -49,42 +46,26 @@ function IPField(props: {
 }
 
 export function IngressSection(props: SectionProps & { controller?: IngressController }) {
-  const { draft, base, update, disabled, issues, caps } = props;
+  const { draft, base, update, disabled, issues } = props;
   const controller = props.controller ?? 'traefik';
   const name = INGRESS_LABEL[controller];
   const isTraefik = controller === 'traefik';
-  const mirrorToNginx = isTraefik && !caps.metallbReadsTraefikIP;
   const current = effectiveIngress(draft, controller);
   const before = effectiveIngress(base, controller);
-  const legacy =
-    isTraefik && effectiveTraefik(base).source !== 'traefik' && current.source !== 'traefik';
+  // Before the operator migrates the key (v0.4.2), Traefik runs on the
+  // values it inherited; the first change saves them to spec.ingress.traefik.
+  const inherited = isTraefik && current.source === 'nginx';
   const exposure = ingressExposure(draft, controller);
   const ciliumIP = draft.ingress?.cilium?.dedicatedIP ?? '';
-  const mirrored =
-    mirrorToNginx && current.dedicatedIP !== '' && nginxFollowsTraefik(draft, current.dedicatedIP);
   const set = (change: { dedicatedIP?: string; isDefault?: boolean }) =>
-    update(d => setIngress(d, controller, change, { mirrorToNginx }));
+    update(d => setIngress(d, controller, change));
 
   return (
     <Stack spacing={2}>
-      {legacy && (
-        <Alert
-          severity="info"
-          action={
-            !disabled && (
-              <Button
-                color="inherit"
-                size="small"
-                onClick={() => update(d => adoptTraefikKey(d, { mirrorToNginx }))}
-              >
-                Move to spec.ingress.traefik
-              </Button>
-            )
-          }
-        >
-          This cluster was installed before k4all v2.6.0: Traefik takes its settings from{' '}
-          <Mono>spec.ingress.nginx</Mono>. Saving a change here writes{' '}
-          <Mono>spec.ingress.traefik</Mono> with the same values.
+      {inherited && (
+        <Alert severity="info">
+          Traefik runs on the settings it inherited when it replaced the previous ingress
+          controller. A change here saves them to <Mono>spec.ingress.traefik</Mono>.
         </Alert>
       )}
       {!isTraefik && (
@@ -116,18 +97,7 @@ export function IngressSection(props: SectionProps & { controller?: IngressContr
               onChange={ip => set({ dedicatedIP: ip })}
             />
           }
-          messages={
-            <Stack spacing={0.75}>
-              <FieldMessages issues={issues} field="traefikIP" />
-              {mirrored && (
-                <Typography variant="caption" color="text.secondary">
-                  Also written to <Mono>spec.ingress.nginx.dedicatedIP</Mono>: k4all-operator{' '}
-                  {caps.operatorVersion ?? 'before v0.4.0'} builds the MetalLB address pool from
-                  that key.
-                </Typography>
-              )}
-            </Stack>
-          }
+          messages={<FieldMessages issues={issues} field="traefikIP" />}
         />
         <SettingRow
           label={FIELDS.traefikDefault.label}

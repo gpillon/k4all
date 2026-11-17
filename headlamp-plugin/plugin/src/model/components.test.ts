@@ -6,6 +6,7 @@ import {
   removalBlockers,
   summarize,
   upgradeProgress,
+  visibleRows,
 } from './components';
 import { defaultClusterConfig, releaseManifest } from './fixtures';
 import { setIn } from './objects';
@@ -200,5 +201,15 @@ describe('releaseVersion', () => {
     const rm = releaseManifest();
     rm.spec!.osImage!.imageTag = 'latest';
     expect(releaseVersion(rm)).toBeNull();
+  });
+});
+
+describe('visibleRows', () => {
+  it('hides components the release Removed unless asked', () => {
+    const rows = buildRows(releaseManifest(), defaultClusterConfig().spec!);
+    expect(rows.some(r => r.name === 'ingress-nginx')).toBe(true);
+    expect(visibleRows(rows, false).some(r => r.name === 'ingress-nginx')).toBe(false);
+    expect(visibleRows(rows, false)).toHaveLength(rows.length - 1);
+    expect(visibleRows(rows, true)).toHaveLength(rows.length);
   });
 });

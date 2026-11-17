@@ -19,8 +19,6 @@ export const OPERATOR_COMPONENT = 'k4all-operator';
 export const CAPABILITY_SINCE = {
   /** ClusterUpgrade: node upgrades driven from the cluster (k4all v2.4.0). */
   clusterUpgrade: 'v0.4.0',
-  /** MetalLB announces spec.ingress.traefik.dedicatedIP too (k4all-operator#7). */
-  metallbReadsTraefikIP: 'v0.4.0',
   /** Switching spec.networking.cni.type on a running cluster. */
   cniSwitch: 'v0.5.0',
   /** Turning spec.features.ovsBridge.enabled on and off on a running cluster. */
@@ -32,7 +30,6 @@ export type CapabilityId = keyof typeof CAPABILITY_SINCE;
 /** The k4all release that first pins an operator with the capability, for the UI. */
 export const CAPABILITY_RELEASE: Partial<Record<CapabilityId, string>> = {
   clusterUpgrade: 'v2.4.0',
-  metallbReadsTraefikIP: 'v2.4.0',
 };
 
 export type Capabilities = Record<CapabilityId, boolean> & {

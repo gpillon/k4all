@@ -28,6 +28,7 @@ import { FeaturesSection } from './FeaturesSection';
 import { IngressSection } from './IngressSection';
 import { InstallTimeSection } from './InstallTimeSection';
 import { NetworkingSection } from './NetworkingSection';
+import { NginxIngressesPanel } from './NginxIngresses';
 
 const TABS = [
   { id: 'features', label: 'Features', icon: 'mdi:puzzle-outline', prefixes: ['features.'] },
@@ -173,7 +174,12 @@ function SettingsEditor({ data }: { data: K4allData }) {
       </Box>
 
       {tab === 'features' && <FeaturesSection {...sectionProps} components={components} />}
-      {tab === 'ingress' && <IngressSection {...sectionProps} controller={ingress} />}
+      {tab === 'ingress' && (
+        <Stack spacing={2}>
+          <IngressSection {...sectionProps} controller={ingress} />
+          {ingress === 'traefik' && <NginxIngressesPanel />}
+        </Stack>
+      )}
       {tab === 'networking' && (
         <NetworkingSection {...sectionProps} nodeConfigs={data.nodeConfigs} />
       )}

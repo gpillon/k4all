@@ -27,6 +27,7 @@ import {
   kubeletVersions,
   nodeRows,
 } from '../../model/health';
+import { nginxClassIngresses } from '../../model/ingressMigration';
 import {
   activeIngress,
   effectiveIngress,
@@ -38,6 +39,7 @@ import { hostPhaseLabel } from '../../model/upgrades';
 import { LiveStatusBar } from '../common/live';
 import { K4allGate } from '../common/states';
 import { Metric, Mono, PageHeader, Panel, SegmentBar, TonePill } from '../common/ui';
+import { useIngresses } from '../settings/NginxIngresses';
 import { UpgradesCard } from '../upgrades/UpgradesCard';
 
 const LEVEL_TONE: Record<HealthLevel, Tone> = {
@@ -128,6 +130,27 @@ function FeaturesPanel(props: { cc: ClusterConfigObject }) {
   );
 }
 
+/** On Traefik releases: how many Ingresses still use the nginx class, with a way to move them. */
+function NginxIngressNote() {
+  const history = useHistory();
+  const { items } = useIngresses();
+  const count = nginxClassIngresses(items ?? []).length;
+  if (count === 0) {
+    return null;
+  }
+  return (
+    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+      <TonePill
+        tone="warning"
+        label={`${count} Ingress${count === 1 ? '' : 'es'} still on the nginx class`}
+      />
+      <Button size="small" onClick={() => history.push(settingsURL('ingress'))}>
+        Move to traefik
+      </Button>
+    </Stack>
+  );
+}
+
 function IngressPanel(props: { cc: ClusterConfigObject; controller: IngressController }) {
   const history = useHistory();
   const spec = props.cc.spec ?? {};
@@ -163,11 +186,7 @@ function IngressPanel(props: { cc: ClusterConfigObject; controller: IngressContr
             label={`CNI: ${spec.networking?.cni?.type ?? 'unknown'}`}
           />
         </Stack>
-        {props.controller === 'traefik' && traefik.source === 'nginx' && (
-          <Typography variant="caption" color="text.secondary">
-            Read from <Mono>spec.ingress.nginx</Mono> (cluster installed before v2.6.0).
-          </Typography>
-        )}
+        {props.controller === 'traefik' && <NginxIngressNote />}
         {ciliumIP && (
           <Box>
             <Typography variant="caption" color="text.secondary">

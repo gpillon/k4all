@@ -106,3 +106,45 @@ export function retryClusterUpgrade(at: Date = new Date()): Promise<ClusterUpgra
     }
   ) as Promise<ClusterUpgradeObject>;
 }
+
+// ------------------------------------------- Ingresses still on the nginx class
+
+function ingressPath(namespace: string, name: string): string {
+  return `/apis/networking.k8s.io/v1/namespaces/${encodeURIComponent(
+    namespace
+  )}/ingresses/${encodeURIComponent(name)}`;
+}
+
+/** JSON Patch on an Ingress (planMoveToTraefik), guarded by its generation. */
+export function patchIngress(
+  namespace: string,
+  name: string,
+  ops: JsonPatchOp[],
+  dryRun: boolean
+): Promise<unknown> {
+  return ApiProxy.request(`${ingressPath(namespace, name)}?${writeQuery({ dryRun })}`, {
+    method: 'PATCH',
+    body: JSON.stringify(ops),
+    headers: { 'Content-Type': 'application/json-patch+json', Accept: 'application/json' },
+  });
+}
+
+/** Sets one annotation on a Service (merge patch on that key only). */
+export function annotateService(
+  namespace: string,
+  name: string,
+  key: string,
+  value: string,
+  dryRun: boolean
+): Promise<unknown> {
+  return ApiProxy.request(
+    `/api/v1/namespaces/${encodeURIComponent(namespace)}/services/${encodeURIComponent(
+      name
+    )}?${writeQuery({ dryRun })}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(annotationMergePatch(key, value)),
+      headers: { 'Content-Type': 'application/merge-patch+json', Accept: 'application/json' },
+    }
+  );
+}

@@ -59,17 +59,6 @@ export function activeIngress(
   return spec.ingress?.traefik || !spec.ingress?.nginx ? 'traefik' : 'nginx';
 }
 
-/**
- * Before k4all-operator v0.4.0 (k4all-operator#7), MetalLB built its address
- * pool from spec.ingress.nginx.dedicatedIP and spec.ingress.cilium.dedicatedIP
- * only. With such an operator the Traefik IP is also written to the legacy
- * nginx key so MetalLB announces it (DESIGN.md, O-1). Callers pass
- * `mirrorToNginx: !capabilities.metallbReadsTraefikIP`.
- */
-export interface TraefikWriteOptions {
-  mirrorToNginx?: boolean;
-}
-
 export type TraefikSource = 'traefik' | 'nginx' | 'none';
 
 export interface EffectiveTraefik {
@@ -84,10 +73,12 @@ function pick(cfg: IngressControllerConfig | undefined, source: TraefikSource): 
 }
 
 /**
- * The Traefik settings the operator uses: spec.ingress.traefik, or
- * spec.ingress.nginx on clusters whose ClusterConfig predates v2.6.0. A
- * missing isDefault reads as false, as the operator's Go types did before
- * v0.4.0 (from v0.4.0 the CRD defaults it to true, so it is never missing).
+ * The Traefik settings the operator uses: spec.ingress.traefik, or, on
+ * clusters installed before v2.6.0 whose ClusterConfig was not migrated yet
+ * (k4all-operator v0.4.2 writes the key), the values inherited from the
+ * ingress-nginx settings (source "nginx"). The plugin only reads those: any
+ * change is saved to spec.ingress.traefik. A missing isDefault reads as
+ * false, as the operator's Go types did before v0.4.0.
  */
 export function effectiveTraefik(spec: ClusterConfigSpec): EffectiveTraefik {
   const ingress = spec.ingress ?? {};
@@ -113,14 +104,15 @@ export function effectiveIngress(
 }
 
 /**
- * Writes Traefik settings. spec.ingress.traefik is materialized with both
- * fields explicit: an omitted isDefault meant false to k4all-operator v0.3.0
- * and means true from v0.4.0 (CRD default), so it is never left out.
+ * Writes Traefik settings, to spec.ingress.traefik only, with both fields
+ * explicit (starting from the inherited values when the key is new): an
+ * omitted isDefault meant false to k4all-operator v0.3.0 and means true from
+ * v0.4.0 (CRD default). The ingress-nginx key is never written on a Traefik
+ * release.
  */
 export function setTraefik(
   draft: Draft,
-  change: Partial<Pick<EffectiveTraefik, 'dedicatedIP' | 'isDefault'>>,
-  opts: TraefikWriteOptions = {}
+  change: Partial<Pick<EffectiveTraefik, 'dedicatedIP' | 'isDefault'>>
 ): Draft {
   const current = effectiveTraefik(draft);
   const next = {
@@ -128,11 +120,7 @@ export function setTraefik(
     dedicatedIP: change.dedicatedIP ?? current.dedicatedIP,
     isDefault: change.isDefault ?? current.isDefault,
   };
-  let out = setIn(draft, ['ingress', 'traefik'], next);
-  if ((opts.mirrorToNginx ?? true) && change.dedicatedIP !== undefined) {
-    out = mirrorToNginx(out, current.dedicatedIP, change.dedicatedIP);
-  }
-  return out;
+  return setIn(draft, ['ingress', 'traefik'], next);
 }
 
 /** Writes ingress-nginx settings (spec.ingress.nginx), both fields explicit. */
@@ -153,35 +141,9 @@ export function setNginx(
 export function setIngress(
   draft: Draft,
   controller: IngressController,
-  change: Partial<Pick<EffectiveTraefik, 'dedicatedIP' | 'isDefault'>>,
-  opts: TraefikWriteOptions = {}
+  change: Partial<Pick<EffectiveTraefik, 'dedicatedIP' | 'isDefault'>>
 ): Draft {
-  return controller === 'nginx' ? setNginx(draft, change) : setTraefik(draft, change, opts);
-}
-
-/** True when the nginx key only exists to carry the mirrored Traefik IP, or is free for it. */
-export function nginxFollowsTraefik(spec: ClusterConfigSpec, traefikIP: string): boolean {
-  const nginxIP = spec.ingress?.nginx?.dedicatedIP ?? '';
-  return nginxIP === '' || nginxIP === traefikIP;
-}
-
-function mirrorToNginx(draft: Draft, previousIP: string, nextIP: string): Draft {
-  if (!nginxFollowsTraefik(draft, previousIP)) {
-    return draft; // someone set a different legacy IP on purpose: leave it
-  }
-  const hasNginx = isPlainObject(draft.ingress?.nginx);
-  if (!hasNginx && nextIP === '') {
-    return draft;
-  }
-  return setIn(draft, ['ingress', 'nginx', 'dedicatedIP'], nextIP);
-}
-
-/** Moves a pre-v2.6.0 config to spec.ingress.traefik, keeping behaviour identical. */
-export function adoptTraefikKey(draft: Draft, opts: TraefikWriteOptions = {}): Draft {
-  if (effectiveTraefik(draft).source === 'traefik') {
-    return draft;
-  }
-  return setTraefik(draft, {}, opts);
+  return controller === 'nginx' ? setNginx(draft, change) : setTraefik(draft, change);
 }
 
 // -------------------------------------------------------------- Overrides

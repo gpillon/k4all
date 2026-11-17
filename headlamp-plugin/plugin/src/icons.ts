@@ -60,6 +60,7 @@ import mdiShieldLockOutline from '@iconify/icons-mdi/shield-lock-outline';
 import mdiSourceBranchSync from '@iconify/icons-mdi/source-branch-sync';
 import mdiSourceRepository from '@iconify/icons-mdi/source-repository';
 import mdiStop from '@iconify/icons-mdi/stop';
+import mdiSwapHorizontal from '@iconify/icons-mdi/swap-horizontal';
 import mdiSync from '@iconify/icons-mdi/sync';
 import mdiTag from '@iconify/icons-mdi/tag';
 import mdiTagOutline from '@iconify/icons-mdi/tag-outline';
@@ -127,6 +128,7 @@ export const ICONS: Record<string, IconifyIcon> = {
   'source-branch-sync': mdiSourceBranchSync,
   'source-repository': mdiSourceRepository,
   stop: mdiStop,
+  'swap-horizontal': mdiSwapHorizontal,
   sync: mdiSync,
   tag: mdiTag,
   'tag-outline': mdiTagOutline,
