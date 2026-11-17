@@ -35,6 +35,7 @@ import {
 } from '../../model/settings';
 import { ClusterConfigObject } from '../../model/types';
 import { hostPhaseLabel } from '../../model/upgrades';
+import { LiveStatusBar } from '../common/live';
 import { K4allGate } from '../common/states';
 import { Metric, Mono, PageHeader, Panel, SegmentBar, TonePill } from '../common/ui';
 import { UpgradesCard } from '../upgrades/UpgradesCard';
@@ -344,6 +345,7 @@ function OverviewContent({ data, now }: { data: ReturnType<typeof useK4allData>;
         }
       />
 
+      <LiveStatusBar />
       <Stack spacing={1.5} sx={{ mb: 2 }}>
         {health.banners.map(b => (
           <Alert key={b.id} severity={b.severity}>

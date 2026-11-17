@@ -43,6 +43,15 @@ vi.mock('../../api/hooks', () => ({
   useNow: vi.fn(),
 }));
 vi.mock('../../api/k4allApi', () => ({}));
+vi.mock('../../api/live', () => ({
+  useLiveStatus: () => ({
+    updatedAt: null,
+    down: false,
+    downSince: null,
+    intervalMs: 60000,
+    refresh: () => undefined,
+  }),
+}));
 
 function nodes(): NodeLike[] {
   const v240 = (n: NodeLike) => {

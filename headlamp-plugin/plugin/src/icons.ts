@@ -48,6 +48,7 @@ import mdiPencilOutline from '@iconify/icons-mdi/pencil-outline';
 import mdiPlay from '@iconify/icons-mdi/play';
 import mdiProgressUpload from '@iconify/icons-mdi/progress-upload';
 import mdiPuzzleOutline from '@iconify/icons-mdi/puzzle-outline';
+import mdiRefresh from '@iconify/icons-mdi/refresh';
 import mdiReplay from '@iconify/icons-mdi/replay';
 import mdiRestart from '@iconify/icons-mdi/restart';
 import mdiRobotOutline from '@iconify/icons-mdi/robot-outline';
@@ -114,6 +115,7 @@ export const ICONS: Record<string, IconifyIcon> = {
   play: mdiPlay,
   'progress-upload': mdiProgressUpload,
   'puzzle-outline': mdiPuzzleOutline,
+  refresh: mdiRefresh,
   replay: mdiReplay,
   restart: mdiRestart,
   'robot-outline': mdiRobotOutline,
