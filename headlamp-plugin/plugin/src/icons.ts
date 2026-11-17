@@ -17,6 +17,7 @@ import mdiCheck from '@iconify/icons-mdi/check';
 import mdiCheckCircleOutline from '@iconify/icons-mdi/check-circle-outline';
 import mdiChevronDown from '@iconify/icons-mdi/chevron-down';
 import mdiChevronRight from '@iconify/icons-mdi/chevron-right';
+import mdiCloudAlertOutline from '@iconify/icons-mdi/cloud-alert-outline';
 import mdiCloudDownloadOutline from '@iconify/icons-mdi/cloud-download-outline';
 import mdiCogOutline from '@iconify/icons-mdi/cog-outline';
 import mdiContentCopy from '@iconify/icons-mdi/content-copy';
@@ -82,6 +83,7 @@ export const ICONS: Record<string, IconifyIcon> = {
   'check-circle-outline': mdiCheckCircleOutline,
   'chevron-down': mdiChevronDown,
   'chevron-right': mdiChevronRight,
+  'cloud-alert-outline': mdiCloudAlertOutline,
   'cloud-download-outline': mdiCloudDownloadOutline,
   'cog-outline': mdiCogOutline,
   'content-copy': mdiContentCopy,

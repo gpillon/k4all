@@ -30,12 +30,13 @@ import React from 'react';
 import { NodeConfigObject, NodeLike } from '../../model/types';
 import {
   changesKubernetesMinor,
-  clusterFacts,
   DEFAULT_DRAIN_TIMEOUT_MINUTES,
   drainBehaviour,
   estimate,
   normalizeRelease,
-  planPath,
+  Plan,
+  ReleaseFacts,
+  releasePlan,
   upgradeOrder,
 } from '../../model/upgrades';
 import { Mono } from '../common/ui';
@@ -58,6 +59,17 @@ function Section(props: { icon: string; title: string; children: React.ReactNode
   );
 }
 
+/** "Kubernetes 1.35.10, CRI-O 1.35, Fedora 43" from what is known. */
+function describeFacts(f: ReleaseFacts): string {
+  return [
+    f.kubernetes ? `Kubernetes ${f.kubernetes.replace(/^v/, '')}` : '',
+    f.crio ? `CRI-O ${f.crio}` : '',
+    f.fedora ? `Fedora ${f.fedora}` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
 function StartPlan(props: {
   data: UpgradeReviewData;
   nodes: NodeLike[];
@@ -67,13 +79,14 @@ function StartPlan(props: {
   cont: boolean;
   setCont: (v: boolean) => void;
   timeoutError?: string;
+  plan: Plan;
 }) {
   const { data } = props;
   const status = data.base.status ?? {};
   const current = status.currentRelease ?? '';
   const target = data.desired.targetRelease ?? '';
-  const facts = clusterFacts(props.nodes);
-  const plan = planPath(current, target, status.availableReleases ?? [], facts);
+  const facts: ReleaseFacts = status.currentReleaseInfo ?? {};
+  const plan = props.plan;
   const order = upgradeOrder(status.nodes, props.nodes, props.nodeConfigs);
   const est = estimate(plan.hops.length, order, data.desired.drain);
   const last = plan.hops[plan.hops.length - 1]?.release;
@@ -91,35 +104,31 @@ function StartPlan(props: {
           )}
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          From Kubernetes {facts.kubernetes ?? '?'}
-          {facts.fedora ? `, Fedora ${facts.fedora}` : ''} to Kubernetes{' '}
-          {last?.kubernetes ?? facts.kubernetes ?? '?'}
-          {last?.fedora
-            ? `, Fedora ${last.fedora}`
-            : facts.fedora
-            ? `, Fedora ${facts.fedora}`
+          {describeFacts(facts) && last
+            ? `From ${describeFacts(facts)} to ${describeFacts({
+                kubernetes: last.kubernetes ?? facts.kubernetes,
+                crio: last.crio ?? facts.crio,
+                fedora: last.fedora ?? facts.fedora,
+              })}. `
             : ''}
-          . Every node finishes a hop before any node starts the next.
+          Every node finishes a hop before any node starts the next.
         </Typography>
       </Box>
 
       {plan.error && (
-        <Alert severity="warning">
-          <AlertTitle>The plugin could not plan this path</AlertTitle>
-          {plan.error} k4all-operator plans the path itself and reports it once the upgrade starts.
+        <Alert severity="error">
+          <AlertTitle>No way to this release</AlertTitle>
+          {plan.error}
         </Alert>
       )}
 
       {plan.hops.length > 0 && (
         <Section icon="mdi:map-marker-path" title="Path">
           <PlanTimeline hops={plan.hops} nodes={est.nodes} />
-          {!plan.exact && (
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-              Planned by the plugin with the k4all versioning rules (every minor is a stop, a
-              stream's latest patch comes first). k4all-operator plans the final path from the
-              upgrade graph and shows it once the upgrade starts.
-            </Typography>
-          )}
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            The hops k4all-operator plans on the upgrade graph: every minor release is a stop, and a
+            release line's latest patch comes before the next minor.
+          </Typography>
         </Section>
       )}
 
@@ -224,6 +233,8 @@ export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewD
     timeout.trim() === '' || !Number.isInteger(timeoutNumber) || timeoutNumber < 1
       ? 'A whole number of minutes, 1 or more.'
       : undefined;
+  const plan =
+    data?.intent.kind === 'start' ? releasePlan(data.base, data.desired.targetRelease ?? '') : null;
   const optionsChanged =
     !!data &&
     data.intent.kind === 'start' &&
@@ -306,6 +317,7 @@ export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewD
                 cont={cont}
                 setCont={setCont}
                 timeoutError={timeoutError}
+                plan={plan ?? { hops: [] }}
               />
             )}
             <Box>
@@ -369,7 +381,9 @@ export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewD
                 variant="contained"
                 color={isStart ? 'warning' : 'primary'}
                 onClick={flow.apply}
-                disabled={!data || phase.kind === 'applying' || (isStart && !ack)}
+                disabled={
+                  !data || phase.kind === 'applying' || (isStart && (!ack || !!plan?.error))
+                }
                 startIcon={
                   phase.kind === 'applying' ? (
                     <CircularProgress size={16} color="inherit" />

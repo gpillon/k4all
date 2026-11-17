@@ -130,6 +130,8 @@ export function UpgradeSummary({ cu }: { cu: ClusterUpgradeObject }) {
               }.`
             : view.stage === 'waiting'
             ? 'Waiting for k4all-operator to report the release.'
+            : view.stage === 'graphUnavailable'
+            ? 'k4all-operator cannot read the upgrade graph, so newer releases are unknown.'
             : 'No newer release.'}
         </Typography>
       )}

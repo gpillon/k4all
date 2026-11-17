@@ -40,15 +40,17 @@ one (see [upgrades.md](upgrades.md)).
 
 1. **Choose a release.** The page lists the releases the cluster can move
    to, newest first: whether it is a minor or a patch, its Kubernetes and
-   Fedora versions, its notes, and the hops it takes from where you are.
+   Fedora versions, its notes, and the hops it takes from where you are. If
+   k4all-operator cannot read the upgrade graph, the page says so instead of
+   "up to date".
 2. **Review.** The review shows the path hop by hop and what each hop
    changes, the node order, how nodes are drained, and how many reboots and
    how much downtime to expect. You can change the drain timeout and whether
    a node goes ahead when its drain times out. Tick the box and start.
 3. **Follow it.** The page shows the hop in progress, each node's phase
    (waiting, draining, upgrading, done), what `k4all-upgrade` is doing on
-   the node (staging, rebooting, syncing…), and how long the current drain
-   has left.
+   the node (staging, rebooting, syncing…), how long each hop and node took,
+   and how long the current drain has left.
 
 While the node that runs Headlamp reboots, the page loses its connection. It
 comes back when the node is up; reload it if it does not.
@@ -79,12 +81,16 @@ need `ssh` to it and `sudo`.
   `sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume`. The upgrade
   continues by itself. To give up the hop on that node instead:
   `sudo k4all-upgrade clear-hold --abandon`, then **Retry** or **Stop**.
-- **Refused the hop** (a hold whose message starts with `upgrade-target`):
-  the node plans on a different upgrade graph than the cluster. The graph in
+- **Refused the hop**: the node plans on a different upgrade graph than the
+  cluster. The graph in
   the upgrade settings must be the one in `/etc/k4all-upgrade.yaml` on the
   nodes.
+- **Rolled back**: the new image did not start, so the node went back to the
+  previous one and holds; the same commands as for a hold.
 - **Abandoned**: the hop was given up on the node. **Retry** drains the node
   again and asks it for the hop.
+- **Waiting for a node to be Ready**: not an error; the next node starts once
+  every node is Ready.
 - **Drain did not finish**: find the pods left on the node
   (`kubectl get pods -A -o wide --field-selector spec.nodeName=<node>`) and
   the PodDisruptionBudgets that hold them, move or delete them, then

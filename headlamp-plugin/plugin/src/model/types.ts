@@ -242,6 +242,26 @@ export type ClusterUpgradePhase = 'Idle' | 'Paused' | 'Progressing' | 'Succeeded
 export type HopPhase = 'Done' | 'InProgress' | 'Pending';
 export type NodeUpgradePhase = 'Pending' | 'Draining' | 'Upgrading' | 'Done' | 'Failed';
 
+/**
+ * Why a node failed, or what the upgrade waits for on it. Retry (the retry
+ * annotation) acts on DrainTimeout and Abandoned only; a HOLD (HostHold,
+ * TargetRejected, RollbackRebooted) goes on once resumed on the node;
+ * NodeNotReady is not a failure.
+ */
+export type NodeUpgradeReason =
+  | 'DrainTimeout'
+  | 'HostHold'
+  | 'Abandoned'
+  | 'TargetRejected'
+  | 'RollbackRebooted'
+  | 'NodeNotReady';
+
+/** ClusterUpgrade condition types (k4all-operator v0.4.0). */
+export const CONDITION_GRAPH_AVAILABLE = 'GraphAvailable';
+export const CONDITION_PROGRESSING = 'Progressing';
+export const CONDITION_SUCCEEDED = 'Succeeded';
+export const CONDITION_FAILED = 'Failed';
+
 export interface DrainSpec {
   /** Minutes to wait for the evictions (default 30). */
   timeoutMinutes?: number;
@@ -263,6 +283,10 @@ export interface Hop {
   release: string;
   kind?: 'minor' | 'patch' | string;
   phase: HopPhase | string;
+  /** When the hop became InProgress. */
+  startedAt?: string;
+  /** When every node had run it. */
+  completedAt?: string;
 }
 
 export interface ReleaseInfo {
@@ -272,10 +296,15 @@ export interface ReleaseInfo {
   kubernetes?: string;
   fedora?: number;
   notes?: string;
-  /** Not in the v0.4.0 API (proposed): the oldest release that may hop to this one. */
+  /** The oldest release that may switch straight to this one. */
   minFrom?: string;
-  /** Not in the v0.4.0 API (proposed): CRI-O minor of the image. */
+  /** CRI-O minor of the image. */
   crio?: string;
+  /**
+   * Only in availableReleases: the hops from currentRelease to this release,
+   * as the operator plans them; empty when the graph has no way there.
+   */
+  path?: string[];
 }
 
 export interface NodeUpgradeStatus {
@@ -288,7 +317,13 @@ export interface NodeUpgradeStatus {
   /** k4all-upgrade's phase on the node: PREFLIGHT ... COMMIT, HOLD, ABANDONED. */
   hostPhase?: string;
   message?: string;
+  reason?: NodeUpgradeReason | string;
+  /** When the operator cordoned the node for the current hop; a retry starts it over. */
   drainStartedAt?: string;
+  /** When the operator started the node's latest hop (its cordon). */
+  startedAt?: string;
+  /** When the node finished its latest hop. */
+  completedAt?: string;
 }
 
 export interface ClusterUpgradeStatus {
@@ -296,6 +331,8 @@ export interface ClusterUpgradeStatus {
   message?: string;
   /** The oldest release among the nodes. */
   currentRelease?: string;
+  /** The graph's entry for currentRelease (Kubernetes, CRI-O, Fedora). */
+  currentReleaseInfo?: ReleaseInfo;
   /** Release of the hop in progress. */
   currentHop?: string;
   path?: Hop[];
