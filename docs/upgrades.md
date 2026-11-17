@@ -48,7 +48,8 @@ The 2.x upgrade path:
 | v2.5.0 | Fedora 45 |
 | v2.6.0 | Traefik replaces ingress-nginx |
 | v2.7.0 | Kubernetes 1.36 |
-| v2.8.0 | Kubernetes 1.37 |
+| v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
+| v2.9.0 | Kubernetes 1.37 |
 
 ## Automatic or on command
 

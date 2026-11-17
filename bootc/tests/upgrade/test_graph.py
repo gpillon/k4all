@@ -131,7 +131,7 @@ def versions(path):
 def test_old_release_walks_every_minor(ladder):
     path = ku.plan_path(ladder, "v2.2.4")
     assert versions(path) == ["v2.3.0", "v2.4.0", "v2.5.0", "v2.6.0",
-                              "v2.7.0", "v2.8.0"]
+                              "v2.7.0", "v2.8.0", "v2.9.0"]
 
 
 def test_plan_stops_at_the_requested_target(ladder):
@@ -139,7 +139,7 @@ def test_plan_stops_at_the_requested_target(ladder):
 
 
 def test_plan_is_empty_when_up_to_date(ladder):
-    assert ku.plan_path(ladder, "v2.8.0") == []
+    assert ku.plan_path(ladder, "v2.9.0") == []
 
 
 def test_patches_inside_a_stream_are_skipped():

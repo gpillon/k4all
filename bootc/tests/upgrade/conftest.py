@@ -51,7 +51,9 @@ LADDER = [
     release("v2.6.0", "minor", "v2.5.0", "1.35.10", "1.35", 45,
             syncManifest=True),
     release("v2.7.0", "minor", "v2.6.0", "1.36.6", "1.36", 45),
-    release("v2.8.0", "minor", "v2.7.0", "1.37.2", "1.37", 45),
+    release("v2.8.0", "minor", "v2.7.0", "1.36.6", "1.36", 45,
+            syncManifest=True),
+    release("v2.9.0", "minor", "v2.8.0", "1.37.2", "1.37", 45),
 ]
 
 
