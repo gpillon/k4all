@@ -478,6 +478,23 @@ def test_run_walks_every_hop_and_syncs_the_manifest_in_two_steps(make_host):
     assert "resourceVersion" not in second["metadata"]
 
 
+def test_sync_loads_the_shipped_images_before_applying(make_host):
+    host = make_host(version="v2.3.1", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    host.write(ku.IMAGE_RELEASE_MANIFEST, yaml.safe_dump(NEW_MANIFEST))
+    host.release_manifest = {"metadata": {"name": "k4all"}, "spec": {
+        "components": {"k4all-operator": {"version": "v0.1.5"}}}}
+    host.write(ku.IMAGE_CACHE_DIR + "/docker.io_traefik_v3.7.18.tar", "")
+
+    assert run_cli(host, "run", "--to", "v2.4.0", "--yes") == 0
+    finish(host)
+    calls = [c for c in host.calls if c[0] in ("podman", "kubectl")]
+    load = next(i for i, c in enumerate(calls)
+                if c[:2] == ["podman", "load"] and c[-1].endswith("traefik_v3.7.18.tar"))
+    apply = next(i for i, c in enumerate(calls) if "apply" in c)
+    assert load < apply
+
+
 def test_second_sync_step_waits_for_the_new_operator_to_adopt(make_host):
     host = make_host(version="v2.3.1", kubernetes="1.35.10")
     write_graph(host, STREAM_23)

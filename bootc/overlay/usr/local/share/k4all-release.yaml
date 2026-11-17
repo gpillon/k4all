@@ -130,8 +130,11 @@ spec:
     # --- Ingress ---
     ingress-nginx:
       type: helm
-      # Last release (repo archived); tested only up to Kubernetes 1.35, so
-      # Traefik must replace it before 1.36.
+      # Replaced by Traefik in v2.6.0: the operator uninstalls it before it
+      # installs traefik (Removed components go first), which frees the
+      # LoadBalancer IP and the host ports. Last release (repo archived),
+      # tested only up to Kubernetes 1.35.
+      management: Removed
       version: "4.15.1"
       repo: "https://kubernetes.github.io/ingress-nginx"
       chart: ingress-nginx
@@ -147,6 +150,49 @@ spec:
           nodeSelector:
             kubernetes.io/os: linux
             node-role.kubernetes.io/control-plane: ""
+      dependsOn:
+        - cert-manager
+        - metallb
+      custom: {}
+
+    traefik:
+      type: helm
+      # Traefik v3.7.18. Its Ingress-NGINX provider serves the Ingresses of
+      # class "nginx" with their nginx.ingress.kubernetes.io annotations
+      # (ssl-passthrough included), so routes made for ingress-nginx keep
+      # working. The operator's Traefik hook adds the service, the host ports
+      # and the default class from ClusterConfig spec.ingress.traefik (or
+      # spec.ingress.nginx on clusters installed before v2.6.0).
+      version: "42.4.0"
+      repo: "https://traefik.github.io/charts"
+      chart: traefik
+      namespace: traefik
+      values:
+        deployment:
+          kind: DaemonSet
+        nodeSelector:
+          kubernetes.io/os: linux
+          node-role.kubernetes.io/control-plane: ""
+        providers:
+          kubernetesIngressNGINX:
+            enabled: true
+          kubernetesIngress:
+            enabled: true
+          kubernetesCRD:
+            enabled: true
+        ingressClass:
+          enabled: true
+          name: traefik
+        # The provider only follows Ingresses whose class has the
+        # ingress-nginx controller; the chart creates only the traefik class.
+        # Not the default class: the hook makes traefik the default instead.
+        extraObjects:
+          - apiVersion: networking.k8s.io/v1
+            kind: IngressClass
+            metadata:
+              name: nginx
+            spec:
+              controller: k8s.io/ingress-nginx
       dependsOn:
         - cert-manager
         - metallb
@@ -407,7 +453,7 @@ spec:
       dependsOn:
         - calico
         - cilium
-        - ingress-nginx
+        - traefik
       custom: {}
 
     # --- OVS/Multus ---

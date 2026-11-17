@@ -196,6 +196,9 @@ RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
 # stable operator release, without waiting for a k4all release.
 # Images live under /usr: bootc refreshes /usr on every upgrade, never /var,
 # and k4all-upgrade loads the next release's images from the staged image.
+# Traefik's image is there too: it replaces ingress-nginx during a manifest
+# sync, and with the image local the routes are down for seconds, not for a
+# pull. Its tag is the appVersion of the pinned chart.
 RUN set -eux; \
     OPERATOR_VERSION="$(yq '.spec.components.k4all-operator.version' /usr/local/share/k4all-release.yaml)"; \
     case "$OPERATOR_VERSION" in v[0-9]*) ;; \
@@ -206,6 +209,13 @@ RUN set -eux; \
     mkdir -p /usr/local/share/k4all-images; \
     kubeadm config images list --kubernetes-version "v${KUBERNETES_VERSION}" > /tmp/k8s-images.txt; \
     echo "ghcr.io/gpillon/k4all-operator:${OPERATOR_VERSION}" >> /tmp/k8s-images.txt; \
+    TRAEFIK_CHART="$(yq '.spec.components.traefik.version' /usr/local/share/k4all-release.yaml)"; \
+    TRAEFIK_REPO="$(yq '.spec.components.traefik.repo' /usr/local/share/k4all-release.yaml)"; \
+    TRAEFIK_TAG="$(HELM_CACHE_HOME=/tmp/helm HELM_CONFIG_HOME=/tmp/helm HELM_DATA_HOME=/tmp/helm \
+        helm show chart traefik --repo "$TRAEFIK_REPO" --version "$TRAEFIK_CHART" | yq '.appVersion')"; \
+    rm -rf /tmp/helm; \
+    case "$TRAEFIK_TAG" in v[0-9]*) ;; *) echo "no appVersion for traefik chart ${TRAEFIK_CHART}" >&2; exit 1 ;; esac; \
+    echo "docker.io/traefik:${TRAEFIK_TAG}" >> /tmp/k8s-images.txt; \
     while read -r img; do \
     file="$(printf '%s' "$img" | tr '/:@' '_')"; \
     skopeo copy \

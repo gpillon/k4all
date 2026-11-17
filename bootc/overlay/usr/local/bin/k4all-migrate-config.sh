@@ -80,10 +80,12 @@ migrate_yaml_schema() {
         return
     fi
 
-    # Ensure ingress section exists (added in operator v0.2.0)
+    # Ensure ingress section exists. Since v2.6.0 the controller is Traefik
+    # (spec.ingress.traefik); a config that already has spec.ingress.nginx
+    # keeps it, and Traefik follows it.
     if [ "$(yq e '.spec.ingress' "$CONFIG_YAML")" = "null" ]; then
-        yq e '.spec.ingress.nginx.isDefault = true' -i "$CONFIG_YAML"
-        yq e '.spec.ingress.nginx.dedicatedIP = ""' -i "$CONFIG_YAML"
+        yq e '.spec.ingress.traefik.isDefault = true' -i "$CONFIG_YAML"
+        yq e '.spec.ingress.traefik.dedicatedIP = ""' -i "$CONFIG_YAML"
         yq e '.spec.ingress.cilium.dedicatedIP = ""' -i "$CONFIG_YAML"
         echo "  Added missing ingress section"
     fi

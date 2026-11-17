@@ -554,12 +554,12 @@
                             <property name="margin_top">12</property>
                             <property name="margin_bottom">12</property>
 
-                            <!-- NGINX Ingress (row 0) -->
+                            <!-- Traefik Ingress (row 0) -->
                             <child>
-                              <object class="GtkCheckButton" id="ingressNginxCheck">
+                              <object class="GtkCheckButton" id="ingressTraefikCheck">
                                 <property name="visible">True</property>
                                 <property name="can_focus">True</property>
-                                <property name="label" translatable="yes">NGINX Ingress Controller</property>
+                                <property name="label" translatable="yes">Traefik Ingress Controller</property>
                               </object>
                               <packing>
                                 <property name="left_attach">0</property>
@@ -567,7 +567,7 @@
                               </packing>
                             </child>
                             <child>
-                              <object class="GtkEntry" id="ingressNginxIpEntry">
+                              <object class="GtkEntry" id="ingressTraefikIpEntry">
                                 <property name="visible">True</property>
                                 <property name="can_focus">True</property>
                                 <property name="placeholder_text" translatable="yes">Dedicated IP (empty = cluster IP)</property>
@@ -625,7 +625,7 @@
                                 <property name="visible">True</property>
                                 <property name="can_focus">False</property>
                                 <items>
-                                  <item translatable="yes">NGINX</item>
+                                  <item translatable="yes">Traefik</item>
                                   <item translatable="yes">Cilium</item>
                                 </items>
                                 <property name="active">0</property>

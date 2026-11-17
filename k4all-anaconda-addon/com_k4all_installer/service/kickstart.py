@@ -90,16 +90,19 @@ class K4AllData(AddonData):
                          dest="pod_network", version=VERSION, help="")
         op.add_argument("--service-network", default="10.96.0.0/16",
                          dest="service_network", version=VERSION, help="")
-        op.add_argument("--ingress-nginx", action="store_true", default=True,
-                         dest="ingress_nginx", version=VERSION, help="")
-        op.add_argument("--no-ingress-nginx", action="store_true", default=False,
-                         dest="no_ingress_nginx", version=VERSION, help="")
+        # Traefik replaced ingress-nginx in v2.6.0. The --*ingress-nginx*
+        # options and --ingress-default=nginx are kept as aliases, so older
+        # kickstarts keep working.
+        op.add_argument("--ingress-traefik", "--ingress-nginx", action="store_true",
+                         default=True, dest="ingress_traefik", version=VERSION, help="")
+        op.add_argument("--no-ingress-traefik", "--no-ingress-nginx", action="store_true",
+                         default=False, dest="no_ingress_traefik", version=VERSION, help="")
         op.add_argument("--ingress-cilium", action="store_true", default=False,
                          dest="ingress_cilium", version=VERSION, help="")
-        op.add_argument("--ingress-default", choices=["nginx", "cilium"],
-                         default="nginx", dest="ingress_default", version=VERSION, help="")
-        op.add_argument("--ingress-nginx-ip", default="",
-                         dest="ingress_nginx_ip", version=VERSION, help="")
+        op.add_argument("--ingress-default", choices=["traefik", "nginx", "cilium"],
+                         default="traefik", dest="ingress_default", version=VERSION, help="")
+        op.add_argument("--ingress-traefik-ip", "--ingress-nginx-ip", default="",
+                         dest="ingress_traefik_ip", version=VERSION, help="")
         op.add_argument("--ingress-cilium-ip", default="",
                          dest="ingress_cilium_ip", version=VERSION, help="")
         op.add_argument("--api-control-endpoint", default="",
@@ -124,9 +127,9 @@ class K4AllData(AddonData):
         cfg["cluster"]["serviceNetwork"] = ns.service_network
 
         # Ingress
-        nginx_enabled = not ns.no_ingress_nginx
-        cfg["ingress"]["nginx"]["isDefault"] = ns.ingress_default == "nginx"
-        cfg["ingress"]["nginx"]["dedicatedIP"] = ns.ingress_nginx_ip
+        cfg["ingress"]["traefik"]["isDefault"] = (
+            ns.ingress_default in ("traefik", "nginx") and not ns.no_ingress_traefik)
+        cfg["ingress"]["traefik"]["dedicatedIP"] = ns.ingress_traefik_ip
         cfg["ingress"]["cilium"]["dedicatedIP"] = ns.ingress_cilium_ip
 
         # HA
@@ -282,16 +285,16 @@ class K4AllData(AddonData):
             section += f" --service-network={svc_net}"
 
         # Ingress flags
-        if not cfg.get("ingress", {}).get("nginx", {}).get("isDefault", True):
-            section += " --no-ingress-nginx"
+        traefik = cfg.get("ingress", {}).get("traefik", {})
+        if not traefik.get("isDefault", True):
+            section += " --no-ingress-traefik"
         if cfg.get("ingress", {}).get("cilium", {}).get("dedicatedIP"):
             section += " --ingress-cilium"
-        ing_default = "cilium" if not cfg.get("ingress", {}).get("nginx", {}).get("isDefault", True) else "nginx"
-        if ing_default != "nginx":
-            section += f" --ingress-default={ing_default}"
-        nginx_ip = cfg.get("ingress", {}).get("nginx", {}).get("dedicatedIP", "")
-        if nginx_ip:
-            section += f" --ingress-nginx-ip={nginx_ip}"
+        if not traefik.get("isDefault", True):
+            section += " --ingress-default=cilium"
+        traefik_ip = traefik.get("dedicatedIP", "")
+        if traefik_ip:
+            section += f" --ingress-traefik-ip={traefik_ip}"
         cilium_ip = cfg.get("ingress", {}).get("cilium", {}).get("dedicatedIP", "")
         if cilium_ip:
             section += f" --ingress-cilium-ip={cilium_ip}"

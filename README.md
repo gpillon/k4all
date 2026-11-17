@@ -16,7 +16,7 @@ disk (the first fixed disk of at least 10 GiB). Back up your data first.**
 - Kubernetes (kubeadm) with CRI-O
 - Calico or Cilium as CNI, plus Multus and the OVS CNI (optional)
 - TopoLVM for persistent volumes on the `vg_data` volume group
-- ingress-nginx as ingress controller (Traefik replaces it in v2.6.0), MetalLB,
+- Traefik as ingress controller (it replaced ingress-nginx in v2.6.0), MetalLB,
   cert-manager
 - Headlamp dashboard and metrics-server
 - HA control plane with kube-vip or keepalived (optional)

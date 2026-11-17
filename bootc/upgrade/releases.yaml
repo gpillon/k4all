@@ -81,3 +81,19 @@ releases:
       Base image moves from Fedora 43 to Fedora 45 (Fedora 43 reaches end of
       life on 2026-12-02). Kubernetes and CRI-O are unchanged. The host etcd
       package is gone: backups run etcdctl from the etcd image.
+
+  - version: v2.6.0
+    kind: minor
+    minFrom: v2.5.0
+    kubernetes: "1.35.10"
+    crio: "1.35"
+    fedora: 45
+    syncManifest: true
+    notes: >-
+      Traefik replaces ingress-nginx, whose last release is tested only up to
+      Kubernetes 1.35. The operator (v0.4.1 since v2.4.0) uninstalls
+      ingress-nginx, then installs Traefik on the same IP or host ports; the
+      Ingresses of class nginx keep
+      working through Traefik's Ingress-NGINX provider. Routes are down for
+      a few seconds during the sync. A minor because it replaces a platform
+      component.

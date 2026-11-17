@@ -500,7 +500,7 @@ test \"\$(sudo KUBECONFIG=/etc/kubernetes/admin.conf kubectl get clusterconfig k
 sudo KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status -n k4all-operator-system deployment/k4all-operator-controller-manager --timeout=5s >/dev/null 2>&1 && \
 sudo KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status -n topolvm-system daemonset/topolvm-lvmd-0 --timeout=5s >/dev/null 2>&1 && \
 sudo KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status -n topolvm-system daemonset/topolvm-node --timeout=5s >/dev/null 2>&1 && \
-sudo KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status -n ingress-nginx daemonset/ingress-nginx-controller --timeout=5s >/dev/null 2>&1 && \
+sudo KUBECONFIG=/etc/kubernetes/admin.conf kubectl rollout status -n traefik daemonset/traefik --timeout=5s >/dev/null 2>&1 && \
 sudo KUBECONFIG=/etc/kubernetes/admin.conf kubectl get pods -A --no-headers 2>/dev/null | awk '\$4 != \"Completed\" { split(\$3, ready, \"/\"); if (ready[1] != ready[2] || \$4 != \"Running\") exit 1 }'"; then
         OPERATOR_OK=true
         break
@@ -515,7 +515,7 @@ done
 if $OPERATOR_OK; then
     ok "Operator service, rollout, ClusterConfig, and ReleaseManifest are ready"
     ok "ClusterConfig has features.ovsBridge.enabled=true"
-    ok "TopoLVM, ingress-nginx, and all non-completed pods are ready"
+    ok "TopoLVM, Traefik, and all non-completed pods are ready"
 else
     fail "K4All operator deployment did not become ready within ${OPERATOR_TIMEOUT}s"
     SSH "sudo systemctl status fck8s-operator-deploy.service --no-pager --full" | sed 's/^/    /' || true

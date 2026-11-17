@@ -30,7 +30,7 @@ VALID_ROLES = ("bootstrap", "control", "worker")
 VALID_CNI_TYPES = ("calico", "cilium")
 VALID_HA_TYPES = ("none", "keepalived", "kubevip")
 VALID_EMULATION_VALUES = ("true", "false", "auto")
-VALID_INGRESS_CONTROLLERS = ("nginx", "cilium", "both")
+VALID_INGRESS_CONTROLLERS = ("traefik", "cilium", "both")
 VALID_INGRESS_IP_MODES = ("auto", "dedicated")
 
 # Default cluster configuration -- mirrors ClusterConfigSpec in the CRD.
@@ -60,7 +60,7 @@ DEFAULT_CLUSTER_CONFIG = {
         }
     },
     "ingress": {
-        "nginx": {
+        "traefik": {
             "dedicatedIP": "",
             "isDefault": True
         },

@@ -14,16 +14,26 @@ update_motd() {
     echo " - nip.io Route: https://dashboard.$nip_host/" | sudo tee -a /etc/login_data
 }
 
-NGINX_IS_DEFAULT=$(yq e '.spec.ingress.nginx.isDefault // "true"' "$K4ALL_CONFIG_FILE")
-NGINX_DEDICATED_IP=$(yq e '.spec.ingress.nginx.dedicatedIP // ""' "$K4ALL_CONFIG_FILE")
+# The ingress controller is Traefik. Its settings are spec.ingress.traefik;
+# configs written before v2.6.0 only have spec.ingress.nginx, which Traefik
+# then follows (same rule as the operator's Traefik hook).
+if [ "$(yq e '.spec.ingress.traefik != null' "$K4ALL_CONFIG_FILE")" = "true" ]; then
+    INGRESS_KEY=traefik
+else
+    INGRESS_KEY=nginx
+fi
+# Not `// "true"`: yq's // also replaces an explicit false.
+INGRESS_IS_DEFAULT=$(yq e ".spec.ingress.${INGRESS_KEY}.isDefault" "$K4ALL_CONFIG_FILE")
+[ "$INGRESS_IS_DEFAULT" = "null" ] && INGRESS_IS_DEFAULT=true
+INGRESS_DEDICATED_IP=$(yq e ".spec.ingress.${INGRESS_KEY}.dedicatedIP // \"\"" "$K4ALL_CONFIG_FILE")
 CILIUM_DEDICATED_IP=$(yq e '.spec.ingress.cilium.dedicatedIP // ""' "$K4ALL_CONFIG_FILE")
 
 FQDN=$(get_fqdn)
 
 INGRESS_IP=$(get_cluster_ip)
-if [ "$NGINX_IS_DEFAULT" = "true" ] && [ -n "$NGINX_DEDICATED_IP" ] && [ "$NGINX_DEDICATED_IP" != "null" ]; then
-    INGRESS_IP="$NGINX_DEDICATED_IP"
-elif [ "$NGINX_IS_DEFAULT" != "true" ] && [ -n "$CILIUM_DEDICATED_IP" ] && [ "$CILIUM_DEDICATED_IP" != "null" ]; then
+if [ "$INGRESS_IS_DEFAULT" = "true" ] && [ -n "$INGRESS_DEDICATED_IP" ] && [ "$INGRESS_DEDICATED_IP" != "null" ]; then
+    INGRESS_IP="$INGRESS_DEDICATED_IP"
+elif [ "$INGRESS_IS_DEFAULT" != "true" ] && [ -n "$CILIUM_DEDICATED_IP" ] && [ "$CILIUM_DEDICATED_IP" != "null" ]; then
     INGRESS_IP="$CILIUM_DEDICATED_IP"
 fi
 

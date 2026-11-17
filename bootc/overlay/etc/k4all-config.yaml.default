@@ -29,7 +29,7 @@ spec:
       apiControlEndpoint: ""
       apiControlEndpointSubnetSize: ""
   ingress:
-    nginx:
+    traefik:
       dedicatedIP: ""
       isDefault: true
     cilium:

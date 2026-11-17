@@ -208,3 +208,21 @@ sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
   operator only through the ReleaseManifest sync of a k4all release, never
   because a newer operator was published.
 - `update-node.sh` still exists and now calls `k4all-upgrade`.
+
+## Ingress: Traefik (v2.6.0)
+
+v2.6.0 replaces ingress-nginx with Traefik. During the manifest sync of that
+hop the operator uninstalls ingress-nginx, then installs Traefik on the same
+LoadBalancer IP (or the same host ports). The routes are down for a few
+seconds; the Traefik image ships with the node image.
+
+- Ingresses with `ingressClassName: nginx` and `nginx.ingress.kubernetes.io/*`
+  annotations keep working: Traefik serves them through its Ingress-NGINX
+  provider, ssl-passthrough included. The `nginx` IngressClass stays. New
+  Ingresses can use the `traefik` class.
+- Settings: `spec.ingress.traefik` (`dedicatedIP`, `isDefault`) in the
+  ClusterConfig. Clusters installed before v2.6.0 have only
+  `spec.ingress.nginx`, and Traefik follows it until a `traefik` key exists.
+- Kickstart: `--ingress-traefik-ip`, `--no-ingress-traefik` and
+  `--ingress-default=traefik|cilium`. The old `--ingress-nginx*` options are
+  still accepted.

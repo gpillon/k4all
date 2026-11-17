@@ -1569,18 +1569,26 @@ class Upgrader:
         cache = "/sysroot/ostree/deploy/%s/deploy/%s.%s%s" % (
             ostree.get("stateroot", "default"), ostree.get("checksum", ""),
             ostree.get("deploySerial", 0), IMAGE_CACHE_DIR)
-        loaded = 0
-        if ostree.get("checksum") and host.exists(cache):
-            for name in sorted(os.listdir(host.path(cache))):
-                if name.endswith(".tar"):
-                    host.run(["podman", "load", "-i",
-                              host.path(cache + "/" + name)], check=False,
-                             timeout=900)
-                    loaded += 1
+        loaded = self._load_images(cache) if ostree.get("checksum") else 0
         if not loaded:
             host.run([kubeadm, "config", "images", "pull",
                       "--kubernetes-version", "v" + version], check=False,
                      timeout=1800)
+
+    def _load_images(self, directory):
+        """`podman load` every image archive in directory (CRI-O shares the
+        storage); return how many were loaded."""
+        host = self.host
+        if not host.exists(directory):
+            return 0
+        loaded = 0
+        for name in sorted(os.listdir(host.path(directory))):
+            if name.endswith(".tar"):
+                host.run(["podman", "load", "-i",
+                          host.path(directory + "/" + name)], check=False,
+                         timeout=900)
+                loaded += 1
+        return loaded
 
     def _run_hooks(self, current, target, role):
         for minor, hooks in sorted(HOOKS_BEFORE_MINOR.items()):
@@ -1608,6 +1616,9 @@ class Upgrader:
                                  "-o", "json"], check=False)
         cluster = json.loads(got.stdout) if got.returncode == 0 else {}
         merged = merge_release_manifest(cluster, new)
+        # Component images ship in this image: a component the sync replaces
+        # (ingress-nginx -> Traefik) then starts without waiting on a pull.
+        self._load_images(IMAGE_CACHE_DIR)
         # The operator only reconciles once the pause annotation is gone.
         self.annotate(None)
         operator_step = operator_only_manifest(cluster, merged)

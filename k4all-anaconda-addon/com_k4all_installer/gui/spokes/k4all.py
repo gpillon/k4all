@@ -72,8 +72,8 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalSpoke):
 
         # Ingress widgets
         self._ingress_frame = self.builder.get_object("ingressFrame")
-        self._ingress_nginx_check = self.builder.get_object("ingressNginxCheck")
-        self._ingress_nginx_ip = self.builder.get_object("ingressNginxIpEntry")
+        self._ingress_traefik_check = self.builder.get_object("ingressTraefikCheck")
+        self._ingress_traefik_ip = self.builder.get_object("ingressTraefikIpEntry")
         self._ingress_cilium_check = self.builder.get_object("ingressCiliumCheck")
         self._ingress_cilium_ip = self.builder.get_object("ingressCiliumIpEntry")
         self._ingress_default_label = self.builder.get_object("ingressDefaultLabel")
@@ -88,8 +88,8 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalSpoke):
             self._cni_combo.connect("changed", self._on_cni_changed)
         if self._cilium_l2_check:
             self._cilium_l2_check.connect("toggled", self._on_ingress_state_changed)
-        if self._ingress_nginx_check:
-            self._ingress_nginx_check.connect("toggled", self._on_ingress_state_changed)
+        if self._ingress_traefik_check:
+            self._ingress_traefik_check.connect("toggled", self._on_ingress_state_changed)
         if self._ingress_cilium_check:
             self._ingress_cilium_check.connect("toggled", self._on_ingress_state_changed)
 
@@ -147,12 +147,12 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalSpoke):
 
     def _update_ingress_widgets(self):
         """Update ingress frame sub-widgets based on current state."""
-        nginx_on = self._ingress_nginx_check.get_active() if self._ingress_nginx_check else True
+        traefik_on = self._ingress_traefik_check.get_active() if self._ingress_traefik_check else True
         cilium_on = self._ingress_cilium_check.get_active() if self._ingress_cilium_check else False
-        both = nginx_on and cilium_on
+        both = traefik_on and cilium_on
 
-        if self._ingress_nginx_ip:
-            self._ingress_nginx_ip.set_sensitive(nginx_on)
+        if self._ingress_traefik_ip:
+            self._ingress_traefik_ip.set_sensitive(traefik_on)
         if self._ingress_cilium_ip:
             self._ingress_cilium_ip.set_sensitive(cilium_on)
 
@@ -257,10 +257,10 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalSpoke):
                 self._cilium_hubble_check.set_active(self._k4all_module.CiliumHubble)
 
             # Ingress
-            if self._ingress_nginx_check:
-                self._ingress_nginx_check.set_active(self._k4all_module.IngressNginxEnabled)
-            if self._ingress_nginx_ip:
-                self._ingress_nginx_ip.set_text(self._k4all_module.IngressNginxDedicatedIP)
+            if self._ingress_traefik_check:
+                self._ingress_traefik_check.set_active(self._k4all_module.IngressTraefikEnabled)
+            if self._ingress_traefik_ip:
+                self._ingress_traefik_ip.set_text(self._k4all_module.IngressTraefikDedicatedIP)
             if self._ingress_cilium_check:
                 self._ingress_cilium_check.set_active(self._k4all_module.IngressCiliumEnabled)
             if self._ingress_cilium_ip:
@@ -314,24 +314,24 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalSpoke):
                 self._k4all_module.SetCiliumHubble(self._cilium_hubble_check.get_active())
 
             # Ingress
-            nginx_on = self._ingress_nginx_check.get_active() if self._ingress_nginx_check else True
+            traefik_on = self._ingress_traefik_check.get_active() if self._ingress_traefik_check else True
             cilium_on = self._ingress_cilium_check.get_active() if self._ingress_cilium_check else False
-            self._k4all_module.SetIngressNginxEnabled(nginx_on)
+            self._k4all_module.SetIngressTraefikEnabled(traefik_on)
             self._k4all_module.SetIngressCiliumEnabled(cilium_on)
 
             default_idx = self._ingress_default_combo.get_active() if self._ingress_default_combo else 0
-            if nginx_on and cilium_on:
-                self._k4all_module.SetIngressNginxDefault(default_idx == 0)
+            if traefik_on and cilium_on:
+                self._k4all_module.SetIngressTraefikDefault(default_idx == 0)
                 self._k4all_module.SetIngressCiliumDefault(default_idx == 1)
-            elif nginx_on:
-                self._k4all_module.SetIngressNginxDefault(True)
+            elif traefik_on:
+                self._k4all_module.SetIngressTraefikDefault(True)
                 self._k4all_module.SetIngressCiliumDefault(False)
             elif cilium_on:
-                self._k4all_module.SetIngressNginxDefault(False)
+                self._k4all_module.SetIngressTraefikDefault(False)
                 self._k4all_module.SetIngressCiliumDefault(True)
 
-            if self._ingress_nginx_ip:
-                self._k4all_module.SetIngressNginxDedicatedIP(self._ingress_nginx_ip.get_text().strip())
+            if self._ingress_traefik_ip:
+                self._k4all_module.SetIngressTraefikDedicatedIP(self._ingress_traefik_ip.get_text().strip())
             if self._ingress_cilium_ip:
                 self._k4all_module.SetIngressCiliumDedicatedIP(self._ingress_cilium_ip.get_text().strip())
 
@@ -362,16 +362,16 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalSpoke):
 
                 # Both ingress controllers can't use the same empty IP (cluster IP conflict on ports 80/443)
                 if role == "bootstrap":
-                    nginx_on = self._k4all_module.IngressNginxEnabled
+                    traefik_on = self._k4all_module.IngressTraefikEnabled
                     cilium_on = self._k4all_module.IngressCiliumEnabled
-                    if not nginx_on and not cilium_on:
+                    if not traefik_on and not cilium_on:
                         return False
-                    if nginx_on and cilium_on:
-                        nginx_ip = self._k4all_module.IngressNginxDedicatedIP
+                    if traefik_on and cilium_on:
+                        traefik_ip = self._k4all_module.IngressTraefikDedicatedIP
                         cilium_ip = self._k4all_module.IngressCiliumDedicatedIP
-                        if not nginx_ip and not cilium_ip:
+                        if not traefik_ip and not cilium_ip:
                             return False
-                        if nginx_ip and cilium_ip and nginx_ip == cilium_ip:
+                        if traefik_ip and cilium_ip and traefik_ip == cilium_ip:
                             return False
             except Exception:
                 pass
@@ -402,15 +402,15 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalSpoke):
                     parts.append(f"HA: {ha} — VIP required!")
 
             if role == "bootstrap":
-                nginx_on = self._k4all_module.IngressNginxEnabled
+                traefik_on = self._k4all_module.IngressTraefikEnabled
                 cilium_on = self._k4all_module.IngressCiliumEnabled
-                if nginx_on and cilium_on:
-                    if not self._k4all_module.IngressNginxDedicatedIP and not self._k4all_module.IngressCiliumDedicatedIP:
+                if traefik_on and cilium_on:
+                    if not self._k4all_module.IngressTraefikDedicatedIP and not self._k4all_module.IngressCiliumDedicatedIP:
                         parts.append("Ingress: CONFLICT — need dedicated IP!")
                     else:
-                        parts.append("Ingress: nginx + cilium")
-                elif nginx_on:
-                    parts.append("Ingress: nginx")
+                        parts.append("Ingress: traefik + cilium")
+                elif traefik_on:
+                    parts.append("Ingress: traefik")
                 elif cilium_on:
                     parts.append("Ingress: cilium")
                 else:
