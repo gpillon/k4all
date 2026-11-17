@@ -14,6 +14,7 @@ import {
   intentOps,
   nodeGuidance,
   planPath,
+  problemConditions,
   upgradeOrder,
   upgradeView,
 } from './upgrades';
@@ -181,6 +182,11 @@ describe('upgradeView', () => {
     const cu = clusterUpgradeInProgress();
     cu.spec!.paused = true;
     expect(upgradeView(cu).stage).toBe('pausing');
+    // Progressing with no node in flight (the graph cannot be read): nothing moves.
+    const stuck = clusterUpgradeInProgress();
+    stuck.spec!.paused = true;
+    stuck.status!.nodes![1].phase = 'Pending';
+    expect(upgradeView(stuck).stage).toBe('paused');
     cu.status!.phase = 'Paused';
     expect(upgradeView(cu).stage).toBe('paused');
     cu.status!.phase = 'Failed';
@@ -193,6 +199,19 @@ describe('upgradeView', () => {
     const cu = clusterUpgradeInProgress();
     cu.metadata.generation = 3;
     expect(upgradeView(cu).stale).toBe(true);
+  });
+});
+
+describe('problemConditions', () => {
+  it('warns about True negative conditions and False positive ones', () => {
+    const shown = problemConditions([
+      { type: 'Degraded', status: 'False', message: 'all good' },
+      { type: 'Degraded', status: 'True', message: 'graph unreachable' },
+      { type: 'GraphAvailable', status: 'False', message: 'HTTP 404' },
+      { type: 'Ready', status: 'False', message: 'upgrading' },
+      { type: 'Synced', status: 'True' },
+    ]);
+    expect(shown.map(c => c.message)).toEqual(['graph unreachable', 'HTTP 404']);
   });
 });
 
@@ -228,19 +247,51 @@ describe('nodeGuidance', () => {
     expect(g.text).toMatch(/k4all-upgrade.yaml/);
   });
 
-  it('offers Retry for an abandoned hop and a failed drain', () => {
-    const abandoned = nodeGuidance(
-      { name: 'w-1', phase: 'Failed', hostPhase: 'ABANDONED', release: 'v2.4.1' },
+  it('recognises an abandoned hop the way the operator reports it', () => {
+    // The operator leaves hostPhase empty on this path; the Node still says ABANDONED.
+    const failed = {
+      name: 'w-1',
+      phase: 'Failed',
+      release: 'v2.4.1',
+      message: 'v2.5.0 abandoned: kubeadm upgrade node failed',
+      drainStartedAt: '2026-11-17T10:00:00Z',
+    };
+    const fromNode = nodeGuidance(failed, spec, 'ABANDONED')!;
+    expect(fromNode).toMatchObject({
+      title: 'The hop was abandoned on w-1',
+      severity: 'error',
+      retry: true,
+    });
+    expect(fromNode.text).toMatch(/stays on v2.4.1/);
+    const fallback = nodeGuidance(
+      { name: 'w-1', phase: 'Failed', message: 'the hop was abandoned on the node' },
       spec
     )!;
-    expect(abandoned).toMatchObject({ severity: 'error', retry: true });
-    expect(abandoned.text).toMatch(/stays on v2.4.1/);
+    expect(fallback.title).toBe('The hop was abandoned on w-1');
+    const dropped = nodeGuidance(
+      {
+        name: 'w-1',
+        phase: 'Failed',
+        message: 'upgrade-target was removed before the hop was done',
+      },
+      spec
+    )!;
+    expect(dropped).toMatchObject({ title: 'w-1 dropped the hop', retry: true });
+  });
+
+  it('explains a drain timeout by its message, not by drainStartedAt', () => {
     const drain = nodeGuidance(
-      { name: 'w-1', phase: 'Failed', drainStartedAt: '2026-11-17T10:00:00Z' },
+      {
+        name: 'w-1',
+        phase: 'Failed',
+        message: 'drain timed out after 20 minutes, 3 pods left',
+        drainStartedAt: '2026-11-17T10:00:00Z',
+      },
       spec
     )!;
     expect(drain.title).toBe('Draining w-1 did not finish');
-    expect(drain.text).toMatch(/within 20 minutes/);
+    expect(drain.text).toMatch(/^drain timed out after 20 minutes, 3 pods left/);
+    expect(drain.text).toMatch(/then Retry. Retry drains again, for up to 20 minutes/);
     expect(drain.commands[0].command).toBe(
       'kubectl get pods -A -o wide --field-selector spec.nodeName=w-1'
     );
@@ -252,10 +303,18 @@ describe('nodeGuidance', () => {
     expect(nodeGuidance({ name: 'a', phase: 'Done' }, spec)).toBeNull();
   });
 
-  it('offers Retry only where it helps', () => {
+  it('offers Retry only where the operator acts on it', () => {
     const cu = clusterUpgradeInProgress();
     expect(canRetry(cu)).toBe(false);
+    // A failed plan (e.g. a target older than the cluster): no node to retry.
     cu.status!.phase = 'Failed';
+    cu.status!.message = "targetRelease v2.3.0 is older than the cluster's release v2.4.1";
+    expect(canRetry(cu)).toBe(false);
+    cu.status!.nodes![1] = {
+      name: 'cp-2',
+      phase: 'Failed',
+      message: 'drain timed out after 30 minutes, 1 pods left',
+    };
     expect(canRetry(cu)).toBe(true);
     cu.status!.nodes![1] = { name: 'cp-2', phase: 'Failed', hostPhase: 'HOLD' };
     expect(canRetry(cu)).toBe(false); // a hold resumes by itself

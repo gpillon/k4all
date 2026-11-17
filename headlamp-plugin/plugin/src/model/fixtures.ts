@@ -246,7 +246,7 @@ export function clusterUpgradeInProgress(): ClusterUpgradeObject {
   cu.status = {
     ...cu.status,
     phase: 'Progressing',
-    message: 'Draining cp-2',
+    message: 'v2.5.0: draining cp-2, 3 pods left',
     currentHop: 'v2.5.0',
     path: [
       { release: 'v2.4.1', kind: 'patch', phase: 'Done' },
@@ -262,6 +262,7 @@ export function clusterUpgradeInProgress(): ClusterUpgradeObject {
         role: 'control',
         release: 'v2.4.1',
         phase: 'Draining',
+        message: '3 pods left',
         drainStartedAt: '2026-11-17T10:00:00Z',
       },
       { name: 'w-1', role: 'worker', release: 'v2.4.1', phase: 'Pending' },

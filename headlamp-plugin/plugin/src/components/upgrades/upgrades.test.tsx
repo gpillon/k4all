@@ -134,7 +134,7 @@ describe('ReleaseList', () => {
     render(
       <ReleaseList cu={cu} view={upgradeView(cu)} nodes={nodes()} canPatch onChoose={vi.fn()} />
     );
-    expect(screen.getByText('v2.4.0 is the newest release')).toBeTruthy();
+    expect(screen.getByText('Nothing newer than v2.4.0')).toBeTruthy();
   });
 });
 
@@ -198,6 +198,18 @@ describe('UpgradeReviewDialog', () => {
     expect(
       screen.getByText(/Every workload, the Kubernetes API and this dashboard are down/)
     ).toBeTruthy();
+  });
+
+  it('keeps the target in the title when the dry run fails', () => {
+    const flow = flowStub({
+      kind: 'error',
+      intent: { kind: 'start', target: '2.5.0' },
+      error: { kind: 'forbidden', status: 403, message: 'Forbidden', hint: 'Not allowed.' },
+      retry: vi.fn(),
+    });
+    render(<UpgradeReviewDialog flow={flow} nodes={nodes()} nodeConfigs={[]} />);
+    expect(screen.getByRole('dialog', { name: 'Upgrade to v2.5.0' })).toBeTruthy();
+    expect(screen.getByText('Not allowed.')).toBeTruthy();
   });
 
   it('warns when it replaces a target already set', () => {
@@ -275,11 +287,41 @@ describe('UpgradeProgressPanel', () => {
   it('offers Retry after a failed drain', () => {
     const cu = clusterUpgradeInProgress();
     cu.status!.phase = 'Failed';
-    cu.status!.nodes![1] = { ...cu.status!.nodes![1], phase: 'Failed' };
+    cu.status!.nodes![1] = {
+      ...cu.status!.nodes![1],
+      phase: 'Failed',
+      message: 'drain timed out after 30 minutes, 3 pods left',
+    };
     const flow = renderPanel(cu);
     expect(screen.getByText('Draining cp-2 did not finish')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0]);
     expect(flow.retry).toHaveBeenCalled();
+  });
+
+  it('reads ABANDONED from the Node when the operator reports only a failure', () => {
+    const cu = clusterUpgradeInProgress();
+    cu.status!.phase = 'Failed';
+    cu.status!.nodes![1] = {
+      name: 'cp-2',
+      role: 'control',
+      release: 'v2.4.1',
+      phase: 'Failed',
+      message: 'v2.5.0 abandoned: disk full',
+    };
+    const withAnnotation = nodes();
+    withAnnotation[1].metadata.annotations!['k4all.magesgate.com/upgrade-phase'] = 'ABANDONED';
+    render(
+      <UpgradeProgressPanel
+        cu={cu}
+        view={upgradeView(cu)}
+        nodes={withAnnotation}
+        flow={flowStub({ kind: 'idle' })}
+        canPatch
+        now={now}
+      />
+    );
+    expect(screen.getByText('The hop was abandoned on cp-2')).toBeTruthy();
+    expect(screen.getByText('Abandoned')).toBeTruthy(); // host phase column
   });
 
   it('resumes a paused upgrade', () => {

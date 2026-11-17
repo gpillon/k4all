@@ -30,13 +30,16 @@ export function UpgradeSettingsDialog(props: {
   const [cont, setCont] = React.useState(false);
   const [graph, setGraph] = React.useState('');
 
+  // Fill the form when the dialog opens, not on every watch update: the
+  // operator writes the status (and Headlamp a new object) while a drain runs.
   React.useEffect(() => {
     if (props.open) {
       setTimeoutText(String(spec.drain?.timeoutMinutes || DEFAULT_DRAIN_TIMEOUT_MINUTES));
       setCont(spec.drain?.continueOnTimeout === true);
       setGraph(spec.graphUrl ?? '');
     }
-  }, [props.open, spec]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.open]);
 
   const minutes = Number(timeout);
   const timeoutError =

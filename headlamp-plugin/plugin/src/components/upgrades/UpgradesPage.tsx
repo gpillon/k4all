@@ -35,6 +35,7 @@ import {
   DEFAULT_DRAIN_TIMEOUT_MINUTES,
   drainBehaviour,
   estimate,
+  problemConditions,
   upgradeOrder,
   UpgradeView,
   upgradeView,
@@ -175,9 +176,7 @@ function StageBanner(props: {
   canPatch: boolean;
 }) {
   const { cu, view, flow, canPatch } = props;
-  const failedConditions = (cu.status?.conditions ?? []).filter(
-    c => c.status === 'False' && c.message && !['Ready', 'Progressing'].includes(c.type)
-  );
+  const failedConditions = problemConditions(cu.status?.conditions);
   return (
     <Stack spacing={1.5} sx={{ mb: 2 }}>
       {view.stage === 'waiting' && (
@@ -205,6 +204,8 @@ function StageBanner(props: {
         >
           <AlertTitle>The upgrade stopped</AlertTitle>
           {cu.status?.message || 'A node needs attention: see below.'}
+          {!(cu.status?.nodes ?? []).some(n => n.phase === 'Failed') &&
+            ' Choose another target below, or Stop the upgrade.'}
         </Alert>
       )}
       {view.stage === 'paused' && (
@@ -243,7 +244,7 @@ function StageBanner(props: {
       {failedConditions.map(c => (
         <Alert key={c.type} severity="warning">
           <AlertTitle>{c.reason || c.type}</AlertTitle>
-          {c.message}
+          {c.message || `${c.type} is ${c.status}.`}
         </Alert>
       ))}
     </Stack>

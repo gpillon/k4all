@@ -177,10 +177,11 @@ export function ReleaseList(props: {
           <Icon icon="mdi:check-circle-outline" width={28} height={28} />
           <Box>
             <Typography sx={{ fontWeight: 600 }}>
-              {current ? `${current} is the newest release` : 'No newer release'}
+              {current ? `Nothing newer than ${current}` : 'No newer release'}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              k4all-operator reads the upgrade graph regularly; new releases show up here.
+              New releases of the upgrade graph show up here. If you expected one, check that
+              k4all-operator can read the graph (How upgrades run).
             </Typography>
           </Box>
         </Stack>

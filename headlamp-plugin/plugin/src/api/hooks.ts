@@ -65,6 +65,8 @@ export function useK4allDiscovery(): K4allDiscovery {
   const cluster = Utils.getCluster() ?? '';
   const [state, setState] = React.useState<K4allDiscovery>(() => discoveryFromCache(cluster));
   React.useEffect(() => {
+    // Another cluster: forget the previous answer until this one is known.
+    setState(discoveryFromCache(cluster));
     const cached = groupResources.get(cluster);
     if (cached && cached.has('clusterupgrades')) {
       setState({ present: true, resources: cached });
@@ -137,8 +139,10 @@ export function useClusterUpgrade(): ClusterUpgradeData {
 
 /** SelfSubjectAccessReview for patch on the ClusterUpgrade k4all; null while asking. */
 export function useCanPatchClusterUpgrade(): boolean | null {
+  const cluster = Utils.getCluster() ?? '';
   const [allowed, setAllowed] = React.useState<boolean | null>(null);
   React.useEffect(() => {
+    setAllowed(null);
     let cancelled = false;
     // Named: a role may grant patch on resourceNames [k4all] only.
     ClusterUpgrade.getAuthorization('patch', { name: CLUSTER_UPGRADE_NAME })
@@ -152,7 +156,7 @@ export function useCanPatchClusterUpgrade(): boolean | null {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [cluster]);
   return allowed;
 }
 

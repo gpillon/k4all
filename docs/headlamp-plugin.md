@@ -83,12 +83,17 @@ need `ssh` to it and `sudo`.
   the node plans on a different upgrade graph than the cluster. The graph in
   the upgrade settings must be the one in `/etc/k4all-upgrade.yaml` on the
   nodes.
-- **Abandoned**: the hop was given up on the node. **Retry** asks the node to
-  run it again.
+- **Abandoned**: the hop was given up on the node. **Retry** drains the node
+  again and asks it for the hop.
 - **Drain did not finish**: find the pods left on the node
   (`kubectl get pods -A -o wide --field-selector spec.nodeName=<node>`) and
   the PodDisruptionBudgets that hold them, move or delete them, then
-  **Retry**.
+  **Retry**. Or turn on "continue when the drain times out" in the upgrade
+  settings, then **Retry**: the drain starts over and, at the timeout, the
+  hop runs anyway.
+- **The upgrade stopped without a stuck node** (for example a target older
+  than the cluster, or a node without the k4all-upgrade annotations): the
+  page shows k4all-operator's message. Choose another target, or **Stop**.
 
 ### Before v2.4.0
 

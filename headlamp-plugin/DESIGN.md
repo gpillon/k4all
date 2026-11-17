@@ -1,6 +1,6 @@
 # k4all Headlamp plugin: design
 
-Status: built and unit-tested (233 tests), not yet run against a live
+Status: built and unit-tested (237 tests), not yet run against a live
 cluster. Ships from k4all v2.4.0 (k4all-operator v0.4.0, Headlamp chart
 0.46.0, Kubernetes 1.35 and later). User guide: `docs/headlamp-plugin.md`.
 Packaging and release: `DISTRIBUTION.md`.
@@ -385,9 +385,15 @@ that the operator creates (v0.4.0+).
   before the operator lists them, the Nodes (node-type annotation, NodeConfig,
   control-plane label).
 - **View**: one stage per state: waiting (no phase yet), available /
-  up to date (Idle), progressing, pausing (Progressing with `spec.paused`),
-  paused, failed, succeeded; `stale` while `observedGeneration < generation`.
-- **Guidance** per node:
+  up to date (Idle), progressing, pausing (Progressing with `spec.paused`
+  and a node still draining or upgrading), paused, failed, succeeded;
+  `stale` while `observedGeneration < generation`.
+- **Guidance** per node, matched to what the operator's controller
+  (`internal/clusterupgrade/decide.go`) reports: it copies the host phase
+  only while the node has a hop request, so HOLD and ROLLBACK_REBOOT come as
+  `hostPhase`, while an abandoned or dropped hop and a drain timeout come as
+  phase Failed with an empty `hostPhase` and a message; the Node's own
+  `upgrade-phase` annotation (ABANDONED) is read as well:
   - HOLD: the HOLD message, then on the node `sudo k4all-upgrade status`,
     `sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume`, or
     `sudo k4all-upgrade clear-hold --abandon`; the upgrade goes on by
@@ -395,12 +401,19 @@ that the operator creates (v0.4.0+).
   - HOLD whose message starts with `upgrade-target` (the node refused the
     target): the graphs differ; `sudo k4all-upgrade plan`; the node retries
     every minute;
-  - ABANDONED: the node stays on its release; Retry or Stop;
+  - ABANDONED (Node annotation, or the message "…abandoned on the node"),
+    and "upgrade-target was removed before the hop was done": the node stays
+    on its release; Retry (drains again and asks for the hop) or Stop;
   - ROLLBACK_REBOOT: the node goes back to its previous image and then holds;
-  - Failed with `drainStartedAt`: the drain timed out; `kubectl get pods
-    -A -o wide --field-selector spec.nodeName=<node>`, `kubectl get pdb -A`;
-    Retry, or continue on timeout;
+  - "drain timed out …": `kubectl get pods -A -o wide --field-selector
+    spec.nodeName=<node>`, `kubectl get pdb -A`; Retry, or turn on
+    continue-on-timeout and then Retry (a failed node stays failed until a
+    retry, which drains again for a full timeout);
   - other Failed: the message, `k4all-upgrade status`, Retry.
+  Retry is offered only when a node is Failed outside a HOLD: the operator
+  reads the annotation only for such a node. A failed plan (target older than
+  the cluster, no path, a node without the k4all-upgrade annotations) shows
+  the operator's message with "choose another target, or Stop".
 - **Writes** are built from the user's intent (start vX with drain options,
   settings, pause, resume, stop) on the current object: `desiredSpec` →
   `buildSpecPatch` (generation test + minimal ops). Fields the plugin does
@@ -589,11 +602,11 @@ tagged, if possible).
 | **O-7** | operator v0.5.0 | CNI switch and OVS bridge on/off on the existing fields `networking.cni.type` and `features.ovsBridge.enabled` (the plugin's controls turn on by version, 4.1), with progress in status | read-only with "coming with k4all-operator v0.5.0" |
 | **U-1** | `ReleaseInfo` | Add `minFrom` (and `crio`): the plugin then plans the exact path the operator and the nodes will take before the target is set, and shows the CRI-O change per hop | path from the versioning rules, labelled as such (4.3) |
 | **U-2** | status | The current release's own `ReleaseInfo` (Kubernetes, Fedora, CRI-O), e.g. `status.current` | taken from the nodes' kubelet, osImage and runtime |
-| **U-3** | `nodes[]` | A machine-readable `reason` for Failed (`DrainTimeout`, `Hold`, `Abandoned`, `TargetRefused`, …) | guessed from `hostPhase`, `drainStartedAt` and the message prefix `upgrade-target` |
-| **U-4** | retry annotation | Document that it also restarts an ABANDONED hop (the host side treats a re-written target as a retry) and any Failed node, not only drains | Retry offered for drains and abandoned hops |
+| **U-3** | `nodes[]` | A machine-readable `reason` for Failed (`DrainTimeout`, `Hold`, `Abandoned`, `TargetRemoved`, `TargetRefused`, …), and `hostPhase` copied in the drain path too (today `drain()` leaves it empty, so an abandoned hop shows no ABANDONED) | recognised from the message texts ("drain timed out", "abandoned on the node", "upgrade-target was removed", prefix `upgrade-target`) and the Node's `upgrade-phase` annotation: a wording change in the operator breaks it |
+| **U-4** | retry annotation | Document what it retries: a Failed node without a hop request (drain timeout, abandoned or dropped hop), draining it again for a full timeout; not a HOLD, not a failed plan | Retry offered exactly there |
 | **U-5** | `path[]`, `nodes[]` | `startedAt`/`completedAt` per hop and per node (or a node `lastTransitionTime`) | no elapsed time per hop or node, only the drain timer |
-| **U-6** | conditions | Document the condition types (e.g. `GraphAvailable=False` when the graph cannot be read, `Progressing`, `Degraded`) | any condition with status False and a message is shown as a warning |
-| **U-7** | status | Keep `availableReleases` filled while Idle and Succeeded (the target list), and say when the graph is unreachable | "no newer release" otherwise |
+| **U-6** | conditions | Set conditions (e.g. `GraphAvailable=False` with the error, `Progressing`, `Degraded`); the controller keeps `status.conditions` but sets none | False conditions, and True negative ones, are shown as warnings |
+| **U-7** | status | With no target, an unreadable graph leaves phase Idle, no message and no `availableReleases`: indistinguishable from "up to date". Say it (message or U-6 condition) in every phase | the empty list says "nothing newer… if you expected one, check that k4all-operator can read the graph" |
 | **H-1** | `k4all-upgrade` | Node annotations for release and HOLD reason. **Done** in the v2.4.0 host tool (`release`, `upgrade-phase`, `upgrade-message`). | shown on Overview, Upgrades and the Node page |
 | **H-2** | `k4all-upgrade` `merge_release_manifest` | Make the Removed rule explicit: keep a cluster-side `management: Removed` unless the release changed that component's management itself | the UI warns that a release can set it back |
 | **H-3** | node scripts | Proxy: read `spec.proxy` from the ClusterConfig on boot (or document it as install-time in the CRD) | read-only with explanation |
@@ -681,7 +694,7 @@ npm ci
 npm run lint && npm run tsc && npm test && npm run build   # dist/main.js
 ```
 
-Tests: 233 (vitest, jsdom). The model tests cover patch generation and
+Tests: 237 (vitest, jsdom). The model tests cover patch generation and
 application, preconditions, rebase/conflicts, the editor reducer, the
 ingress controller of the release (ingress-nginx and Traefik), Traefik
 fallback/mirror/exposure, capabilities, overrides form round-trips
@@ -713,9 +726,19 @@ overrides of one component could be saved into the next one); and closing the
 dialog during a dry run let the result reopen it. The upgrade flow uses the
 same session guard.
 
+A second independent review compared the Upgrades page with the operator's
+controller (`feat/cluster-upgrade`, `decide.go`) and found that abandoned
+hops and drain timeouts were told apart wrongly (fixed: by message and Node
+annotation, not by `drainStartedAt`), Retry was offered for failed plans
+where the operator ignores it (fixed), the upgrade settings form reset on
+every status write (fixed: filled when it opens), and smaller issues (a
+bounded conflict loop, "Try again" on the newest object, discovery and
+permissions following a cluster switch, "pausing" only with a node in
+flight, the "target already set" warning only while an upgrade is active),
+all fixed.
+
 Not done: a run against a live Headlamp/cluster (planned on the lab cluster,
-see DISTRIBUTION.md), and against the real ClusterUpgrade controller (its
-branch has the API with a scaffold controller).
+see DISTRIBUTION.md) with the real ClusterUpgrade controller.
 
 ## 11. Later
 

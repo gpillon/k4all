@@ -34,6 +34,7 @@ import {
   DEFAULT_DRAIN_TIMEOUT_MINUTES,
   drainBehaviour,
   estimate,
+  normalizeRelease,
   planPath,
   upgradeOrder,
 } from '../../model/upgrades';
@@ -159,30 +160,33 @@ function StartPlan(props: {
         )}
       </Section>
 
-      <Section icon="mdi:restart" title="Reboots and downtime">
-        <Stack spacing={0.75}>
-          <Typography variant="body2">
-            <b>
-              {est.reboots} reboot{est.reboots === 1 ? '' : 's'}
-            </b>{' '}
-            in total ({est.hops} hop{est.hops === 1 ? '' : 's'} × {est.nodes} node
-            {est.nodes === 1 ? '' : 's'}). Expect roughly {est.minutes[0]}–{est.minutes[1]} minutes
-            {est.singleNode ? '' : ', plus the drains'}; the image download speed decides most of
-            it.
-          </Typography>
-          {est.notes.map(n => (
-            <Typography key={n} variant="body2" color="text.secondary">
-              {n}
+      {plan.hops.length > 0 && (
+        <Section icon="mdi:restart" title="Reboots and downtime">
+          <Stack spacing={0.75}>
+            <Typography variant="body2">
+              <b>
+                {est.reboots} reboot{est.reboots === 1 ? '' : 's'}
+              </b>{' '}
+              in total ({est.hops} hop{est.hops === 1 ? '' : 's'} × {est.nodes} node
+              {est.nodes === 1 ? '' : 's'}). Expect roughly {est.minutes[0]}–{est.minutes[1]}{' '}
+              minutes
+              {est.singleNode ? '' : ', plus the drains'}; the image download speed decides most of
+              it.
             </Typography>
-          ))}
-          <Typography variant="body2" color="text.secondary">
-            This page loses its connection while the node that runs Headlamp reboots; it comes back
-            by itself, or reload it.
-            {k8sMinor &&
-              ' Hops that change the Kubernetes minor run kubeadm upgrade on each node before its reboot.'}
-          </Typography>
-        </Stack>
-      </Section>
+            {est.notes.map(n => (
+              <Typography key={n} variant="body2" color="text.secondary">
+                {n}
+              </Typography>
+            ))}
+            <Typography variant="body2" color="text.secondary">
+              This page loses its connection while the node that runs Headlamp reboots; it comes
+              back by itself, or reload it.
+              {k8sMinor &&
+                ' Hops that change the Kubernetes minor run kubeadm upgrade on each node before its reboot.'}
+            </Typography>
+          </Stack>
+        </Section>
+      )}
     </Stack>
   );
 }
@@ -236,12 +240,14 @@ export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewD
     }
   };
 
+  const intent =
+    phase.kind === 'review' || phase.kind === 'applying'
+      ? phase.data.intent
+      : phase.kind === 'dryRun' || phase.kind === 'error'
+      ? phase.intent
+      : null;
   const title =
-    data?.intent.kind === 'start'
-      ? `Upgrade to ${data.desired.targetRelease}`
-      : phase.kind === 'dryRun' && phase.intent.kind === 'start'
-      ? `Upgrade to ${phase.intent.target}`
-      : 'Upgrade settings';
+    intent?.kind === 'start' ? `Upgrade to ${normalizeRelease(intent.target)}` : 'Upgrade settings';
 
   return (
     <Dialog
@@ -282,12 +288,14 @@ export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewD
                 review is built on the newest version: check it again.
               </Alert>
             )}
-            {data.base.spec?.targetRelease && data.intent.kind === 'start' && (
-              <Alert severity="warning">
-                An upgrade to <Mono>{data.base.spec.targetRelease}</Mono> is already set. This
-                replaces its target; a node in the middle of a hop finishes it first.
-              </Alert>
-            )}
+            {data.base.spec?.targetRelease &&
+              data.intent.kind === 'start' &&
+              ['Progressing', 'Paused', 'Failed'].includes(data.base.status?.phase ?? '') && (
+                <Alert severity="warning">
+                  An upgrade to <Mono>{data.base.spec.targetRelease}</Mono> is already set. This
+                  replaces its target; a node in the middle of a hop finishes it first.
+                </Alert>
+              )}
             {data.intent.kind === 'start' && (
               <StartPlan
                 data={data}
