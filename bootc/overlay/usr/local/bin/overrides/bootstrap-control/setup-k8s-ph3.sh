@@ -3,7 +3,13 @@ set -euxo pipefail
 
 if [ -f "/opt/k4all/setup-ph3-reset-kube.done" ]; then
   echo "Kubernetes setup phase 3 reset Kube already done. Skipping."
-else 
+elif [ -f /etc/kubernetes/admin.conf ] || [ -d /var/lib/etcd/member ] \
+     || [ -f /opt/k4all/restore.done ]; then
+  # A cluster already lives here (an earlier install, or a restore from
+  # backup): `kubeadm reset` would wipe its PKI and etcd.
+  echo "Existing cluster state found; not running kubeadm reset."
+  touch /opt/k4all/setup-ph3-reset-kube.done
+else
   kubeadm reset --force
   touch /opt/k4all/setup-ph3-reset-kube.done
   rm -rf /opt/k4all/setup-ph3.done

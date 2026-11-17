@@ -323,7 +323,7 @@ log "Restoring backup from: ${BACKUP_HOSTNAME} (${BACKUP_NODE_TYPE} node, K4All 
 # --- Restore configuration files ---
 log "Restoring K4All configuration files..."
 if [ -d "$WORK_DIR/config" ]; then
-    for f in k4all-config.json node-type k4all-release.yaml k8s-config.yaml; do
+    for f in k4all-config.json k4all-config.yaml k4all-upgrade.yaml node-type k4all-release.yaml k8s-config.yaml; do
         if [ -f "$WORK_DIR/config/$f" ]; then
             cp -f "$WORK_DIR/config/$f" "/etc/$f"
             log "  + /etc/$f"

@@ -77,8 +77,16 @@ fi
 # Create the thin pool required by the TopoLVM release manifest even when the
 # Anaconda addon already created vg_data during installation.
 if ! lvdisplay vg_data/thin-pool &>/dev/null; then
-    echo "Creating thin pool vg_data/thin-pool..."
-    lvcreate -l 100%FREE -T -n thin-pool vg_data
+    existing_lvs=$(lvs --noheadings -o lv_name vg_data 2>/dev/null | wc -w)
+    if [ "$existing_lvs" -gt 0 ]; then
+        # Clusters installed before the thin pool existed keep their thick
+        # TopoLVM volumes; a thin pool over 100%FREE would starve them.
+        echo "WARNING: vg_data holds $existing_lvs volume(s) and no thin pool;"
+        echo "         not creating one. Existing thick volumes stay usable."
+    else
+        echo "Creating thin pool vg_data/thin-pool..."
+        lvcreate -l 100%FREE -T -n thin-pool vg_data
+    fi
 else
     echo "Thin pool vg_data/thin-pool already exists."
 fi

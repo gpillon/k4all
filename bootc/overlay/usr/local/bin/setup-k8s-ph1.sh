@@ -34,9 +34,12 @@ if [ ${#MISSING[@]} -gt 0 ]; then
 fi
 
 echo "Extracting images from cache..."
-for img in /var/opt/k4all/.imagecache/*.tar; do
+# /usr/local/share/k4all-images ships with the image (and is updated by bootc);
+# /var/opt/k4all/.imagecache is where images before v2.2.4 put them.
+for img in /usr/local/share/k4all-images/*.tar /var/opt/k4all/.imagecache/*.tar; do
+    [ -f "$img" ] || continue
     podman load -i "$img"
-    rm -f "$img"
+    case "$img" in /var/*) rm -f "$img" ;; esac
     echo "Extracted $img"
 done
 

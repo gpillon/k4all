@@ -3,10 +3,9 @@ kind: ClusterConfiguration
 networking:
   podSubnet: "10.100.0.1/18"
   serviceSubnet: "10.96.0.0/16"
-controllerManager:
-  extraArgs:
-  - name: flex-volume-plugin-dir
-    value: /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
+# No flex-volume-plugin-dir for the controller-manager: kubeadm 1.36 dropped
+# the integrated mount, and k4all uses no attachable flex volumes.
+controllerManager: {}
 apiServer: {}
 caCertificateValidityPeriod: 87600h0m0s
 certificateValidityPeriod: 8760h0m0s

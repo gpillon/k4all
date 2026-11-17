@@ -58,6 +58,11 @@ if [ -f "$K4ALL_CONFIG_FILE" ]; then
   echo "Setting pod network to $POD_NET and service network to $SVC_NET"
   yq e '(select(.kind == "ClusterConfiguration") | .networking.podSubnet) = "'"$POD_NET"'"' -i "$K8S_CONFIG"
   yq e '(select(.kind == "ClusterConfiguration") | .networking.serviceSubnet) = "'"$SVC_NET"'"' -i "$K8S_CONFIG"
+  # Pin the control plane to the kubelet shipped in the image. Without it
+  # kubeadm looks up "stable-1" online and the control plane may start on a
+  # different patch than the kubelet and the pre-pulled images.
+  K8S_VERSION=$(kubelet --version | awk '{print $2}')
+  yq e '(select(.kind == "ClusterConfiguration") | .kubernetesVersion) = "'"$K8S_VERSION"'"' -i "$K8S_CONFIG"
 fi
 
 kubeadm init --config /etc/k8s-config.yaml

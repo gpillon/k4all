@@ -23,7 +23,7 @@ get_component_version() {
     local rf
     rf=$(_k4all_release_file)
     [ -z "$rf" ] && return 1
-    yq e ".components.${component}.version" "$rf" 2>/dev/null
+    yq e ".spec.components.${component}.version" "$rf" 2>/dev/null
 }
 
 get_component_repo() {
@@ -31,7 +31,7 @@ get_component_repo() {
     local rf
     rf=$(_k4all_release_file)
     [ -z "$rf" ] && return 1
-    yq e ".components.${component}.repo // .components.${component}.source" "$rf" 2>/dev/null
+    yq e ".spec.components.${component}.repo // .spec.components.${component}.source" "$rf" 2>/dev/null
 }
 
 get_component_source() {
@@ -39,7 +39,7 @@ get_component_source() {
     local rf
     rf=$(_k4all_release_file)
     [ -z "$rf" ] && return 1
-    yq e ".components.${component}.source" "$rf" 2>/dev/null
+    yq e ".spec.components.${component}.source" "$rf" 2>/dev/null
 }
 
 get_component_chart() {
@@ -47,7 +47,7 @@ get_component_chart() {
     local rf
     rf=$(_k4all_release_file)
     [ -z "$rf" ] && return 1
-    yq e ".components.${component}.chart" "$rf" 2>/dev/null
+    yq e ".spec.components.${component}.chart" "$rf" 2>/dev/null
 }
 
 get_component_namespace() {
@@ -55,7 +55,7 @@ get_component_namespace() {
     local rf
     rf=$(_k4all_release_file)
     [ -z "$rf" ] && return 1
-    yq e ".components.${component}.namespace" "$rf" 2>/dev/null
+    yq e ".spec.components.${component}.namespace" "$rf" 2>/dev/null
 }
 
 get_component_version_url() {
@@ -63,7 +63,7 @@ get_component_version_url() {
     local rf
     rf=$(_k4all_release_file)
     [ -z "$rf" ] && return 1
-    yq e ".components.${component}.versionUrl" "$rf" 2>/dev/null
+    yq e ".spec.components.${component}.versionUrl" "$rf" 2>/dev/null
 }
 
 get_component_custom_args() {
@@ -72,7 +72,7 @@ get_component_custom_args() {
     rf=$(_k4all_release_file)
     [ -z "$rf" ] && return 1
     local args
-    args=$(yq e ".components.${component}.custom.helmArgs // [] | .[]" "$rf" 2>/dev/null)
+    args=$(yq e ".spec.components.${component}.custom.helmArgs // [] | .[]" "$rf" 2>/dev/null)
     echo "$args"
 }
 
@@ -82,7 +82,7 @@ get_component_helm_args() {
     rf=$(_k4all_release_file)
     [ -z "$rf" ] && return 1
     local args
-    args=$(yq e ".components.${component}.helmArgs // [] | .[]" "$rf" 2>/dev/null)
+    args=$(yq e ".spec.components.${component}.helmArgs // [] | .[]" "$rf" 2>/dev/null)
     echo "$args"
 }
 

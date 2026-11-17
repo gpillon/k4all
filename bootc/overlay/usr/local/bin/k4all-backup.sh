@@ -153,6 +153,8 @@ mkdir -p "$WORK_DIR/config"
 
 for f in \
     /etc/k4all-config.json \
+    /etc/k4all-config.yaml \
+    /etc/k4all-upgrade.yaml \
     /etc/node-type \
     /etc/k4all-release.yaml \
     /etc/k8s-config.yaml \

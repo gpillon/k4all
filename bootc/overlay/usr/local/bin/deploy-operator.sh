@@ -80,8 +80,8 @@ deploy_operator() {
     if [ -z "$source_template" ] || [ "$source_template" = "null" ]; then
         echo "WARNING: k4all-operator source not found in release manifest"
         echo "Attempting to apply baked-in operator manifests..."
-        if [ -f /usr/local/share/k4all-operator/install.yaml ]; then
-            kubectl apply -f /usr/local/share/k4all-operator/install.yaml
+        if [ -f /usr/local/share/k4all-operator-install.yaml ]; then
+            kubectl apply -f /usr/local/share/k4all-operator-install.yaml
             echo "Baked-in operator manifests applied."
             return
         fi
@@ -94,7 +94,9 @@ deploy_operator() {
         version_url=$(yq e '.spec.components.k4all-operator.versionUrl' "$RELEASE_MANIFEST")
         if [ -n "$version_url" ] && [ "$version_url" != "null" ]; then
             echo "Resolving latest version from $version_url ..."
-            version=$(curl -sL "$version_url" | yq e '.[0].tag_name' -)
+            # Same rule as the operator's resolver: newest stable release
+            version=$(curl -sL "$version_url" \
+                | jq -r '[.[] | select(.prerelease == false and .draft == false)][0].tag_name // empty')
             if [ -z "$version" ] || [ "$version" = "null" ]; then
                 echo "WARNING: Could not resolve latest version, using 'latest' tag"
                 version="latest"
