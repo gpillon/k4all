@@ -1,0 +1,47 @@
+# k4all Headlamp plugin image: ghcr.io/gpillon/k4all-headlamp-plugin:<version>
+#
+# A tiny image that only carries the built plugin at
+#   /plugins/k4all-headlamp-plugin/{main.js,package.json}
+# Headlamp's pod copies it into its plugins directory with an initContainer
+# (the headlamp component values in k4all-release.yaml; DISTRIBUTION.md).
+# The same image also works as a Kubernetes image volume.
+#
+# Build context: this folder (headlamp-plugin/).
+#   podman build -f Containerfile --build-arg PLUGIN_VERSION=0.1.0 \
+#     -t ghcr.io/gpillon/k4all-headlamp-plugin:0.1.0 .
+# CI (.github/workflows/headlamp-plugin.yaml) builds it for amd64 and arm64
+# on a headlamp-plugin-v<version> tag, after lint, type check and tests.
+#
+# The JavaScript is architecture independent, so it is built once on the
+# build platform; only the small runtime base differs per architecture, and
+# the final stage runs nothing, so no emulation is needed.
+
+ARG NODE_IMAGE=docker.io/library/node:22-alpine
+ARG BASE_IMAGE=docker.io/library/busybox:1.37-musl
+
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS build
+WORKDIR /src
+# Dependencies first, for layer caching. package-lock.json pins the toolchain.
+COPY plugin/package.json plugin/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY plugin/tsconfig.json ./
+COPY plugin/src ./src
+RUN npm run build \
+ && mkdir -p /out/k4all-headlamp-plugin \
+ && cp dist/main.js package.json /out/k4all-headlamp-plugin/ \
+ && test -s /out/k4all-headlamp-plugin/main.js
+
+FROM ${BASE_IMAGE}
+ARG PLUGIN_VERSION=dev
+LABEL org.opencontainers.image.title="k4all Headlamp plugin" \
+      org.opencontainers.image.description="Headlamp plugin to manage and upgrade k4all clusters, copied into Headlamp's plugins directory by an initContainer" \
+      org.opencontainers.image.source="https://github.com/gpillon/k4all" \
+      org.opencontainers.image.licenses="GPL-3.0-only" \
+      org.opencontainers.image.version="${PLUGIN_VERSION}" \
+      io.k4all.headlamp-plugin.version="${PLUGIN_VERSION}" \
+      io.k4all.headlamp-plugin.path="/plugins/k4all-headlamp-plugin"
+COPY --from=build /out/k4all-headlamp-plugin/ /plugins/k4all-headlamp-plugin/
+# Headlamp's uid/gid in its own image and chart (securityContext 100:101).
+USER 100:101
+# Default command for the initContainer: copy into the mounted plugins volume.
+CMD ["sh", "-c", "cp -R /plugins/k4all-headlamp-plugin/. /k4all-plugin/"]
