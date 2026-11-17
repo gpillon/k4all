@@ -22,12 +22,39 @@ on:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/k4all-bootc
+  # :latest is frozen. Nodes installed from local builds track it with
+  # bootc's auto-update timer still active (before v2.2.4), so moving it to a
+  # release that changes Kubernetes would reboot them into it without
+  # kubeadm. It moves only to the bridge release, once; never past it.
+  LATEST_PIN: v2.2.4
 
 jobs:
+  # ------------------------------------------------------------------
+  # 0. Unit and contract tests — gate every build
+  # ------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: python3 -m pip install --user pytest pyyaml
+
+      - name: Upgrade tool, graph and image contract tests
+        run: python3 -m pytest -q bootc/tests/upgrade
+
+      - name: Anaconda addon tests
+        # From the addon directory: the tests import com_k4all_installer
+        # from there.
+        working-directory: k4all-anaconda-addon
+        run: python3 -m pytest -q tests
+
   # ------------------------------------------------------------------
   # 1. Build the bootc OCI image (per arch) — always runs
   # ------------------------------------------------------------------
   build-image:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -90,18 +117,8 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           RELEASE_FILE="bootc/overlay/usr/local/share/k4all-release.yaml"
           yq eval ".spec.osImage.imageTag = \"${VERSION}\"" -i "${RELEASE_FILE}"
-
-          # Pin k4all-operator to the latest stable (non-prerelease) release
-          OPERATOR_TAG=$(curl -fsSL https://api.github.com/repos/gpillon/k4all-operator/releases \
-            | jq -r '[.[] | select(.prerelease == false and .draft == false)] | first | .tag_name // empty')
-          if [ -n "$OPERATOR_TAG" ]; then
-            echo "Pinning k4all-operator to ${OPERATOR_TAG}"
-            yq eval ".spec.components.k4all-operator.version = \"${OPERATOR_TAG}\"" -i "${RELEASE_FILE}"
-          else
-            echo "WARNING: could not resolve latest stable k4all-operator release, keeping default"
-          fi
-
-          # cp "${RELEASE_FILE}" bootc/overlay/usr/local/share/k4all-release.yaml
+          # k4all-operator keeps the version committed in the file: each k4all
+          # release pins its own operator, and the image build refuses "latest".
 
       - name: Build and push (${{ matrix.arch }})
         uses: docker/build-push-action@v6
@@ -109,6 +126,8 @@ jobs:
           context: bootc
           file: bootc/Containerfile
           platforms: linux/${{ matrix.arch }}
+          build-args: |
+            K4ALL_VERSION=${{ steps.version.outputs.version }}
           push: true
           provenance: false
           tags: |
@@ -140,8 +159,8 @@ jobs:
             "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
           docker manifest push "${{ env.IMAGE_NAME }}:${VERSION}"
 
-          # Tag :latest only on release tags
-          if [ "${{ needs.build-image.outputs.is_tag }}" = "true" ]; then
+          # :latest moves only to the pinned bridge release (see LATEST_PIN)
+          if [ "${{ needs.build-image.outputs.is_tag }}" = "true" ] && [ "${VERSION}" = "${LATEST_PIN}" ]; then
             docker manifest create "${{ env.IMAGE_NAME }}:latest" \
               "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
               "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
@@ -164,7 +183,10 @@ jobs:
         mode: [attended, unattended-bootstrap, unattended-control, unattended-worker]
         include:
           - arch: amd64
-            runner: ubuntu-latest
+            # Not ubuntu-latest: on the Ubuntu 26.04 runners osbuild cannot
+            # mount /dev inside the privileged bootc-image-builder container
+            # ("mount: /run/osbuild/tree/dev: permission denied").
+            runner: ubuntu-24.04
             bib_arch: x86_64
           - arch: arm64
             runner: ubuntu-24.04-arm
@@ -291,12 +313,33 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
       - name: Download all ISO artifacts
         uses: actions/download-artifact@v4
         with:
           path: isos
           pattern: isos-*
           merge-multiple: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build upgrade graph and bridge script
+        run: |
+          python3 -m pip install --user pyyaml
+          # every listed release must already be in the registry
+          python3 bootc/upgrade/build-graph.py bootc/upgrade/releases.yaml \
+            --image "${IMAGE_NAME}" --resolve-digests --require-digests \
+            -o isos/upgrade-graph.json
+          BRIDGE_DIGEST=$(jq -r '.releases[] | select(.version == "v2.2.4") | .digest' isos/upgrade-graph.json)
+          sed "s|@@BRIDGE_DIGEST@@|${BRIDGE_DIGEST}|" bootc/scripts/k4all-bridge.sh > isos/k4all-bridge.sh
+          chmod +x isos/k4all-bridge.sh
 
       - name: List release assets
         run: ls -lh isos/
@@ -331,21 +374,30 @@ jobs:
             If the ISO was split (x86_64), reassemble first: `cat <file>.iso.zst.part-* > <file>.iso.zst`
 
             #### Windows
-            - combine the ISOs using the following command: `copy /b k4all-attended-${{ needs.build-image.outputs.version }}-x86_64.iso.zst.part-* k4all-attended-v2.1.0-x86_64.iso.zst`
+            - combine the ISOs using the following command: `copy /b k4all-attended-${{ needs.build-image.outputs.version }}-x86_64.iso.zst.part-* k4all-attended-${{ needs.build-image.outputs.version }}-x86_64.iso.zst`
             - Extract the ISOs from zst using Winrar > 6.10
 
-            ### ISOs list
-
-
             ### Update existing systems
-            ```bash
-            bootc switch ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.build-image.outputs.version }}
 
-            ### Why file are split ?
-            - The ISOs are split to avoid GitHub Actions timeout when uploading the artifacts.
-            - The ISOs are split to avoid GitHub Actions timeout when downloading the artifacts.
-            - I cant afford to pay for more storage on GitHub.
+            From v2.2.4 on, nodes upgrade themselves with `k4all-upgrade`
+            (patch releases automatically in the Saturday 02:30 window, minor
+            releases on command):
+            ```bash
+            sudo k4all-upgrade plan
+            sudo k4all-upgrade run
             ```
-          files: isos/k4all-*
+
+            Nodes on v2.0 – v2.2.3 first move to the v2.2.4 bridge, one node
+            at a time, control planes first:
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/v2.2.4/k4all-bridge.sh | sudo bash -s -- --now
+            ```
+
+            ### Why are the files split?
+            - Splitting avoids GitHub Actions timeouts when uploading and downloading the artifacts.
+            - It also keeps the release within the free GitHub storage.
+          files: |
+            isos/k4all-*
+            isos/upgrade-graph.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

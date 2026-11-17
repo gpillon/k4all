@@ -164,17 +164,18 @@ RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
     echo 'core:core' | chpasswd
 
 # Operator manifest (fallback for deploy-operator.sh) and pre-pulled images.
-# The operator follows the version pinned in k4all-release.yaml (CI stamps it).
+# The operator version is the one pinned in k4all-release.yaml. It must be a
+# release tag: with "latest", operator v0.1.x replaces itself with every new
+# stable operator release, without waiting for a k4all release.
 # Images live under /usr: bootc refreshes /usr on every upgrade, never /var,
 # and k4all-upgrade loads the next release's images from the staged image.
 RUN set -eux; \
     OPERATOR_VERSION="$(yq '.spec.components.k4all-operator.version' /usr/local/share/k4all-release.yaml)"; \
-    case "$OPERATOR_VERSION" in ""|null|latest) \
-        OPERATOR_URL="https://github.com/gpillon/k4all-operator/releases/latest/download/install.yaml"; \
-        OPERATOR_VERSION=latest ;; \
-    *) OPERATOR_URL="https://github.com/gpillon/k4all-operator/releases/download/${OPERATOR_VERSION}/install.yaml" ;; \
+    case "$OPERATOR_VERSION" in v[0-9]*) ;; \
+    *) echo "k4all-release.yaml: k4all-operator.version must be a release tag, got '${OPERATOR_VERSION}'" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "$OPERATOR_URL" -o /usr/local/share/k4all-operator-install.yaml; \
+    curl -fsSL "https://github.com/gpillon/k4all-operator/releases/download/${OPERATOR_VERSION}/install.yaml" \
+        -o /usr/local/share/k4all-operator-install.yaml; \
     mkdir -p /usr/local/share/k4all-images; \
     kubeadm config images list --kubernetes-version "v${KUBERNETES_VERSION}" > /tmp/k8s-images.txt; \
     echo "ghcr.io/gpillon/k4all-operator:${OPERATOR_VERSION}" >> /tmp/k8s-images.txt; \

@@ -330,7 +330,8 @@ spec:
     k4all-operator:
       type: manifest
       management: Managed
-      version: "latest"
+      # A release tag, never "latest" (the image build refuses it).
+      version: "v0.1.5"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system

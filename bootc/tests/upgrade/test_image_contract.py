@@ -86,6 +86,20 @@ def test_no_floating_downloads_in_the_image_build():
     assert "k4all-operator:latest'" not in text
 
 
+def test_operator_version_is_a_release_tag():
+    # "latest" makes operator v0.1.x replace itself with each new stable
+    # operator release, outside any k4all upgrade.
+    with open(os.path.join(BOOTC, "overlay", "usr", "local", "share",
+                           "k4all-release.yaml"), encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    version = doc["spec"]["components"]["k4all-operator"]["version"]
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", version), version
+    _, text = containerfile_args()
+    assert "releases/latest/download/install.yaml" not in text
+    workflow = read(REPO, ".github", "workflows", "build.yaml")
+    assert "k4all-operator.version =" not in workflow
+
+
 def test_image_records_its_release():
     _, text = containerfile_args()
     assert '"${K4ALL_VERSION}" > /usr/local/share/k4all-upgrade/version' in text
