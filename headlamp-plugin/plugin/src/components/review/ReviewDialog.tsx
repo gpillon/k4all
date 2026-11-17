@@ -226,7 +226,13 @@ export function ReviewDialog({ flow, title, warnings = [] }: ReviewDialogProps) 
             {needsAck && (
               <FormControlLabel
                 control={<Checkbox checked={ack} onChange={e => setAck(e.target.checked)} />}
-                label="I understand that this uninstalls components and can delete their data."
+                label={
+                  reviewData.items.some(
+                    i => i.severity === 'danger' && /^features\.\w+\.enabled$/.test(i.key)
+                  ) && !reviewData.items.some(i => i.key === 'features.ovsBridge.enabled')
+                    ? 'I understand that this uninstalls components and can delete their data.'
+                    : 'I understand the consequences listed above.'
+                }
               />
             )}
           </Stack>

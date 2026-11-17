@@ -45,6 +45,7 @@ import mdiSourceRepository from '@iconify/icons-mdi/source-repository';
 import mdiSync from '@iconify/icons-mdi/sync';
 import mdiTag from '@iconify/icons-mdi/tag';
 import mdiTagOutline from '@iconify/icons-mdi/tag-outline';
+import mdiTimerSand from '@iconify/icons-mdi/timer-sand';
 import mdiTrafficLightOutline from '@iconify/icons-mdi/traffic-light-outline';
 import mdiTuneVariant from '@iconify/icons-mdi/tune-variant';
 import mdiTuneVertical from '@iconify/icons-mdi/tune-vertical';
@@ -90,6 +91,7 @@ export const ICONS: Record<string, IconifyIcon> = {
   sync: mdiSync,
   tag: mdiTag,
   'tag-outline': mdiTagOutline,
+  'timer-sand': mdiTimerSand,
   'traffic-light-outline': mdiTrafficLightOutline,
   'tune-variant': mdiTuneVariant,
   'tune-vertical': mdiTuneVertical,

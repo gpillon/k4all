@@ -6,7 +6,7 @@
 import { componentActivation } from './components';
 import { fieldForPath, FIELDS } from './fields';
 import { dottedPath, getIn, isPlainObject, jsonEqual, Path } from './objects';
-import { effectiveTraefik } from './settings';
+import { activeIngress, effectiveIngress, INGRESS_LABEL } from './settings';
 import { ClusterConfigSpec, ComponentSpec } from './types';
 
 export type ChangeSeverity = 'info' | 'warning' | 'danger';
@@ -107,6 +107,20 @@ export function leafChanges(base: unknown, draft: unknown, path: Path = []): Pat
   return [path];
 }
 
+/**
+ * Install-time fields that a newer operator can change live (fields.ts
+ * liveWith): what the change does to a running cluster. They can only reach
+ * the review when the installed operator has the capability.
+ */
+const LIVE_DANGER: Record<string, string> = {
+  'networking.cni.type':
+    'k4all-operator migrates the pod network to the other CNI, node by node. Every pod loses its ' +
+    'network until it is restarted, and NetworkPolicies written for one CNI may not apply to the other.',
+  'features.ovsBridge.enabled':
+    'k4all-operator moves each node address between its interface and the ovs-bridge bridge. ' +
+    'Each node loses connectivity for a few seconds; VMs and pods on OVS networks need the bridge.',
+};
+
 export function describeChanges(
   base: ClusterConfigSpec,
   draft: ClusterConfigSpec,
@@ -134,17 +148,20 @@ export function describeChanges(
     }
   }
 
-  const tBase = effectiveTraefik(base);
-  const tDraft = effectiveTraefik(draft);
+  const controller = activeIngress(components, base);
+  const name = INGRESS_LABEL[controller];
+  const key = controller === 'nginx' ? 'ingress.nginx' : 'ingress.traefik';
+  const tBase = effectiveIngress(base, controller);
+  const tDraft = effectiveIngress(draft, controller);
   if (tBase.dedicatedIP !== tDraft.dedicatedIP) {
     add({
-      key: 'ingress.traefik.dedicatedIP',
-      label: 'Traefik address',
+      key: `${key}.dedicatedIP`,
+      label: `${name} address`,
       from: tBase.dedicatedIP || 'node address',
       to: tDraft.dedicatedIP || 'node address',
       severity: 'warning',
       consequence:
-        'Traefik is re-deployed on the new address: routes are down for a few seconds, and DNS records ' +
+        `${name} is re-deployed on the new address: routes are down for a few seconds, and DNS records ` +
         'pointing at the old address must be updated. The dashboard nip.io route is generated on the nodes ' +
         'from /etc/k4all-config.yaml and keeps the old address: reach Headlamp through its FQDN route or ' +
         'NodePort 32323 afterwards.',
@@ -152,17 +169,17 @@ export function describeChanges(
   }
   if (tBase.isDefault !== tDraft.isDefault) {
     add({
-      key: 'ingress.traefik.isDefault',
-      label: 'Traefik is the default IngressClass',
+      key: `${key}.isDefault`,
+      label: `${name} is the default IngressClass`,
       from: tBase.isDefault ? 'yes' : 'no',
       to: tDraft.isDefault ? 'yes' : 'no',
       severity: 'warning',
       consequence: tDraft.isDefault
-        ? 'Ingresses without an ingressClassName are served by Traefik.'
-        : 'Ingresses without an ingressClassName are no longer served by Traefik.',
+        ? `Ingresses without an ingressClassName are served by ${name}.`
+        : `Ingresses without an ingressClassName are no longer served by ${name}.`,
     });
   }
-  if (tBase.source !== 'traefik' && tDraft.source === 'traefik') {
+  if (controller === 'traefik' && tBase.source !== 'traefik' && tDraft.source === 'traefik') {
     add({
       key: 'ingress.traefik',
       label: 'Ingress settings key',
@@ -174,11 +191,11 @@ export function describeChanges(
   }
 
   for (const path of leafChanges(base, draft)) {
-    const key = dottedPath(path);
+    const leaf = dottedPath(path);
     if (
-      key.startsWith('ingress.traefik') ||
-      key.startsWith('ingress.nginx') ||
-      /^features\.(virt|argocd|ovsCni)\.enabled$/.test(key)
+      leaf.startsWith('ingress.traefik') ||
+      leaf.startsWith('ingress.nginx') ||
+      /^features\.(virt|argocd|ovsCni)\.enabled$/.test(leaf)
     ) {
       continue; // described above
     }
@@ -200,22 +217,30 @@ export function describeChanges(
     if (jsonEqual(before, after)) {
       continue;
     }
-    const isCilium = key.startsWith('networking.cni.cilium');
+    const isCilium = leaf.startsWith('networking.cni.cilium');
+    const fieldKey = info ? dottedPath(info.path) : leaf;
     add({
-      key: info ? dottedPath(info.path) : key,
-      label: info?.label ?? key,
+      key: fieldKey,
+      label: info?.label ?? leaf,
       from: formatValue(before, info?.fallback),
       to: formatValue(after, info?.fallback),
-      severity: info && info.mode !== 'live' ? 'danger' : isCilium ? 'warning' : 'info',
-      consequence: isCilium
-        ? 'Cilium is upgraded with the new options: its agents restart one node at a time, with a short network interruption on each.'
-        : key === 'ingress.cilium.dedicatedIP'
-        ? 'The MetalLB address pool is updated.'
-        : key === 'features.virt.emulation'
-        ? 'KubeVirt is reconfigured; running VMs keep their mode until they restart.'
-        : info?.mode === 'install' || info?.mode === 'node'
-        ? info.why
-        : undefined,
+      severity:
+        (info && info.mode !== 'live') || LIVE_DANGER[fieldKey]
+          ? 'danger'
+          : isCilium
+          ? 'warning'
+          : 'info',
+      consequence:
+        LIVE_DANGER[fieldKey] ??
+        (isCilium
+          ? 'Cilium is upgraded with the new options: its agents restart one node at a time, with a short network interruption on each.'
+          : leaf === 'ingress.cilium.dedicatedIP'
+          ? 'The MetalLB address pool is updated.'
+          : leaf === 'features.virt.emulation'
+          ? 'KubeVirt is reconfigured; running VMs keep their mode until they restart.'
+          : info?.mode === 'install' || info?.mode === 'node'
+          ? info.why
+          : undefined),
     });
   }
   return items;

@@ -1,5 +1,6 @@
 import { Alert, Stack } from '@mui/material';
 import React from 'react';
+import { Capabilities } from '../../model/capabilities';
 import { getIn, jsonEqual, Path } from '../../model/objects';
 import { Draft } from '../../model/settings';
 import { ClusterConfigStatus } from '../../model/types';
@@ -12,6 +13,8 @@ export interface SectionProps {
   disabled: boolean;
   issues: Issue[];
   status?: ClusterConfigStatus;
+  /** What the installed k4all-operator supports. */
+  caps: Capabilities;
 }
 
 export function isChanged(props: Pick<SectionProps, 'draft' | 'base'>, path: Path): boolean {

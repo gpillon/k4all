@@ -1,10 +1,20 @@
-import { Alert, Autocomplete, Chip, Stack, Switch, TextField, Typography } from '@mui/material';
+import {
+  Alert,
+  Autocomplete,
+  Chip,
+  MenuItem,
+  Select,
+  Stack,
+  Switch,
+  TextField,
+  Typography,
+} from '@mui/material';
 import React from 'react';
-import { FieldId, FIELDS } from '../../model/fields';
+import { applyModeOf, FieldId, FIELDS } from '../../model/fields';
 import { setIn } from '../../model/objects';
 import { isCilium } from '../../model/settings';
 import { NodeConfigObject } from '../../model/types';
-import { ApplyBadge, Mono, Panel, SettingRow } from '../common/ui';
+import { ApplyBadge, CapabilityChip, Mono, Panel, SettingRow } from '../common/ui';
 import { FieldMessages, isChanged, SectionProps } from './common';
 
 const TOGGLES: { id: FieldId; key: 'l2announcements' | 'hubble' | 'gatewayAPI' }[] = [
@@ -26,24 +36,69 @@ export function interfaceSuggestions(nodeConfigs: NodeConfigObject[]): string[] 
   return [...names].sort();
 }
 
+/**
+ * The CNI: install-time until k4all-operator can migrate the pod network of a
+ * running cluster (capability cniSwitch).
+ */
+function CniPanel(props: SectionProps) {
+  const { draft, update, disabled, caps } = props;
+  const info = FIELDS.cniType;
+  const live = applyModeOf(info, caps) === 'live';
+  const cni = draft.networking?.cni?.type ?? 'unknown';
+  return (
+    <Panel title="CNI" icon="mdi:lan-connect">
+      <SettingRow
+        label={info.label}
+        htmlFor={live ? 'k4all-cni-type' : undefined}
+        help={
+          live
+            ? `${info.help} Switching it migrates every node to the other CNI; pods lose their network until they restart.`
+            : `${info.help} ${info.why}`
+        }
+        badge={live ? <ApplyBadge mode="live" /> : <ApplyBadge mode="install" />}
+        changed={isChanged(props, info.path)}
+        last
+        control={
+          live ? (
+            <Select
+              id="k4all-cni-type"
+              size="small"
+              value={cni}
+              disabled={disabled}
+              onChange={e => {
+                const next = e.target.value;
+                update(d => setIn(d, info.path, next));
+              }}
+              inputProps={{ 'aria-label': 'CNI' }}
+              sx={{ minWidth: 180 }}
+            >
+              <MenuItem value="calico">calico</MenuItem>
+              <MenuItem value="cilium">cilium</MenuItem>
+            </Select>
+          ) : (
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography sx={{ fontWeight: 600, fontFamily: 'monospace' }}>{cni}</Typography>
+              <CapabilityChip id="cniSwitch" />
+            </Stack>
+          )
+        }
+      />
+    </Panel>
+  );
+}
+
 export function NetworkingSection(props: SectionProps & { nodeConfigs: NodeConfigObject[] }) {
   const { draft, update, disabled, issues } = props;
-  const cni = draft.networking?.cni?.type ?? 'unknown';
 
   if (!isCilium(draft)) {
     return (
-      <Panel title="CNI" icon="mdi:lan-connect">
-        <Stack spacing={1.5}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Typography sx={{ fontWeight: 600, textTransform: 'capitalize' }}>{cni}</Typography>
-            <ApplyBadge mode="install" />
-          </Stack>
-          <Typography variant="body2" color="text.secondary">
-            {FIELDS.cniType.why} The Cilium options (L2 announcements, Hubble, Gateway API, devices)
-            apply to Cilium clusters only.
-          </Typography>
-        </Stack>
-      </Panel>
+      <Stack spacing={2}>
+        <CniPanel {...props} />
+        <Typography variant="body2" color="text.secondary">
+          The Cilium options (L2 announcements, Hubble, Gateway API, devices) apply to Cilium
+          clusters only.
+        </Typography>
+      </Stack>
     );
   }
 
@@ -53,6 +108,7 @@ export function NetworkingSection(props: SectionProps & { nodeConfigs: NodeConfi
 
   return (
     <Stack spacing={2}>
+      <CniPanel {...props} />
       <Alert severity="info">
         These options become Cilium Helm values. Saving a change upgrades Cilium: its agents restart
         one node at a time. Anything else can still be set in <Mono>componentOverrides.cilium</Mono>

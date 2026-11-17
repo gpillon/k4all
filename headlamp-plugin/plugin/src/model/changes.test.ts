@@ -5,9 +5,14 @@ import {
   reappliedComponents,
   serverAdjustments,
 } from './changes';
-import { defaultClusterConfig, releaseManifest } from './fixtures';
+import {
+  clusterConfigV240,
+  defaultClusterConfig,
+  releaseManifest,
+  releaseManifestV240,
+} from './fixtures';
 import { setIn } from './objects';
-import { setOverride, setTraefik } from './settings';
+import { setIngress, setOverride, setTraefik } from './settings';
 
 const base = () => defaultClusterConfig().spec!;
 const components = () => releaseManifest().spec!.components!;
@@ -57,6 +62,37 @@ describe('describeChanges', () => {
       to: '192.168.1.240',
       severity: 'warning',
     });
+  });
+
+  it('names ingress-nginx on clusters that still run it', () => {
+    const spec = clusterConfigV240().spec!;
+    const items = describeChanges(
+      spec,
+      setIngress(spec, 'nginx', { dedicatedIP: '192.168.1.240', isDefault: false }),
+      releaseManifestV240().spec!.components!
+    );
+    expect(items.map(i => [i.key, i.label])).toEqual([
+      ['ingress.nginx.dedicatedIP', 'ingress-nginx address'],
+      ['ingress.nginx.isDefault', 'ingress-nginx is the default IngressClass'],
+    ]);
+  });
+
+  it('flags a CNI switch and the OVS bridge as dangerous (operator v0.5.0)', () => {
+    const items = describeChanges(
+      base(),
+      setIn(
+        setIn(base(), ['networking', 'cni', 'type'], 'cilium'),
+        ['features', 'ovsBridge', 'enabled'],
+        false
+      ),
+      components()
+    );
+    expect(items.map(i => [i.key, i.severity])).toEqual([
+      ['features.ovsBridge.enabled', 'danger'],
+      ['networking.cni.type', 'danger'],
+    ]);
+    expect(items[1].consequence).toMatch(/migrates the pod network/);
+    expect(needsAcknowledgement(items)).toBe(true);
   });
 
   it('notes the move of legacy nginx settings to the traefik key', () => {

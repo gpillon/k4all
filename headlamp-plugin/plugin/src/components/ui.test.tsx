@@ -7,8 +7,9 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import { vi } from 'vitest';
+import { Capabilities, capabilitiesOf } from '../model/capabilities';
 import { describeChanges } from '../model/changes';
-import { defaultClusterConfig, releaseManifest } from '../model/fixtures';
+import { clusterConfigV240, defaultClusterConfig, releaseManifest } from '../model/fixtures';
 import { setIn } from '../model/objects';
 import { buildSpecPatch } from '../model/patch';
 import { Draft, setTraefik } from '../model/settings';
@@ -17,12 +18,24 @@ import { ReviewDialog } from './review/ReviewDialog';
 import { SaveFlow } from './review/useSaveFlow';
 import { FeaturesSection } from './settings/FeaturesSection';
 import { IngressSection } from './settings/IngressSection';
+import { NetworkingSection } from './settings/NetworkingSection';
 
 vi.mock('@iconify/react', () => ({ Icon: () => null }));
 
-function sectionProps(draft: Draft, update = vi.fn()) {
+/** The fixtures' operator, v0.3.0: no optional capability. */
+const OLD_OPERATOR: Capabilities = capabilitiesOf('v0.3.0');
+
+function sectionProps(draft: Draft, update = vi.fn(), caps = OLD_OPERATOR) {
   const base = defaultClusterConfig().spec!;
-  return { draft, base, update, disabled: false, issues: validateSettings(draft), status: {} };
+  return {
+    draft,
+    base,
+    update,
+    disabled: false,
+    issues: validateSettings(draft),
+    status: {},
+    caps,
+  };
 }
 
 /** Runs the update function a section passed to its `update` callback. */
@@ -57,6 +70,39 @@ describe('IngressSection', () => {
     expect(screen.getByText(/Host ports 80 and 443/)).toBeTruthy();
   });
 
+  it('does not mirror the IP for operators that read the traefik key (v0.4.0+)', () => {
+    const draft = defaultClusterConfig().spec!;
+    const update = vi.fn();
+    render(<IngressSection {...sectionProps(draft, update, capabilitiesOf('v0.4.0'))} />);
+    fireEvent.change(screen.getByLabelText('Traefik dedicated IP'), {
+      target: { value: '192.168.1.240' },
+    });
+    const next = applied(update, draft);
+    expect(next.ingress?.traefik?.dedicatedIP).toBe('192.168.1.240');
+    expect(next.ingress?.nginx).toBeUndefined();
+  });
+
+  it('edits spec.ingress.nginx on clusters that run ingress-nginx (k4all v2.4.0)', () => {
+    const draft = clusterConfigV240().spec!;
+    const update = vi.fn();
+    render(
+      <IngressSection
+        {...sectionProps(draft, update, capabilitiesOf('v0.4.0'))}
+        base={draft}
+        controller="nginx"
+      />
+    );
+    expect(screen.queryByRole('button', { name: /Move to spec.ingress.traefik/ })).toBeNull();
+    expect(screen.getByText(/replaces it with Traefik/)).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'ingress-nginx is the default IngressClass' })
+    );
+    expect(applied(update, draft).ingress).toEqual({
+      nginx: { dedicatedIP: '', isDefault: false },
+      cilium: { dedicatedIP: '' },
+    });
+  });
+
   it('offers to move pre-v2.6.0 settings to spec.ingress.traefik', () => {
     const legacy: Draft = {
       networking: { cni: { type: 'calico' } },
@@ -86,6 +132,32 @@ describe('FeaturesSection', () => {
     render(<FeaturesSection {...sectionProps(draft)} components={components} />);
     expect(screen.getByText('Will be installed')).toBeTruthy();
     expect(screen.getByLabelText('Software emulation')).toBeTruthy();
+  });
+});
+
+describe('settings that need k4all-operator v0.5.0', () => {
+  const components = releaseManifest().spec!.components!;
+
+  it('keeps the OVS bridge and the CNI read-only with an older operator', () => {
+    const draft = defaultClusterConfig().spec!;
+    render(<FeaturesSection {...sectionProps(draft)} components={components} />);
+    expect(screen.queryByRole('checkbox', { name: 'OVS bridge on every node' })).toBeNull();
+    expect(screen.getByText('Coming with k4all-operator v0.5.0')).toBeTruthy();
+    render(<NetworkingSection {...sectionProps(draft)} nodeConfigs={[]} />);
+    expect(screen.queryByRole('combobox', { name: 'CNI' })).toBeNull();
+    expect(screen.getAllByText('Coming with k4all-operator v0.5.0')).toHaveLength(2);
+  });
+
+  it('turns them into controls once the operator has the capability', () => {
+    const draft = defaultClusterConfig().spec!;
+    const update = vi.fn();
+    const caps = capabilitiesOf('v0.5.0');
+    render(<FeaturesSection {...sectionProps(draft, update, caps)} components={components} />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'OVS bridge on every node' }));
+    expect(applied(update, draft).features?.ovsBridge?.enabled).toBe(false);
+    render(<NetworkingSection {...sectionProps(draft, update, caps)} nodeConfigs={[]} />);
+    expect(screen.getByRole('combobox', { name: 'CNI' })).toBeTruthy();
+    expect(screen.queryByText('Coming with k4all-operator v0.5.0')).toBeNull();
   });
 });
 

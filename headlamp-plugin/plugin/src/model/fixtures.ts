@@ -1,6 +1,9 @@
 /*
- * Test fixtures shaped like a real k4all v2.7.0 cluster: the installer's
- * default ClusterConfig and a subset of k4all-release.yaml.
+ * Test fixtures shaped like real k4all clusters: the installer's default
+ * ClusterConfig and a subset of k4all-release.yaml, for a v2.7.0 cluster
+ * (Traefik; its operator kept at v0.3.0, so the compatibility paths for
+ * older operators stay covered) and a v2.4.0 cluster (ingress-nginx,
+ * operator v0.4.0).
  */
 
 import { ClusterConfigObject, NodeLike, ReleaseManifestObject } from './types';
@@ -158,4 +161,29 @@ export function node(
       },
     },
   };
+}
+
+/** A cluster installed before v2.6.0, as k4all v2.4.0 leaves it: ingress-nginx, operator v0.4.0. */
+export function clusterConfigV240(): ClusterConfigObject {
+  const cc = defaultClusterConfig();
+  cc.spec!.ingress = { nginx: { dedicatedIP: '', isDefault: true }, cilium: { dedicatedIP: '' } };
+  return cc;
+}
+
+export function releaseManifestV240(): ReleaseManifestObject {
+  const rm = releaseManifest();
+  const components = rm.spec!.components!;
+  delete components.traefik;
+  components['ingress-nginx'] = {
+    type: 'helm',
+    version: '4.15.1',
+    dependsOn: ['cert-manager', 'metallb'],
+  };
+  components['k4all-operator'] = { type: 'manifest', version: 'v0.4.0' };
+  rm.spec!.osImage!.imageTag = 'v2.4.0-amd64';
+  const status = rm.status!.components!;
+  delete status.traefik;
+  status['ingress-nginx'] = { state: 'Installed', installedVersion: '4.15.1' };
+  status['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.4.0' };
+  return rm;
 }

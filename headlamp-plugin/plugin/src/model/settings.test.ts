@@ -1,10 +1,20 @@
-import { defaultClusterConfig } from './fixtures';
 import {
+  clusterConfigV240,
+  defaultClusterConfig,
+  releaseManifest,
+  releaseManifestV240,
+} from './fixtures';
+import { setIn } from './objects';
+import {
+  activeIngress,
   adoptTraefikKey,
   draftFrom,
+  effectiveIngress,
   effectiveTraefik,
   emulationMode,
   getOverride,
+  ingressExposure,
+  setIngress,
   setOverride,
   setTraefik,
   traefikExposure,
@@ -167,5 +177,50 @@ describe('traefikExposure (mirror of the operator Traefik hook)', () => {
     expect(traefikExposure(setTraefik(spec(), { isDefault: false })).kind).toBe(
       'loadbalancer-node'
     );
+  });
+});
+
+describe('ingress-nginx clusters (k4all v2.4.0 and v2.5.x)', () => {
+  it('finds the active controller in the ReleaseManifest', () => {
+    expect(activeIngress(releaseManifest().spec!.components)).toBe('traefik'); // nginx Removed
+    expect(activeIngress(releaseManifestV240().spec!.components)).toBe('nginx');
+    // without a ReleaseManifest the config decides
+    expect(activeIngress(undefined, clusterConfigV240().spec)).toBe('nginx');
+    expect(activeIngress(undefined, defaultClusterConfig().spec)).toBe('traefik');
+  });
+
+  it('reads and writes spec.ingress.nginx only, both fields explicit', () => {
+    const spec = clusterConfigV240().spec!;
+    expect(effectiveIngress(spec, 'nginx')).toEqual({
+      dedicatedIP: '',
+      isDefault: true,
+      source: 'nginx',
+    });
+    const next = setIngress(spec, 'nginx', { dedicatedIP: '192.168.1.240' });
+    expect(next.ingress?.nginx).toEqual({ dedicatedIP: '192.168.1.240', isDefault: true });
+    expect(next.ingress?.traefik).toBeUndefined();
+    const notDefault = setIngress({}, 'nginx', { isDefault: false });
+    expect(notDefault.ingress?.nginx).toEqual({ dedicatedIP: '', isDefault: false });
+  });
+
+  it('ignores a traefik key the ingress-nginx hook does not read', () => {
+    const spec = setIn(clusterConfigV240().spec!, ['ingress', 'traefik'], {
+      dedicatedIP: '10.0.0.9',
+      isDefault: false,
+    });
+    expect(effectiveIngress(spec, 'nginx').dedicatedIP).toBe('');
+    expect(ingressExposure(spec, 'nginx').kind).toBe('host-ports');
+  });
+});
+
+describe('MetalLB mirror of the Traefik IP', () => {
+  it('is skipped for operators that read spec.ingress.traefik (v0.4.0+)', () => {
+    const draft = setTraefik(
+      defaultClusterConfig().spec!,
+      { dedicatedIP: '192.168.1.240' },
+      { mirrorToNginx: false }
+    );
+    expect(draft.ingress?.traefik?.dedicatedIP).toBe('192.168.1.240');
+    expect(draft.ingress?.nginx).toBeUndefined();
   });
 });
