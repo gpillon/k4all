@@ -86,8 +86,11 @@ Don't unmask it.
 
 1. **Preflight.** The node runs the release the hop starts from, and no other
    deployment is staged. There is enough space on `/sysroot` and `/var`.
-   The apiserver and all nodes are Ready. On multi-node clusters, the order is
-   respected (see below).
+   The apiserver and all nodes are Ready. Right after a boot they may need a
+   minute: on control planes the tool waits up to 5 minutes
+   (`apiserverReadyTimeoutMinutes` in `/etc/k4all-upgrade.yaml`) before it
+   stops in HOLD with the failed `/readyz` checks. On multi-node clusters, the
+   order is respected (see below).
 2. **Backup.** The tool runs `k4all-backup.sh` (etcd snapshot, PKI, configs)
    and copies the kubelet config to
    `/var/lib/k4all/upgrade/backup/<from>-<to>/`.

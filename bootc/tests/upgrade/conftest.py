@@ -62,6 +62,15 @@ def ladder():
     return ku.load_graph(json.loads(json.dumps(LADDER)))
 
 
+# What kubectl prints for /readyz right after an apiserver restart, while the
+# aggregated APIs (metrics-server, calico-apiserver) come up (seen in the lab).
+READYZ_NOT_READY = (
+    'Error from server (InternalError): an error on the server ("[+]ping ok\\n'
+    '[+]log ok\\n[+]etcd ok\\n[+]poststarthook/start-apiextensions-informers ok\\n'
+    '[-]poststarthook/apiservice-discovery-controller failed: reason withheld\\n'
+    'readyz check failed") has prevented the request from succeeding')
+
+
 class Proc:
     def __init__(self, stdout="", returncode=0, stderr=""):
         self.stdout = stdout
@@ -92,6 +101,10 @@ class FakeHost(ku.Host):
         self.kubelet_name = None    # Node name when it is not the hostname
         self.apiserver_up = True
         self.forbid_patch = False   # NodeRestriction refusing the patch
+        self.readyz_failures = 0    # /readyz answers that fail before "ok"
+        self.readyz_calls = 0
+        self.nodes_not_ready = 0    # `get nodes` answers with this node NotReady
+        self.sleeps = []            # seconds of every Host.sleep, in order
         self.cluster_config = {
             "apiVersion": "kubeadm.k8s.io/v1beta4",
             "kind": "ClusterConfiguration",
@@ -122,6 +135,7 @@ class FakeHost(ku.Host):
         return self.clock
 
     def sleep(self, seconds):
+        self.sleeps.append(seconds)
         self.clock += datetime.timedelta(seconds=seconds)
 
     def hostname(self):
@@ -303,6 +317,9 @@ class FakeHost(ku.Host):
                 return Proc("successfully rolled out\n")
         if args[:2] == ["get", "nodes"]:
             items = [self._node()]
+            if self.nodes_not_ready > 0:
+                self.nodes_not_ready -= 1
+                items[0]["status"]["conditions"][0]["status"] = "False"
             for i in range(1, self.node_count):
                 other = self._node()
                 other["metadata"]["name"] = "k4all-node-%d" % (i + 1)
@@ -311,6 +328,10 @@ class FakeHost(ku.Host):
         if args[:2] == ["get", "node"]:
             return Proc(json.dumps(self._node()))
         if args[:2] == ["get", "--raw"]:
+            self.readyz_calls += 1
+            if self.readyz_failures > 0:
+                self.readyz_failures -= 1
+                return Proc(returncode=1, stderr=READYZ_NOT_READY)
             return Proc("ok" if self.node_is_ready else "")
         if args[:1] == ["version"]:
             return Proc(json.dumps({"serverVersion": {"gitVersion": "v" + self.apiserver}}))

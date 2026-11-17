@@ -74,6 +74,8 @@ MESSAGE_MAX = 1000
 # kubectl calls of the agent and of the phase reports must not hang on an
 # unreachable apiserver.
 KUBECTL_TIMEOUT = "--request-timeout=20s"
+# Seconds between two preflight checks of /readyz and of the nodes.
+READY_POLL_SECONDS = 10
 # Lock waits (seconds): resume must not lose the hop to a short agent pass.
 LOCK_WAIT = 30
 RESUME_LOCK_WAIT = 600
@@ -95,6 +97,9 @@ DEFAULT_CONFIG = {
                  "upgrade-graph.json"),
     "image": "ghcr.io/gpillon/k4all-bootc",
     "postBootTimeoutMinutes": 20,
+    # Preflight on a control plane: how long /readyz and the nodes may take
+    # to turn ready (right after a boot) before the hop goes to HOLD.
+    "apiserverReadyTimeoutMinutes": 5,
     "componentsTimeoutMinutes": 45,
     "drainTimeoutMinutes": 15,
     "minFreeSysrootGiB": 3,
@@ -853,6 +858,26 @@ def node_ready(node):
     return False
 
 
+# One failed check in the /readyz body. kubectl quotes the body in its error
+# message, so the checks are separated by a literal "\n" there.
+READYZ_FAILED_CHECK = re.compile(r"\[-\]([^\s\"\\]+) failed")
+
+
+def readyz_problem(proc):
+    """None when ``kubectl get --raw /readyz`` answered ok, else why not, in
+    one short line: the failed checks when the apiserver lists them,
+    otherwise the end of what kubectl printed."""
+    if proc.returncode == 0 and (proc.stdout or "").strip() == "ok":
+        return None
+    text = " ".join(" ".join(t for t in (proc.stdout, proc.stderr) if t).split())
+    failed = list(dict.fromkeys(READYZ_FAILED_CHECK.findall(text)))
+    if failed:
+        return "failed checks: %s" % ", ".join(failed)
+    if not text:
+        return "no answer (rc=%d)" % proc.returncode
+    return text if len(text) <= 300 else "..." + text[-297:]
+
+
 def cluster_kubernetes_version(host, kubeconfig):
     cm = kubectl_json(host, kubeconfig,
                       ["-n", "kube-system", "get", "configmap", "kubeadm-config"])
@@ -1194,15 +1219,10 @@ class Upgrader:
         if not kc:
             host.log("no kubeconfig on this node: skipping cluster checks")
             return
-        nodes = self._cluster_nodes()
         if role in ("bootstrap", "control"):
-            ready = kubectl(host, kc, ["get", "--raw", "/readyz"], check=False)
-            if ready.returncode != 0 or ready.stdout.strip() != "ok":
-                raise UpgradeError("the apiserver is not ready: %s"
-                                   % (ready.stdout or ready.stderr).strip())
-            not_ready = [n["metadata"]["name"] for n in nodes if not node_ready(n)]
-            if not_ready:
-                raise UpgradeError("nodes not Ready: %s" % ", ".join(not_ready))
+            nodes = self._wait_cluster_ready(kc)
+        else:
+            nodes = self._cluster_nodes()
         target = hop["kubernetes"]
         running = kubelet_version(host)
         if k8s_key(target) != k8s_key(running):
@@ -1223,6 +1243,43 @@ class Upgrader:
             raise UpgradeError("a kubelet minor upgrade needs a drain, and this "
                                "node has no admin kubeconfig: drain it from a "
                                "control plane or let the k4all-operator drive it")
+
+    def _cluster_not_ready(self, kc):
+        """(problem, nodes): what keeps the control plane from being ready
+        (None when nothing does), and the nodes read."""
+        ready = kubectl(self.host, kc, ["get", "--raw", "/readyz"], check=False)
+        problem = readyz_problem(ready)
+        if problem:
+            return "the apiserver is not ready: %s" % problem, []
+        nodes = self._cluster_nodes()
+        not_ready = [n["metadata"]["name"] for n in nodes if not node_ready(n)]
+        if not_ready:
+            return "nodes not Ready: %s" % ", ".join(not_ready), nodes
+        return None, nodes
+
+    def _wait_cluster_ready(self, kc):
+        """Wait until /readyz is ok and every node is Ready; return the nodes.
+
+        Right after a boot the apiserver answers before /readyz is ok:
+        poststarthook/apiservice-discovery-controller fails while the
+        aggregated APIs (metrics-server, calico-apiserver) come up, and the
+        node itself takes a moment to turn Ready. Only a problem that lasts
+        apiserverReadyTimeoutMinutes stops the hop."""
+        host = self.host
+        minutes = int(self.cfg["apiserverReadyTimeoutMinutes"])
+        deadline = host.now() + datetime.timedelta(minutes=minutes)
+        last = None
+        while True:
+            problem, nodes = self._cluster_not_ready(kc)
+            if problem is None:
+                return nodes
+            if host.now() >= deadline:
+                raise UpgradeError("%s (still after %d minutes)"
+                                   % (problem, minutes))
+            if problem != last:
+                host.log("%s; waiting up to %d minutes" % (problem, minutes))
+                last = problem
+            host.sleep(READY_POLL_SECONDS)
 
     # --- BACKUP ----------------------------------------------------------
     def backup(self, state):
@@ -1410,8 +1467,9 @@ class Upgrader:
             return False, "node is not Ready"
         if self._role() in ("bootstrap", "control"):
             ready = kubectl(host, kc, ["get", "--raw", "/readyz"], check=False)
-            if ready.stdout.strip() != "ok":
-                return False, "apiserver not ready"
+            problem = readyz_problem(ready)
+            if problem:
+                return False, "apiserver not ready: %s" % problem
         return True, ""
 
     # --- SYNC ------------------------------------------------------------

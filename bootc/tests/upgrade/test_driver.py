@@ -6,7 +6,7 @@ import json
 import pytest
 import yaml
 
-from conftest import ku, release, run_cli, write_graph
+from conftest import READYZ_NOT_READY, Proc, ku, release, run_cli, write_graph
 
 STREAM_23 = [
     release("v2.2.4", "patch", "v2.0.0-beta1", "1.35.6", "1.32", 43),
@@ -292,6 +292,109 @@ def test_run_without_yes_needs_a_terminal(make_host, monkeypatch):
     monkeypatch.setattr("sys.stdin.isatty", lambda: False, raising=False)
     assert run_cli(host, "run", "--to", "v2.3.1") == 2
     assert state(host) is None
+
+
+# --- preflight right after a boot --------------------------------------------
+# Lab, right after the reboot into the bridge: `k4all-upgrade run` went to
+# HOLD in PREFLIGHT because /readyz failed on
+# poststarthook/apiservice-discovery-controller while metrics-server and
+# calico-apiserver came up; a minute later /readyz was ok.
+def test_preflight_waits_until_readyz_is_ok(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    host.readyz_failures = 2
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert host.readyz_calls == 3, "ok on the third try"
+    assert host.sleeps == [ku.READY_POLL_SECONDS] * 2
+    st = state(host)
+    assert not st.get("hold") and st["phase"] == "REBOOT"
+    assert commands(host, ["bootc", "switch", "--download-only"])
+
+
+def test_preflight_holds_once_readyz_stays_failed_past_the_timeout(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    host.readyz_failures = 10 ** 6
+    start = host.clock
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
+    st = state(host)
+    assert st["phase"] == "PREFLIGHT"
+    reason = st["hold"]["reason"]
+    assert reason == ("the apiserver is not ready: failed checks: "
+                      "poststarthook/apiservice-discovery-controller "
+                      "(still after 5 minutes)")
+    waited = host.clock - start
+    assert datetime.timedelta(minutes=5) <= waited < datetime.timedelta(minutes=6)
+    assert set(host.sleeps) == {ku.READY_POLL_SECONDS}
+    assert host.readyz_calls == len(host.sleeps) + 1
+    assert not commands(host, ["bootc", "switch"])
+
+
+def test_preflight_wait_follows_the_policy_file(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    host.write(ku.CONFIG_FILE, "mode: manual\napiserverReadyTimeoutMinutes: 1\n")
+    host.readyz_failures = 10 ** 6
+    start = host.clock
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
+    assert "(still after 1 minutes)" in state(host)["hold"]["reason"]
+    assert host.clock - start < datetime.timedelta(minutes=2)
+
+
+def test_preflight_waits_for_the_node_to_turn_ready(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    host.nodes_not_ready = 3
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert host.sleeps == [ku.READY_POLL_SECONDS] * 3
+    assert state(host)["phase"] == "REBOOT"
+
+
+def test_preflight_holds_on_a_node_that_stays_not_ready(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    host.nodes_not_ready = 10 ** 6
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
+    assert state(host)["hold"]["reason"] == \
+        "nodes not Ready: k4all-node-1 (still after 5 minutes)"
+
+
+def test_worker_preflight_does_not_wait_on_readyz(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10", role="worker")
+    write_graph(host, STREAM_23)
+    host.readyz_failures = 10 ** 6
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert host.readyz_calls == 0 and host.sleeps == []
+
+
+@pytest.mark.parametrize("proc, problem", [
+    (Proc("ok"), None),
+    (Proc(returncode=1, stderr=READYZ_NOT_READY),
+     "failed checks: poststarthook/apiservice-discovery-controller"),
+    # a real newline between the checks, two failures
+    (Proc(returncode=1, stdout="[+]ping ok\n[-]etcd failed: reason withheld\n"
+          "[-]poststarthook/apiservice-discovery-controller failed: reason "
+          "withheld\nreadyz check failed\n"),
+     "failed checks: etcd, poststarthook/apiservice-discovery-controller"),
+    (Proc(returncode=1, stderr="The connection to the server 10.0.0.1:6443 "
+          "was refused - did you specify the right host or port?\n"),
+     "The connection to the server 10.0.0.1:6443 was refused - did you "
+     "specify the right host or port?"),
+    (Proc(returncode=1), "no answer (rc=1)"),
+])
+def test_readyz_problem_is_one_short_line(proc, problem):
+    assert ku.readyz_problem(proc) == problem
+
+
+def test_readyz_problem_keeps_the_end_of_a_long_answer():
+    got = ku.readyz_problem(Proc(returncode=1, stderr="x" * 1000 + " the end"))
+    assert len(got) == 300 and got.startswith("...") and got.endswith("the end")
 
 
 # --- automatic mode --------------------------------------------------------
