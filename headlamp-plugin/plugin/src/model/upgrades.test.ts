@@ -1,97 +1,31 @@
-import { availableReleases, clusterUpgrade, clusterUpgradeInProgress, node } from './fixtures';
+import {
+  availableReleases,
+  clusterUpgrade,
+  clusterUpgradeInProgress,
+  failWith,
+  node,
+} from './fixtures';
 import { applyOps } from './patch';
-import { NodeLike, ReleaseInfo } from './types';
+import { NodeLike } from './types';
 import {
   canRetry,
-  clusterFacts,
   describeUpgradeChanges,
   desiredSpec,
   drainBehaviour,
   drainTimer,
   estimate,
   formatDuration,
+  formatSpan,
+  hopChanges,
   hopKind,
   intentOps,
   nodeGuidance,
-  planPath,
-  problemConditions,
+  PLAN_FAILURE,
+  releasePlan,
+  span,
   upgradeOrder,
   upgradeView,
 } from './upgrades';
-
-const versions = (plan: ReturnType<typeof planPath>) => plan.hops.map(h => h.release.version);
-
-describe('planPath (port of k4all-upgrade plan_path)', () => {
-  it("takes the stream's latest patch first, then every minor", () => {
-    const plan = planPath('v2.4.0', 'v2.7.0', availableReleases());
-    expect(versions(plan)).toEqual(['v2.4.1', 'v2.5.0', 'v2.6.0', 'v2.7.0']);
-    expect(plan.exact).toBe(false);
-    expect(plan.hops.map(h => h.kind)).toEqual(['patch', 'minor', 'minor', 'minor']);
-    expect(plan.hops[1].from).toBe('v2.4.1');
-  });
-
-  it('jumps to the target patch directly inside a stream', () => {
-    const releases: ReleaseInfo[] = [
-      { version: 'v2.7.1', kind: 'patch' },
-      { version: 'v2.7.2', kind: 'patch' },
-    ];
-    expect(versions(planPath('v2.7.0', 'v2.7.2', releases))).toEqual(['v2.7.2']);
-  });
-
-  it('follows minFrom exactly when the graph provides it', () => {
-    const releases: ReleaseInfo[] = [
-      { version: 'v2.7.1', kind: 'patch', minFrom: 'v2.7.0' },
-      // v2.7.2 can only be reached from v2.7.1
-      { version: 'v2.7.2', kind: 'patch', minFrom: 'v2.7.1' },
-    ];
-    const plan = planPath('v2.7.0', 'v2.7.2', releases);
-    expect(plan.exact).toBe(true);
-    expect(versions(plan)).toEqual(['v2.7.1', 'v2.7.2']);
-  });
-
-  it('reports a release the cluster cannot reach', () => {
-    const releases: ReleaseInfo[] = [{ version: 'v2.8.0', kind: 'minor', minFrom: 'v2.7.5' }];
-    expect(planPath('v2.7.0', 'v2.8.0', releases).error).toMatch(/No release can be reached/);
-  });
-
-  it('reports a target the cluster cannot move to, and nothing for an older one', () => {
-    expect(planPath('v2.4.0', 'v2.9.0', availableReleases()).error).toMatch(/not among/);
-    expect(planPath('v2.6.0', 'v2.5.0', availableReleases()).hops).toEqual([]);
-    expect(planPath('main', 'v2.5.0', availableReleases()).error).toBeTruthy();
-  });
-
-  it('says what each hop changes', () => {
-    const plan = planPath('v2.4.0', 'v2.7.0', availableReleases(), {
-      kubernetes: '1.35.10',
-      fedora: 43,
-    });
-    expect(plan.hops.map(h => h.changes)).toEqual([
-      [],
-      [{ what: 'Fedora', from: '43', to: '45' }],
-      [],
-      [{ what: 'Kubernetes', from: '1.35.10', to: '1.36.4' }],
-    ]);
-  });
-
-  it('classifies hops like hop_kind', () => {
-    expect(hopKind('v2.4.0', 'v2.4.1')).toBe('patch');
-    expect(hopKind('v2.4.1', 'v2.5.0')).toBe('minor');
-  });
-});
-
-describe('clusterFacts', () => {
-  it('takes the oldest Kubernetes, Fedora and CRI-O among the nodes', () => {
-    const a = node('a');
-    const b = node('b');
-    b.status!.nodeInfo = {
-      kubeletVersion: 'v1.35.10',
-      osImage: 'Fedora Linux 43 (k4all)',
-      containerRuntimeVersion: 'cri-o://1.35.2',
-    };
-    expect(clusterFacts([a, b])).toEqual({ kubernetes: '1.35.10', fedora: 43, crio: '1.35' });
-    expect(clusterFacts([])).toEqual({ kubernetes: undefined, fedora: undefined, crio: undefined });
-  });
-});
 
 describe('upgradeOrder', () => {
   it("orders the operator's nodes bootstrap, control, worker", () => {
@@ -195,6 +129,50 @@ describe('upgradeView', () => {
     expect(upgradeView(cu).active).toBe(false);
   });
 
+  it('tells an unreadable graph apart from up to date (GraphAvailable=False)', () => {
+    const cu = clusterUpgrade();
+    cu.status!.availableReleases = [];
+    cu.status!.message = 'cannot read the upgrade graph: dial tcp: no route to host';
+    cu.status!.conditions = cu.status!.conditions!.map(c =>
+      c.type === 'GraphAvailable'
+        ? { ...c, status: 'False', reason: 'ReadFailed', message: 'dial tcp: no route to host' }
+        : c
+    );
+    const view = upgradeView(cu);
+    expect(view).toMatchObject({ stage: 'graphUnavailable', tone: 'warning', active: false });
+    expect(view.graph).toEqual({
+      available: false,
+      error: 'dial tcp: no route to host',
+      url: 'https://github.com/gpillon/k4all/releases/latest/download/upgrade-graph.json',
+    });
+    expect(upgradeView(clusterUpgrade()).graph.available).toBe(true);
+  });
+
+  it('reads the Failed and Succeeded conditions', () => {
+    const failed = failWith(
+      clusterUpgradeInProgress(),
+      'NoPath',
+      'no release can be reached from v2.4.1 on the way to v2.6.0'
+    );
+    expect(upgradeView(failed).failedReason).toBe('NoPath');
+    expect(PLAN_FAILURE.NoPath).toMatch(/Choose another target/);
+    const done = clusterUpgrade();
+    done.status!.phase = 'Succeeded';
+    done.status!.conditions!.push({
+      type: 'Succeeded',
+      status: 'True',
+      reason: 'Succeeded',
+      lastTransitionTime: '2026-11-17T11:00:00Z',
+    });
+    done.status!.conditions = done.status!.conditions!.filter(
+      c => !(c.type === 'Succeeded' && c.status === 'False')
+    );
+    expect(upgradeView(done)).toMatchObject({
+      stage: 'succeeded',
+      succeededAt: '2026-11-17T11:00:00Z',
+    });
+  });
+
   it('notices a spec the operator has not processed yet', () => {
     const cu = clusterUpgradeInProgress();
     cu.metadata.generation = 3;
@@ -202,25 +180,18 @@ describe('upgradeView', () => {
   });
 });
 
-describe('problemConditions', () => {
-  it('warns about True negative conditions and False positive ones', () => {
-    const shown = problemConditions([
-      { type: 'Degraded', status: 'False', message: 'all good' },
-      { type: 'Degraded', status: 'True', message: 'graph unreachable' },
-      { type: 'GraphAvailable', status: 'False', message: 'HTTP 404' },
-      { type: 'Ready', status: 'False', message: 'upgrading' },
-      { type: 'Synced', status: 'True' },
-    ]);
-    expect(shown.map(c => c.message)).toEqual(['graph unreachable', 'HTTP 404']);
-  });
-});
-
-describe('nodeGuidance', () => {
+describe("nodeGuidance (by the operator's reason, never by message text)", () => {
   const spec = { drain: { timeoutMinutes: 20 } };
 
   it('explains a HOLD with the commands to run on the node', () => {
     const g = nodeGuidance(
-      { name: 'cp-2', phase: 'Failed', hostPhase: 'HOLD', message: 'kubeadm upgrade failed' },
+      {
+        name: 'cp-2',
+        phase: 'Failed',
+        reason: 'HostHold',
+        hostPhase: 'HOLD',
+        message: 'kubeadm upgrade failed',
+      },
       spec
     )!;
     expect(g.title).toBe('cp-2 is on hold');
@@ -233,64 +204,47 @@ describe('nodeGuidance', () => {
     expect(g.retry).toBe(false);
   });
 
-  it('points at the graph when the node refuses the target', () => {
-    const g = nodeGuidance(
+  it('points at the graph for TargetRejected and at the node for RollbackRebooted', () => {
+    const rejected = nodeGuidance(
+      { name: 'w-1', phase: 'Failed', reason: 'TargetRejected', hostPhase: 'HOLD' },
+      spec
+    )!;
+    expect(rejected.title).toBe('w-1 refused the hop');
+    expect(rejected.text).toMatch(/k4all-upgrade.yaml/);
+    const rolled = nodeGuidance(
+      { name: 'w-1', phase: 'Failed', reason: 'RollbackRebooted', hostPhase: 'HOLD' },
+      spec
+    )!;
+    expect(rolled).toMatchObject({ title: 'w-1 rolled back', retry: false });
+  });
+
+  it('offers Retry for Abandoned and DrainTimeout', () => {
+    const abandoned = nodeGuidance(
       {
         name: 'w-1',
-        phase: 'Upgrading',
-        hostPhase: 'HOLD',
-        message: 'upgrade-target v2.5.0 is not one hop from v2.4.0',
+        phase: 'Failed',
+        reason: 'Abandoned',
+        hostPhase: 'ABANDONED',
+        release: 'v2.4.1',
       },
       spec
     )!;
-    expect(g.title).toBe('w-1 refused the hop');
-    expect(g.text).toMatch(/k4all-upgrade.yaml/);
-  });
-
-  it('recognises an abandoned hop the way the operator reports it', () => {
-    // The operator leaves hostPhase empty on this path; the Node still says ABANDONED.
-    const failed = {
-      name: 'w-1',
-      phase: 'Failed',
-      release: 'v2.4.1',
-      message: 'v2.5.0 abandoned: kubeadm upgrade node failed',
-      drainStartedAt: '2026-11-17T10:00:00Z',
-    };
-    const fromNode = nodeGuidance(failed, spec, 'ABANDONED')!;
-    expect(fromNode).toMatchObject({
+    expect(abandoned).toMatchObject({
       title: 'The hop was abandoned on w-1',
       severity: 'error',
       retry: true,
     });
-    expect(fromNode.text).toMatch(/stays on v2.4.1/);
-    const fallback = nodeGuidance(
-      { name: 'w-1', phase: 'Failed', message: 'the hop was abandoned on the node' },
-      spec
-    )!;
-    expect(fallback.title).toBe('The hop was abandoned on w-1');
-    const dropped = nodeGuidance(
-      {
-        name: 'w-1',
-        phase: 'Failed',
-        message: 'upgrade-target was removed before the hop was done',
-      },
-      spec
-    )!;
-    expect(dropped).toMatchObject({ title: 'w-1 dropped the hop', retry: true });
-  });
-
-  it('explains a drain timeout by its message, not by drainStartedAt', () => {
+    expect(abandoned.text).toMatch(/stays on v2.4.1/);
     const drain = nodeGuidance(
       {
         name: 'w-1',
         phase: 'Failed',
+        reason: 'DrainTimeout',
         message: 'drain timed out after 20 minutes, 3 pods left',
-        drainStartedAt: '2026-11-17T10:00:00Z',
       },
       spec
     )!;
     expect(drain.title).toBe('Draining w-1 did not finish');
-    expect(drain.text).toMatch(/^drain timed out after 20 minutes, 3 pods left/);
     expect(drain.text).toMatch(/then Retry. Retry drains again, for up to 20 minutes/);
     expect(drain.commands[0].command).toBe(
       'kubectl get pods -A -o wide --field-selector spec.nodeName=w-1'
@@ -298,26 +252,95 @@ describe('nodeGuidance', () => {
     expect(drain.retry).toBe(true);
   });
 
+  it('says the upgrade waits for a node that is not Ready, without calling it a failure', () => {
+    const g = nodeGuidance({ name: 'w-1', phase: 'Pending', reason: 'NodeNotReady' }, spec)!;
+    expect(g).toMatchObject({
+      severity: 'info',
+      title: 'Waiting for w-1 to be Ready',
+      retry: false,
+    });
+  });
+
+  it('does not guess from the message', () => {
+    const g = nodeGuidance(
+      { name: 'w-1', phase: 'Failed', message: 'drain timed out after 20 minutes' },
+      spec
+    )!;
+    expect(g).toMatchObject({ title: 'w-1 failed', retry: false });
+  });
+
   it('has nothing to say about a healthy node', () => {
     expect(nodeGuidance({ name: 'a', phase: 'Upgrading', hostPhase: 'STAGE' }, spec)).toBeNull();
     expect(nodeGuidance({ name: 'a', phase: 'Done' }, spec)).toBeNull();
   });
 
-  it('offers Retry only where the operator acts on it', () => {
-    const cu = clusterUpgradeInProgress();
-    expect(canRetry(cu)).toBe(false);
-    // A failed plan (e.g. a target older than the cluster): no node to retry.
-    cu.status!.phase = 'Failed';
-    cu.status!.message = "targetRelease v2.3.0 is older than the cluster's release v2.4.1";
-    expect(canRetry(cu)).toBe(false);
-    cu.status!.nodes![1] = {
-      name: 'cp-2',
-      phase: 'Failed',
-      message: 'drain timed out after 30 minutes, 1 pods left',
-    };
+  it('offers Retry only for the reasons the operator retries', () => {
+    const cu = failWith(clusterUpgradeInProgress(), 'Downgrade', 'targetRelease v2.3.0 is older');
+    expect(canRetry(cu)).toBe(false); // a failed plan: no node to retry
+    cu.status!.nodes![1] = { name: 'cp-2', phase: 'Failed', reason: 'DrainTimeout' };
     expect(canRetry(cu)).toBe(true);
-    cu.status!.nodes![1] = { name: 'cp-2', phase: 'Failed', hostPhase: 'HOLD' };
-    expect(canRetry(cu)).toBe(false); // a hold resumes by itself
+    cu.status!.nodes![1] = { name: 'cp-2', phase: 'Failed', reason: 'Abandoned' };
+    expect(canRetry(cu)).toBe(true);
+    cu.status!.nodes![1] = { name: 'cp-2', phase: 'Failed', reason: 'HostHold', hostPhase: 'HOLD' };
+    expect(canRetry(cu)).toBe(false); // a hold resumes on the node
+  });
+});
+
+describe("releasePlan (the operator's availableReleases[].path)", () => {
+  it('lists the hops of the path with what each one changes', () => {
+    const plan = releasePlan(clusterUpgrade(), '2.7.0');
+    expect(plan.error).toBeUndefined();
+    expect(plan.hops.map(h => [h.from, h.release.version, h.kind])).toEqual([
+      ['v2.4.0', 'v2.4.1', 'patch'],
+      ['v2.4.1', 'v2.5.0', 'minor'],
+      ['v2.5.0', 'v2.6.0', 'minor'],
+      ['v2.6.0', 'v2.7.0', 'minor'],
+    ]);
+    expect(plan.hops.map(h => h.changes)).toEqual([
+      [],
+      [{ what: 'Fedora', from: '43', to: '45' }],
+      [],
+      [
+        { what: 'Kubernetes', from: '1.35.10', to: '1.36.4' },
+        { what: 'CRI-O', from: '1.35', to: '1.36' },
+      ],
+    ]);
+  });
+
+  it('follows the path, not the list of releases', () => {
+    const cu = clusterUpgrade();
+    // e.g. v2.5.0 straight from v2.4.0 (minFrom v2.4.0), skipping the patch
+    cu.status!.availableReleases!.find(r => r.version === 'v2.5.0')!.path = ['v2.5.0'];
+    expect(releasePlan(cu, 'v2.5.0').hops.map(h => h.release.version)).toEqual(['v2.5.0']);
+  });
+
+  it('says so when the operator has no way there, or the release is not offered', () => {
+    const cu = clusterUpgrade();
+    cu.status!.availableReleases!.find(r => r.version === 'v2.7.0')!.path = [];
+    expect(releasePlan(cu, 'v2.7.0').error).toMatch(/no way from v2.4.0 to v2.7.0/);
+    expect(releasePlan(cu, 'v2.9.0').error).toMatch(/not among/);
+  });
+
+  it('compares with the current release and classifies hops like hop_kind', () => {
+    expect(hopChanges({ kubernetes: '1.35.10' }, { kubernetes: 'v1.35.10' })).toEqual([]);
+    expect(hopKind('v2.4.0', 'v2.4.1')).toBe('patch');
+    expect(hopKind('v2.4.1', 'v2.5.0')).toBe('minor');
+    expect(availableReleases('v2.6.0').map(r => r.path)).toEqual([['v2.7.0']]);
+  });
+});
+
+describe('durations', () => {
+  const now = Date.parse('2026-11-17T10:06:00Z');
+
+  it('measures finished and running hops and nodes', () => {
+    const cu = clusterUpgradeInProgress();
+    const [done, running] = cu.status!.path!;
+    expect(formatSpan(span(done.startedAt, done.completedAt, now))).toBe('took 27 min');
+    expect(formatSpan(span(running.startedAt, running.completedAt, now))).toBe(
+      'running for 36 min'
+    );
+    expect(span(undefined, undefined, now)).toBeNull();
+    expect(formatSpan(null)).toBeUndefined();
   });
 });
 

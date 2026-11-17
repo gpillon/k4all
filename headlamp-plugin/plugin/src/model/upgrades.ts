@@ -2,11 +2,12 @@
  * The cluster upgrade as the Upgrades page shows it, from the ClusterUpgrade
  * "k4all" (k4all-operator v0.4.0+):
  *
- * - planPath: the hops to a target release, a port of k4all-upgrade's
- *   plan_path, so the review can show the path before the operator plans it;
- * - upgradeView: one headline for the whole upgrade;
- * - node order, drain timer, reboot/downtime estimate;
- * - nodeGuidance: what to do about a node in HOLD, ABANDONED or failed;
+ * - releasePlan: the hops to a target, as the operator plans them
+ *   (availableReleases[].path), with what each hop changes;
+ * - upgradeView: one headline for the whole upgrade, the graph and the
+ *   Failed condition;
+ * - node order, drain timer, hop and node durations, reboot/downtime estimate;
+ * - nodeGuidance: what to do about a node, by its machine-readable reason;
  * - the spec changes the page sends (start, pause, resume, stop, settings).
  */
 
@@ -19,12 +20,14 @@ import {
   ClusterUpgradeObject,
   ClusterUpgradeSpec,
   Condition,
+  CONDITION_FAILED,
+  CONDITION_GRAPH_AVAILABLE,
+  CONDITION_SUCCEEDED,
   DEFAULT_UPGRADE_GRAPH_URL,
   DrainSpec,
   Hop,
   NODE_RELEASE_ANNOTATION,
   NODE_TYPE_ANNOTATION,
-  NODE_UPGRADE_PHASE_ANNOTATION,
   NodeConfigObject,
   NodeLike,
   NodeUpgradeStatus,
@@ -68,23 +71,21 @@ export function hopKind(from: string, to: string): 'minor' | 'patch' {
   return a && b && sameStream(a, b) ? 'patch' : 'minor';
 }
 
-/** The release kind from the graph, or from the version: X.Y.0 opens a stream (minor). */
-export function releaseKind(rel: ReleaseInfo): 'minor' | 'patch' {
+/** The release kind from the graph, or else the kind of the hop from `from`. */
+export function releaseKind(rel: ReleaseInfo, from?: string): 'minor' | 'patch' {
   if (rel.kind === 'minor' || rel.kind === 'patch') {
     return rel.kind;
+  }
+  if (from) {
+    return hopKind(from, rel.version);
   }
   return versionKey(rel.version)?.patch === 0 ? 'minor' : 'patch';
 }
 
 // ------------------------------------------------------------------ Planning
 
-/** What a cluster runs, as far as the plugin can tell (the API has no field for it yet). */
-export interface ReleaseFacts {
-  version: string;
-  kubernetes?: string;
-  fedora?: number;
-  crio?: string;
-}
+/** What a release runs: Kubernetes, Fedora, CRI-O. */
+export type ReleaseFacts = Pick<ReleaseInfo, 'kubernetes' | 'fedora' | 'crio'>;
 
 export interface HopChange {
   what: 'Kubernetes' | 'Fedora' | 'CRI-O';
@@ -101,121 +102,53 @@ export interface PlannedHop {
 
 export interface Plan {
   hops: PlannedHop[];
-  /**
-   * True when every release carried minFrom, so the path is the one
-   * k4all-upgrade computes. Otherwise it follows the k4all versioning rules
-   * (every minor is a stop, patches start at X.Y.0, a stream's latest patch
-   * comes before the next minor), which the graph's minFrom normally encodes.
-   */
-  exact: boolean;
+  /** Set when the operator has no way to the target. */
   error?: string;
 }
 
-interface GraphEntry {
-  info: ReleaseInfo;
-  key: SemVer;
-  minFrom: SemVer;
-  kind: 'minor' | 'patch';
-}
-
 /**
- * The hops from current to target over the releases the operator offers
- * (status.availableReleases: newer than current, blocked ones left out).
- * Port of plan_path (bootc/overlay/usr/local/bin/k4all-upgrade).
+ * The hops to target, exactly as the operator plans them
+ * (status.availableReleases[target].path, from currentRelease), each with
+ * what it changes, starting from status.currentReleaseInfo.
  */
-export function planPath(
-  current: string,
-  target: string,
-  releases: ReleaseInfo[],
-  facts?: Omit<ReleaseFacts, 'version'>
-): Plan {
-  const curKey0 = versionKey(current);
-  const targetKey = versionKey(target);
-  if (!curKey0 || !targetKey) {
-    return { hops: [], exact: false, error: `"${current}" or "${target}" is not a release.` };
+export function releasePlan(cu: ClusterUpgradeObject, target: string): Plan {
+  const status = cu.status ?? {};
+  const current = status.currentRelease ?? '';
+  const wanted = normalizeRelease(target);
+  const available = status.availableReleases ?? [];
+  const rel = available.find(r => normalizeRelease(r.version) === wanted);
+  if (!rel) {
+    return { hops: [], error: `${wanted} is not among the releases this cluster can move to.` };
   }
-  const sorted = releases
-    .map(info => ({ info, key: versionKey(info.version) }))
-    .filter((r): r is { info: ReleaseInfo; key: SemVer } => r.key !== null)
-    .sort((a, b) => cmp(a.key, b.key));
-  const exact = sorted.length > 0 && sorted.every(r => !!versionKey(r.info.minFrom));
-  const entries: GraphEntry[] = sorted.map((r, i) => {
-    const kind = releaseKind(r.info);
-    let minFrom = versionKey(r.info.minFrom);
-    if (!minFrom) {
-      // A patch starts at X.Y.0; a minor follows the newest older release
-      // (the end of the previous stream).
-      minFrom =
-        kind === 'patch'
-          ? { major: r.key.major, minor: r.key.minor, patch: 0, prerelease: [] }
-          : i > 0
-          ? sorted[i - 1].key
-          : curKey0;
-    }
-    return { info: r.info, key: r.key, minFrom, kind };
-  });
-
-  const targetEntry = entries.find(e => cmp(e.key, targetKey) === 0);
-  if (!targetEntry) {
+  const path = rel.path ?? [];
+  if (path.length === 0) {
     return {
       hops: [],
-      exact,
-      error: `${normalizeRelease(target)} is not among the releases this cluster can move to.`,
+      error: `The upgrade graph has no way from ${
+        current || 'the current release'
+      } to ${wanted}: a release on the way is blocked or missing.`,
     };
   }
-  if (cmp(targetEntry.key, curKey0) <= 0) {
-    return { hops: [], exact };
-  }
-  const minors = entries.filter(e => e.kind === 'minor');
+  const byVersion = new Map(available.map(r => [normalizeRelease(r.version), r]));
   const hops: PlannedHop[] = [];
-  let curKey = curKey0;
-  let curVersion = normalizeRelease(current);
-  let prev: Omit<ReleaseFacts, 'version'> = facts ?? {};
-  while (cmp(curKey, targetEntry.key) < 0) {
-    const ck = curKey;
-    const options = entries.filter(
-      e =>
-        cmp(ck, e.key) < 0 &&
-        cmp(e.key, targetEntry.key) <= 0 &&
-        cmp(e.minFrom, ck) <= 0 &&
-        !minors.some(m => cmp(ck, m.key) < 0 && cmp(m.key, e.key) < 0)
-    );
-    if (options.length === 0) {
-      return {
-        hops,
-        exact,
-        error: `No release can be reached from ${curVersion} on the way to ${targetEntry.info.version}.`,
-      };
-    }
-    const same = options.filter(e => sameStream(e.key, ck));
-    const crossing = options.filter(e => !sameStream(e.key, ck));
-    const newerInStream = entries.some(
-      e => sameStream(e.key, ck) && cmp(e.key, ck) > 0 && cmp(e.minFrom, ck) <= 0
-    );
-    if (crossing.length && newerInStream && !same.length) {
-      return {
-        hops,
-        exact,
-        error: `${curVersion} cannot leave its stream before reaching its latest patch.`,
-      };
-    }
-    const pool = same.length && crossing.length ? same : options;
-    const next = pool.reduce((a, b) => (cmp(a.key, b.key) >= 0 ? a : b));
+  let from = current;
+  let prev: ReleaseFacts = status.currentReleaseInfo ?? {};
+  for (const version of path) {
+    const info = byVersion.get(normalizeRelease(version)) ?? { version };
     hops.push({
-      from: curVersion,
-      release: next.info,
-      kind: next.kind,
-      changes: hopChanges(prev, next.info),
+      from,
+      release: info,
+      kind: releaseKind(info, from),
+      changes: hopChanges(prev, info),
     });
     prev = {
-      kubernetes: next.info.kubernetes ?? prev.kubernetes,
-      fedora: next.info.fedora ?? prev.fedora,
-      crio: next.info.crio ?? prev.crio,
+      kubernetes: info.kubernetes ?? prev.kubernetes,
+      fedora: info.fedora ?? prev.fedora,
+      crio: info.crio ?? prev.crio,
     };
-    curKey = next.key;
-    curVersion = normalizeRelease(next.info.version);
+    from = normalizeRelease(version);
   }
-  return { hops, exact };
+  return { hops };
 }
 
 function plain(v: string | undefined): string | undefined {
@@ -223,7 +156,7 @@ function plain(v: string | undefined): string | undefined {
 }
 
 /** What a hop changes on the nodes: Kubernetes, Fedora, CRI-O. */
-export function hopChanges(prev: Omit<ReleaseFacts, 'version'>, next: ReleaseInfo): HopChange[] {
+export function hopChanges(prev: ReleaseFacts, next: ReleaseFacts): HopChange[] {
   const out: HopChange[] = [];
   const k8sFrom = plain(prev.kubernetes);
   const k8sTo = plain(next.kubernetes);
@@ -251,34 +184,6 @@ export function changesKubernetesMinor(change: HopChange): boolean {
   const a = parseSemver(change.from);
   const b = parseSemver(change.to);
   return !!a && !!b && (a.major !== b.major || a.minor !== b.minor);
-}
-
-/**
- * What the nodes run: the oldest kubelet, Fedora release and CRI-O among
- * them (k4all images name Fedora in osImage, CRI-O in the runtime version).
- */
-export function clusterFacts(nodes: NodeLike[]): Omit<ReleaseFacts, 'version'> {
-  let kubernetes: SemVer | null = null;
-  let kubernetesText: string | undefined;
-  let fedora: number | undefined;
-  let crio: string | undefined;
-  for (const n of nodes) {
-    const info = n.status?.nodeInfo;
-    const k = parseSemver(info?.kubeletVersion);
-    if (k && (!kubernetes || cmp(k, kubernetes) < 0)) {
-      kubernetes = k;
-      kubernetesText = plain(info?.kubeletVersion);
-    }
-    const f = /Fedora Linux (\d+)/.exec(info?.osImage ?? '');
-    if (f && (fedora === undefined || Number(f[1]) < fedora)) {
-      fedora = Number(f[1]);
-    }
-    const c = /cri-o:\/\/v?(\d+\.\d+)/.exec(info?.containerRuntimeVersion ?? '');
-    if (c && (!crio || Number(c[1].split('.')[1]) < Number(crio.split('.')[1]))) {
-      crio = c[1];
-    }
-  }
-  return { kubernetes: kubernetesText, fedora, crio };
 }
 
 // ------------------------------------------------------------------- Nodes
@@ -490,6 +395,7 @@ export function drainBehaviour(
 
 export type UpgradeStage =
   | 'waiting'
+  | 'graphUnavailable'
   | 'upToDate'
   | 'available'
   | 'progressing'
@@ -498,12 +404,23 @@ export type UpgradeStage =
   | 'failed'
   | 'succeeded';
 
+/** The upgrade graph as the operator last read it (condition GraphAvailable). */
+export interface GraphState {
+  /** null when the operator has not said (no condition yet). */
+  available: boolean | null;
+  /** The read error when not available. */
+  error?: string;
+  url?: string;
+}
+
 export interface UpgradeView {
   stage: UpgradeStage;
   tone: Tone;
   busy: boolean;
   label: string;
   current?: string;
+  /** The graph's entry for the current release (Kubernetes, Fedora, CRI-O). */
+  currentInfo?: ReleaseInfo;
   target?: string;
   /** Newest release the cluster can move to. */
   latest?: ReleaseInfo;
@@ -519,6 +436,18 @@ export interface UpgradeView {
   stale: boolean;
   /** An upgrade is under way (progressing, pausing, paused or failed). */
   active: boolean;
+  graph: GraphState;
+  /** Reason of the Failed condition: a node reason, NoPath, Downgrade or NodeNotReported. */
+  failedReason?: string;
+  /** When the upgrade succeeded (Succeeded condition). */
+  succeededAt?: string;
+}
+
+export function findUpgradeCondition(
+  cu: ClusterUpgradeObject,
+  type: string
+): Condition | undefined {
+  return (cu.status?.conditions ?? []).find(c => c.type === type);
 }
 
 export function sortedReleases(releases: ReleaseInfo[] | undefined): ReleaseInfo[] {
@@ -540,8 +469,12 @@ export function upgradeView(cu: ClusterUpgradeObject): UpgradeView {
   const done = hopsDone * Math.max(nodes.length, 1) + nodesDone;
   const generation = cu.metadata.generation;
   const observed = status.observedGeneration;
+  const graphCond = findUpgradeCondition(cu, CONDITION_GRAPH_AVAILABLE);
+  const failed = findUpgradeCondition(cu, CONDITION_FAILED);
+  const succeeded = findUpgradeCondition(cu, CONDITION_SUCCEEDED);
   const base = {
     current: status.currentRelease || undefined,
+    currentInfo: status.currentReleaseInfo,
     target: spec.targetRelease || undefined,
     latest: available[available.length - 1],
     available,
@@ -551,6 +484,13 @@ export function upgradeView(cu: ClusterUpgradeObject): UpgradeView {
     nodesTotal: nodes.length,
     progress: total > 0 ? Math.min(1, done / total) : 0,
     stale: generation !== undefined && observed !== undefined && observed < generation,
+    graph: {
+      available: graphCond ? graphCond.status === 'True' : null,
+      error: graphCond?.status === 'False' ? graphCond.message : undefined,
+      url: status.graphUrl || undefined,
+    },
+    failedReason: failed?.status === 'True' ? failed.reason : undefined,
+    succeededAt: succeeded?.status === 'True' ? succeeded.lastTransitionTime : undefined,
   };
   const make = (stage: UpgradeStage, tone: Tone, label: string, busy = false): UpgradeView => ({
     ...base,
@@ -575,28 +515,63 @@ export function upgradeView(cu: ClusterUpgradeObject): UpgradeView {
     case 'Failed':
       return make('failed', 'error', 'Needs attention');
     case 'Succeeded':
-      return make('succeeded', 'success', available.length ? 'Upgrade available' : 'Up to date');
     case 'Idle':
-      return available.length
-        ? make('available', 'info', 'Upgrade available')
-        : make('upToDate', 'success', 'Up to date');
+      // An unreadable graph lists no release: not the same as up to date.
+      if (base.graph.available === false) {
+        return make('graphUnavailable', 'warning', 'Upgrade graph unreadable');
+      }
+      if (available.length) {
+        return make(
+          status.phase === 'Succeeded' ? 'succeeded' : 'available',
+          'info',
+          'Upgrade available'
+        );
+      }
+      return make(status.phase === 'Succeeded' ? 'succeeded' : 'upToDate', 'success', 'Up to date');
   }
   return make('waiting', 'neutral', 'Waiting for k4all-operator', true);
 }
 
-/**
- * Conditions worth a warning: a negative one (Degraded, Failed, Stalled…)
- * that is True, or another one that is False, except the ones the stage
- * already explains (Ready, Progressing, Paused, Succeeded, Available).
- */
-export function problemConditions(conditions: Condition[] | undefined): Condition[] {
-  const negative = /degraded|fail|stall|error|blocked/i;
-  const explained = ['Ready', 'Progressing', 'Paused', 'Succeeded', 'Available', 'Complete'];
-  return (conditions ?? []).filter(c =>
-    negative.test(c.type)
-      ? c.status === 'True'
-      : c.status === 'False' && !explained.includes(c.type) && !!c.message
-  );
+/** What a Failed condition reason means when no node failed (the plan failed). */
+export const PLAN_FAILURE: Record<string, string> = {
+  NoPath:
+    'The upgrade graph has no way from the current release to the target. Choose another target, or Stop.',
+  Downgrade:
+    'The target is older than the release the cluster runs. Choose a newer target, or Stop.',
+  NodeNotReported:
+    'A node has no release or node-type annotation, so k4all-upgrade v2.4.0 or later is not running there yet.',
+};
+
+// --------------------------------------------------------------- Durations
+
+export interface Span {
+  ms: number;
+  /** Still running: measured up to now. */
+  running: boolean;
+}
+
+/** completedAt - startedAt, or now - startedAt while running; null without a start. */
+export function span(
+  startedAt: string | undefined,
+  completedAt: string | undefined,
+  now: number
+): Span | null {
+  const start = startedAt ? Date.parse(startedAt) : NaN;
+  if (Number.isNaN(start)) {
+    return null;
+  }
+  const end = completedAt ? Date.parse(completedAt) : NaN;
+  return Number.isNaN(end)
+    ? { ms: Math.max(0, now - start), running: true }
+    : { ms: Math.max(0, end - start), running: false };
+}
+
+/** "took 9 min" / "running for 3 min". */
+export function formatSpan(s: Span | null): string | undefined {
+  if (!s) {
+    return undefined;
+  }
+  return s.running ? `running for ${formatDuration(s.ms)}` : `took ${formatDuration(s.ms)}`;
 }
 
 // --------------------------------------------------------------- Guidance
@@ -613,56 +588,105 @@ export interface Guidance {
   title: string;
   text: string;
   commands: Command[];
-  /** The retry annotation helps (a failed drain, or a hop abandoned on the node). */
+  /** The retry annotation acts on this node (reason DrainTimeout or Abandoned). */
   retry: boolean;
 }
 
+/** Node reasons the retry annotation acts on. */
+export const RETRYABLE_REASONS = ['DrainTimeout', 'Abandoned'];
+
 /**
- * What the user can do about a node that is stuck, in words and commands.
- *
- * k4all-operator v0.4.0 reports a HOLD as hostPhase HOLD (phase Failed).
- * Everything else that fails happens while the node has no upgrade-target
- * (the drain path), with hostPhase left empty and one of three messages: the
- * hop was abandoned on the node, upgrade-target was removed before the hop
- * was done, drain timed out. nodePhase is the Node's own upgrade-phase
- * annotation, which still says ABANDONED in that case.
+ * What the user can do about a node, by the operator's machine-readable
+ * reason (nodes[].reason) and the host phase. Never from message texts: the
+ * message is only quoted.
  */
-export function nodeGuidance(
-  node: NodeUpgradeStatus,
-  spec: ClusterUpgradeSpec,
-  nodePhase?: string
-): Guidance | null {
+export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec): Guidance | null {
   const onNode = `on ${node.name}`;
-  const msg = node.message ?? '';
-  const quoted = msg ? ` k4all-upgrade says: "${msg}"` : '';
-  if (node.hostPhase === 'HOLD') {
-    if (/^upgrade-target/.test(msg)) {
+  const quoted = node.message ? ` k4all-upgrade says: "${node.message}"` : '';
+  const holdCommands: Command[] = [
+    { command: 'sudo k4all-upgrade status', where: onNode },
+    { command: 'sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume', where: onNode },
+    { command: 'sudo k4all-upgrade clear-hold --abandon', where: onNode },
+  ];
+  switch (node.reason) {
+    case 'HostHold':
+      return {
+        node: node.name,
+        severity: 'warning',
+        title: `${node.name} is on hold`,
+        text:
+          `The hop stopped on the node and waits for you.${quoted} ` +
+          'Log in to the node, find the cause with the first command, fix it, then clear the hold: the node resumes the hop and the upgrade goes on by itself. ' +
+          'To give up the hop instead and keep the node on its release, run the last command, then Retry or Stop here.',
+        commands: holdCommands,
+        retry: false,
+      };
+    case 'TargetRejected':
       return {
         node: node.name,
         severity: 'warning',
         title: `${node.name} refused the hop`,
         text:
           `k4all-upgrade on the node cannot plan this hop from its upgrade graph.${quoted} ` +
-          'The ClusterUpgrade graph and the graph in /etc/k4all-upgrade.yaml on the node must be the same; the node tries again every minute.',
+          'The ClusterUpgrade graph and the graph in /etc/k4all-upgrade.yaml on the node must be the same; the node tries again every minute, so fixing the graph is enough.',
         commands: [{ command: 'sudo k4all-upgrade plan', where: onNode }],
         retry: false,
       };
+    case 'RollbackRebooted':
+      return {
+        node: node.name,
+        severity: 'warning',
+        title: `${node.name} rolled back`,
+        text:
+          `The new image did not come up, so the node rebooted into its previous image and holds the hop.${quoted} ` +
+          'Find the cause with the first command; to try the hop again clear the hold and resume, or give it up with the last command, then Retry or Stop here.',
+        commands: holdCommands,
+        retry: false,
+      };
+    case 'Abandoned':
+      return {
+        node: node.name,
+        severity: 'error',
+        title: `The hop was abandoned on ${node.name}`,
+        text:
+          `The hop was given up on the node (or its request removed before it was done); the node stays on ${
+            node.release ?? 'its release'
+          }.${quoted} ` +
+          'Retry drains the node again and asks it for the hop. Stop ends the upgrade with the nodes on different releases.',
+        commands: [],
+        retry: true,
+      };
+    case 'DrainTimeout': {
+      const minutes = spec.drain?.timeoutMinutes || DEFAULT_DRAIN_TIMEOUT_MINUTES;
+      return {
+        node: node.name,
+        severity: 'error',
+        title: `Draining ${node.name} did not finish`,
+        text:
+          `A PodDisruptionBudget, or a pod that cannot be evicted, held the drain back past the timeout.${
+            node.message ? ` (${node.message})` : ''
+          } ` +
+          'Find the pods left on the node, move or delete them (or relax their PodDisruptionBudget), then Retry. ' +
+          `Or turn on "continue when the drain times out" in the upgrade settings, then Retry. Retry drains again, for up to ${minutes} minutes.`,
+        commands: [
+          {
+            command: `kubectl get pods -A -o wide --field-selector spec.nodeName=${node.name}`,
+            where: 'with kubectl',
+          },
+          { command: 'kubectl get pdb -A', where: 'with kubectl' },
+        ],
+        retry: true,
+      };
     }
-    return {
-      node: node.name,
-      severity: 'warning',
-      title: `${node.name} is on hold`,
-      text:
-        `The hop stopped on the node and waits for you.${quoted} ` +
-        'Log in to the node, find the cause with the first command, fix it, then clear the hold: the node resumes the hop and the upgrade goes on by itself. ' +
-        'To give up the hop instead and keep the node on its release, run the last command, then Retry or Stop here.',
-      commands: [
-        { command: 'sudo k4all-upgrade status', where: onNode },
-        { command: 'sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume', where: onNode },
-        { command: 'sudo k4all-upgrade clear-hold --abandon', where: onNode },
-      ],
-      retry: false,
-    };
+    case 'NodeNotReady':
+      return {
+        node: node.name,
+        severity: 'info',
+        title: `Waiting for ${node.name} to be Ready`,
+        text: 'The next node starts once every node is Ready. Right after a reboot this takes a few minutes; if it lasts, look at the node.',
+        commands: [{ command: `kubectl describe node ${node.name}`, where: 'with kubectl' }],
+        retry: false,
+      };
   }
   if (node.hostPhase === 'ROLLBACK_REBOOT') {
     return {
@@ -674,91 +698,27 @@ export function nodeGuidance(
       retry: false,
     };
   }
-  if (node.phase !== 'Failed') {
-    return null;
-  }
-  if (
-    node.hostPhase === 'ABANDONED' ||
-    nodePhase === 'ABANDONED' ||
-    /abandoned on the node/.test(msg)
-  ) {
+  if (node.phase === 'Failed') {
     return {
       node: node.name,
       severity: 'error',
-      title: `The hop was abandoned on ${node.name}`,
-      text:
-        `Someone ran clear-hold --abandon on the node; it stays on ${
-          node.release ?? 'its release'
-        }.${quoted} ` +
-        'Retry drains the node again and asks it for the hop. Stop ends the upgrade with the nodes on different releases.',
-      commands: [],
-      retry: true,
-    };
-  }
-  if (/^upgrade-target was removed/.test(msg)) {
-    return {
-      node: node.name,
-      severity: 'error',
-      title: `${node.name} dropped the hop`,
-      text:
-        `The hop request was removed from the node before the hop was done, so the node stays on ${
-          node.release ?? 'its release'
-        }. ` +
-        'Retry drains the node again and asks it for the hop. Stop ends the upgrade with the nodes on different releases.',
+      title: `${node.name} failed`,
+      text: `${node.message || 'The hop failed on this node.'} Check the node.`,
       commands: [{ command: 'sudo k4all-upgrade status', where: onNode }],
-      retry: true,
+      retry: false,
     };
   }
-  if (/^drain timed out/.test(msg)) {
-    const minutes = spec.drain?.timeoutMinutes || DEFAULT_DRAIN_TIMEOUT_MINUTES;
-    return {
-      node: node.name,
-      severity: 'error',
-      title: `Draining ${node.name} did not finish`,
-      text:
-        `${msg}: a PodDisruptionBudget, or a pod that cannot be evicted, holds the drain back. ` +
-        'Find the pods left on the node, move or delete them (or relax their PodDisruptionBudget), then Retry. ' +
-        `Or turn on "continue when the drain times out" in the upgrade settings, then Retry. Retry drains again, for up to ${minutes} minutes.`,
-      commands: [
-        {
-          command: `kubectl get pods -A -o wide --field-selector spec.nodeName=${node.name}`,
-          where: 'with kubectl',
-        },
-        { command: 'kubectl get pdb -A', where: 'with kubectl' },
-      ],
-      retry: true,
-    };
-  }
-  return {
-    node: node.name,
-    severity: 'error',
-    title: `${node.name} failed`,
-    text: `${msg || 'The hop failed on this node.'} Check the node, then Retry.`,
-    commands: [{ command: 'sudo k4all-upgrade status', where: onNode }],
-    retry: true,
-  };
-}
-
-/** The Node's own upgrade-phase annotation, by node name. */
-export function nodeHostPhases(nodes: NodeLike[]): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const n of nodes) {
-    const phase = n.metadata.annotations?.[NODE_UPGRADE_PHASE_ANNOTATION];
-    if (phase) {
-      out.set(n.metadata.name, phase);
-    }
-  }
-  return out;
+  return null;
 }
 
 /**
- * Whether Retry does something: the operator reads the retry annotation only
- * for a failed node that has no hop request (failed drain, abandoned or
- * dropped hop). A HOLD resumes by itself; a failed plan (unknown or older
- * target, missing node annotations) needs another target or Stop.
+ * Whether Retry does something: the operator runs again a node that failed
+ * with reason DrainTimeout or Abandoned, and nothing else.
  */
 export function canRetry(cu: ClusterUpgradeObject): boolean {
-  return (cu.status?.nodes ?? []).some(n => n.phase === 'Failed' && n.hostPhase !== 'HOLD');
+  return (cu.status?.nodes ?? []).some(
+    n => n.phase === 'Failed' && RETRYABLE_REASONS.includes(n.reason ?? '')
+  );
 }
 
 // ------------------------------------------------------------- Spec writes

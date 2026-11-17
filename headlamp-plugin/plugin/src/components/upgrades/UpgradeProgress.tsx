@@ -32,12 +32,13 @@ import { ClusterUpgradeObject, NodeLike, NodeUpgradeStatus } from '../../model/t
 import {
   canRetry,
   drainTimer,
+  formatSpan,
   Guidance,
   HOST_PHASES,
   hostPhaseLabel,
   NODE_PHASE,
   nodeGuidance,
-  nodeHostPhases,
+  span,
   upgradeOrder,
   UpgradeView,
 } from '../../model/upgrades';
@@ -71,7 +72,6 @@ export function UpgradeNodesTable(props: {
   const byName = new Map(statusNodes.map(n => [n.name, n]));
   const k8s = new Map(props.nodes.map(n => [n.metadata.name, n]));
   const order = upgradeOrder(statusNodes, props.nodes);
-  const hostPhases = nodeHostPhases(props.nodes);
   const drain = props.cu.spec?.drain;
   return (
     <Box sx={{ overflowX: 'auto' }}>
@@ -85,15 +85,15 @@ export function UpgradeNodesTable(props: {
             <TableCell>Upgrade</TableCell>
             <TableCell>On the node</TableCell>
             <TableCell>Node status</TableCell>
+            <TableCell>Latest hop</TableCell>
             <TableCell sx={{ minWidth: 220 }}>Detail</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
           {order.map((o, i) => {
             const st: NodeUpgradeStatus | undefined = byName.get(o.name);
-            // The operator copies the host phase only while the node has a hop
-            // request; the Node annotation says it otherwise (e.g. ABANDONED).
-            const hostPhase = st?.hostPhase || hostPhases.get(o.name);
+            const hostPhase = st?.hostPhase;
+            const took = formatSpan(span(st?.startedAt, st?.completedAt, props.now));
             const phase = st ? NODE_PHASE[st.phase] ?? { label: st.phase, tone: 'neutral' } : null;
             const timer = st?.phase === 'Draining' && st ? drainTimer(st, drain, props.now) : null;
             const health = nodeHealth(k8s.get(o.name));
@@ -142,6 +142,11 @@ export function UpgradeNodesTable(props: {
                 </TableCell>
                 <TableCell>
                   <TonePill tone={health.tone} label={health.label} />
+                </TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    {took ?? '—'}
+                  </Typography>
                 </TableCell>
                 <TableCell>
                   {timer ? (
@@ -244,9 +249,8 @@ export function UpgradeProgressPanel(props: {
   const [stopOpen, setStopOpen] = React.useState(false);
   const spec = cu.spec ?? {};
   const statusNodes = cu.status?.nodes ?? [];
-  const hostPhases = nodeHostPhases(props.nodes);
   const guidance = statusNodes
-    .map(n => nodeGuidance(n, spec, hostPhases.get(n.name)))
+    .map(n => nodeGuidance(n, spec))
     .filter((g): g is Guidance => g !== null);
   const retryable = canRetry(cu);
   const paused = view.stage === 'paused' || view.stage === 'pausing';
@@ -343,7 +347,7 @@ export function UpgradeProgressPanel(props: {
         </Stack>
 
         {view.path.length > 0 && (
-          <HopTrail from={anyDone ? undefined : view.current} path={view.path} />
+          <HopTrail from={anyDone ? undefined : view.current} path={view.path} now={props.now} />
         )}
 
         <Box>

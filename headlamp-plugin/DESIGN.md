@@ -1,6 +1,6 @@
 # k4all Headlamp plugin: design
 
-Status: built and unit-tested (237 tests), not yet run against a live
+Status: built and unit-tested (239 tests), not yet run against a live
 cluster. Ships from k4all v2.4.0 (k4all-operator v0.4.0, Headlamp chart
 0.46.0, Kubernetes 1.35 and later). User guide: `docs/headlamp-plugin.md`.
 Packaging and release: `DISTRIBUTION.md`.
@@ -152,16 +152,18 @@ every 5) and no hop is running.
 
 - **Targets**: `status.availableReleases` (newer than `currentRelease`,
   blocked releases left out), newest first, with kind (minor/patch, with
-  what that means), Kubernetes and Fedora (as a change from what the nodes
-  run), the hops the plugin plans to it, and the notes (collapsed when
-  long). The newest is marked latest; during an upgrade the target is
+  what that means), Kubernetes and Fedora (as a change from
+  `status.currentReleaseInfo`) and CRI-O when it changes, the hops the
+  operator plans to it (`availableReleases[].path`; no path → the button is
+  disabled with "a release on the way is blocked or missing"), and the notes
+  (collapsed when long). With `GraphAvailable=False` the empty list says the
+  graph cannot be read instead of "nothing newer". The newest is marked latest; during an upgrade the target is
   marked and the others offer "Change target to".
 - **Review dialog** (on "Upgrade to vX"): from → to with the Kubernetes and
   Fedora change, then
   1. the path, hop by hop: from → release, kind, what it changes
-     (Kubernetes, Fedora, CRI-O when known), its notes, reboots per hop;
-     a note when the path comes from the versioning rules rather than
-     `minFrom` (4.3);
+     (Kubernetes, Fedora, CRI-O), its notes, reboots per hop: the
+     operator's own path (4.3);
   2. the node order (bootstrap, control planes, workers, one at a time);
   3. the drain: what happens (cordon and evict with PodDisruptionBudgets,
      timeout, then fail or continue), with the timeout and
@@ -186,13 +188,20 @@ every 5) and no hop is running.
   guidance (4.3), and the nodes table: order, release, operator phase
   (Waiting, Draining, Upgrading, Done, Failed), host phase (PREFLIGHT …
   COMMIT, HOLD, ABANDONED, ROLLBACK_REBOOT with a tooltip of what it does),
-  the Node's readiness and cordon from the core Node, and the drain timer
-  (elapsed of timeout, and what happens at the timeout) or the node message.
+  the Node's readiness and cordon from the core Node, how long the node's
+  latest hop took (or has been running, `startedAt`/`completedAt`), and the
+  drain timer (elapsed of timeout, and what happens at the timeout) or the
+  node message. The hop trail shows each hop's duration the same way.
 - **Actions**: Pause / Resume (`spec.paused`), Stop (clears
   `spec.targetRelease`, after a confirmation that explains the mixed
   releases it leaves and suggests Pause), Retry (the retry annotation; shown
-  only when it helps: a failed drain, an abandoned hop, or a failed upgrade
-  with no node on hold).
+  only for a node Failed with reason DrainTimeout or Abandoned, the only ones
+  the operator retries).
+- **Banners**: waiting for the operator; stopped (the message, and for a
+  failed plan what its reason means: NoPath, Downgrade, NodeNotReported);
+  paused; complete (since when, from the Succeeded condition); spec not
+  processed yet; `GraphAvailable=False` with the error and the URL, in every
+  phase.
 - **How upgrades run** panel: node order, drain settings, graph; "Change"
   opens a small form for the drain timeout, continue-on-timeout and the graph
   URL (empty = k4all releases), saved through the same review.
@@ -285,7 +294,7 @@ vocabulary is reused everywhere: tone pills (dot or spinner + label), panels
 with icon titles, setting rows (label and help left, control right, apply
 badge), a segmented bar for component states, gradient icon tiles in page
 headers, kind chips (minor filled, patch outlined), the hop trail, copyable
-command lines. Icons are `mdi:` names; the plugin registers the 62 it uses
+command lines. Icons are `mdi:` names; the plugin registers the 63 it uses
 with Headlamp's Iconify instance (`src/icons.ts`), because Headlamp bundles
 only a handful and fetches the rest from api.iconify.design, which an
 air-gapped cluster cannot reach (a test keeps the list complete). All
@@ -365,55 +374,52 @@ that the operator creates (v0.4.0+).
 | Drain timeout, continue on timeout | `spec.drain.{timeoutMinutes,continueOnTimeout}` | write (review) | operator's drain |
 | Upgrade graph | `spec.graphUrl` (empty = default) | write (review) | operator's planner; must match the nodes' graph |
 | Retry | annotation `k4all.magesgate.com/retry` (timestamp) | write (merge patch) | operator retries failed nodes and removes it |
-| (status) | `phase`, `message`, `currentRelease`, `currentHop`, `path[]`, `availableReleases[]`, `nodes[]`, `graphUrl`, `observedGeneration`, `conditions` | read | all of 3.2 |
+| (status) | `phase`, `message`, `currentRelease`, `currentReleaseInfo`, `currentHop`, `path[]` (with `startedAt`/`completedAt`), `availableReleases[]` (with `minFrom`, `crio`, `path`), `nodes[]` (with `reason`, `hostPhase`, `startedAt`/`completedAt`), `graphUrl`, `observedGeneration`, `conditions` (`GraphAvailable`, `Progressing`, `Succeeded`, `Failed`) | read | all of 3.2 |
 
 ### 4.3 Upgrade logic in the plugin (`src/model/upgrades.ts`)
 
-- **Path**: `planPath` is a port of `plan_path` in
-  `bootc/overlay/usr/local/bin/k4all-upgrade`: never skip a minor, take the
-  stream's latest patch before crossing to the next, never a blocked
-  release. The API's `ReleaseInfo` has no `minFrom`, so when it is missing
-  the plugin uses the k4all versioning rules for it (a patch starts at
-  X.Y.0, a minor follows the newest older release), which is what the graph
-  encodes today; the review says so. Once the upgrade starts, the operator's
-  `status.path` is what the page shows.
-- **What a hop changes**: Kubernetes, Fedora and CRI-O of each target
-  against the previous step; the start comes from the nodes (oldest kubelet,
-  `Fedora Linux NN` in osImage, `cri-o://X.Y`), since the API has no field
-  for the current release's details.
+- **Path**: `releasePlan` takes the hops from
+  `status.availableReleases[target].path`, which the operator computes with
+  the planner the nodes use (never skip a minor, a release line's latest
+  patch first, no blocked release); an empty path means there is no way and
+  the target cannot be chosen. Each hop's details come from its own
+  `availableReleases` entry.
+- **What a hop changes**: Kubernetes, Fedora and CRI-O of each step against
+  the previous one, starting from `status.currentReleaseInfo`.
 - **Node order**: `status.nodes` sorted bootstrap, control, worker (stable);
   before the operator lists them, the Nodes (node-type annotation, NodeConfig,
   control-plane label).
-- **View**: one stage per state: waiting (no phase yet), available /
-  up to date (Idle), progressing, pausing (Progressing with `spec.paused`
+- **View**: one stage per state: waiting (no phase yet), graph unreadable
+  (Idle or Succeeded with `GraphAvailable=False`: not "up to date"),
+  available / up to date (Idle), progressing, pausing (Progressing with `spec.paused`
   and a node still draining or upgrading), paused, failed, succeeded;
-  `stale` while `observedGeneration < generation`.
-- **Guidance** per node, matched to what the operator's controller
-  (`internal/clusterupgrade/decide.go`) reports: it copies the host phase
-  only while the node has a hop request, so HOLD and ROLLBACK_REBOOT come as
-  `hostPhase`, while an abandoned or dropped hop and a drain timeout come as
-  phase Failed with an empty `hostPhase` and a message; the Node's own
-  `upgrade-phase` annotation (ABANDONED) is read as well:
-  - HOLD: the HOLD message, then on the node `sudo k4all-upgrade status`,
+  `stale` while `observedGeneration < generation`; the graph state, the
+  Failed reason and the Succeeded time come from the conditions.
+- **Durations**: `startedAt`/`completedAt` of hops and nodes, "took N min"
+  or "running for N min".
+- **Guidance** per node, by `nodes[].reason` (never by message text; the
+  message is only quoted):
+  - HostHold: on the node `sudo k4all-upgrade status`,
     `sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume`, or
-    `sudo k4all-upgrade clear-hold --abandon`; the upgrade goes on by
-    itself after a resume, so no Retry;
-  - HOLD whose message starts with `upgrade-target` (the node refused the
-    target): the graphs differ; `sudo k4all-upgrade plan`; the node retries
-    every minute;
-  - ABANDONED (Node annotation, or the message "…abandoned on the node"),
-    and "upgrade-target was removed before the hop was done": the node stays
-    on its release; Retry (drains again and asks for the hop) or Stop;
-  - ROLLBACK_REBOOT: the node goes back to its previous image and then holds;
-  - "drain timed out …": `kubectl get pods -A -o wide --field-selector
+    `sudo k4all-upgrade clear-hold --abandon`; the upgrade goes on by itself
+    after a resume, so no Retry;
+  - TargetRejected: the node's graph differs from the ClusterUpgrade's;
+    `sudo k4all-upgrade plan`; the node tries again every minute;
+  - RollbackRebooted: the new image did not boot, the node is back on the
+    previous one and holds: the same commands as a HOLD;
+  - Abandoned (also a hop request removed before it was done): the node
+    stays on its release; Retry (drains again and asks for the hop) or Stop;
+  - DrainTimeout: `kubectl get pods -A -o wide --field-selector
     spec.nodeName=<node>`, `kubectl get pdb -A`; Retry, or turn on
-    continue-on-timeout and then Retry (a failed node stays failed until a
-    retry, which drains again for a full timeout);
-  - other Failed: the message, `k4all-upgrade status`, Retry.
-  Retry is offered only when a node is Failed outside a HOLD: the operator
-  reads the annotation only for such a node. A failed plan (target older than
-  the cluster, no path, a node without the k4all-upgrade annotations) shows
-  the operator's message with "choose another target, or Stop".
+    continue-on-timeout and then Retry (the drain starts over for a full
+    timeout);
+  - NodeNotReady: not a failure, the upgrade waits for that node to be Ready
+    (`kubectl describe node`);
+  - host phase ROLLBACK_REBOOT while it happens; any other Failed node: its
+    message, `k4all-upgrade status`, no Retry.
+  Retry is offered only for DrainTimeout and Abandoned. A failed plan (Failed
+  condition reason NoPath, Downgrade or NodeNotReported) shows the message
+  with what to do: another target, or Stop.
 - **Writes** are built from the user's intent (start vX with drain options,
   settings, pause, resume, stop) on the current object: `desiredSpec` →
   `buildSpecPatch` (generation test + minimal ops). Fields the plugin does
@@ -600,13 +606,14 @@ tagged, if possible).
 | **O-5** | operator status | Set `status.features.ovsBridgeReady` (declared, never written); per-component `observedGeneration` or a ReleaseManifest `status.observedGeneration` | Overview could show a sync in progress |
 | **O-6** | operator `cilium_hook.go` | Enable Cilium's ingress controller when `ingress.cilium.dedicatedIP` is set; today the IP only reaches the MetalLB pool | the field is labelled "added to the MetalLB address pool" |
 | **O-7** | operator v0.5.0 | CNI switch and OVS bridge on/off on the existing fields `networking.cni.type` and `features.ovsBridge.enabled` (the plugin's controls turn on by version, 4.1), with progress in status | read-only with "coming with k4all-operator v0.5.0" |
-| **U-1** | `ReleaseInfo` | Add `minFrom` (and `crio`): the plugin then plans the exact path the operator and the nodes will take before the target is set, and shows the CRI-O change per hop | path from the versioning rules, labelled as such (4.3) |
-| **U-2** | status | The current release's own `ReleaseInfo` (Kubernetes, Fedora, CRI-O), e.g. `status.current` | taken from the nodes' kubelet, osImage and runtime |
-| **U-3** | `nodes[]` | A machine-readable `reason` for Failed (`DrainTimeout`, `Hold`, `Abandoned`, `TargetRemoved`, `TargetRefused`, …), and `hostPhase` copied in the drain path too (today `drain()` leaves it empty, so an abandoned hop shows no ABANDONED) | recognised from the message texts ("drain timed out", "abandoned on the node", "upgrade-target was removed", prefix `upgrade-target`) and the Node's `upgrade-phase` annotation: a wording change in the operator breaks it |
-| **U-4** | retry annotation | Document what it retries: a Failed node without a hop request (drain timeout, abandoned or dropped hop), draining it again for a full timeout; not a HOLD, not a failed plan | Retry offered exactly there |
-| **U-5** | `path[]`, `nodes[]` | `startedAt`/`completedAt` per hop and per node (or a node `lastTransitionTime`) | no elapsed time per hop or node, only the drain timer |
-| **U-6** | conditions | Set conditions (e.g. `GraphAvailable=False` with the error, `Progressing`, `Degraded`); the controller keeps `status.conditions` but sets none | False conditions, and True negative ones, are shown as warnings |
-| **U-7** | status | With no target, an unreadable graph leaves phase Idle, no message and no `availableReleases`: indistinguishable from "up to date". Say it (message or U-6 condition) in every phase | the empty list says "nothing newer… if you expected one, check that k4all-operator can read the graph" |
+| ~~U-1~~ | `ReleaseInfo` | `minFrom`, `crio`, and `path` (the hops the operator would plan) in `availableReleases`. **Done** (k4all-operator 7ef70c4). | the review and the list show the operator's own path |
+| ~~U-2~~ | status | `currentReleaseInfo`. **Done**. | the "from" of every change |
+| ~~U-3~~ | `nodes[]` | `reason` (DrainTimeout, HostHold, Abandoned, TargetRejected, RollbackRebooted, NodeNotReady) and `hostPhase` for every node. **Done**. | guidance by reason only |
+| ~~U-4~~ | retry annotation | Semantics documented on the constant: DrainTimeout and Abandoned only, the drain starts over. **Done**. | Retry offered exactly there |
+| ~~U-5~~ | `path[]`, `nodes[]` | `startedAt`/`completedAt`. **Done**. | durations in the trail and the nodes table |
+| ~~U-6~~ | conditions | `GraphAvailable`, `Progressing`, `Succeeded`, `Failed` with machine-readable reasons. **Done**. | graph banner, failed-plan reasons, completion time |
+| ~~U-7~~ | status | An unreadable graph shows in every phase (condition and, when Idle, message). **Done**. | "graph unreadable", not "up to date" |
+| **U-8** | host `k4all-upgrade` | Write `k4all.magesgate.com/upgrade-reason` (TargetRejected, RollbackRebooted) next to HOLD; until then every HOLD reaches the plugin as HostHold, and a refused target gets the generic hold guidance | handled when it appears |
 | **H-1** | `k4all-upgrade` | Node annotations for release and HOLD reason. **Done** in the v2.4.0 host tool (`release`, `upgrade-phase`, `upgrade-message`). | shown on Overview, Upgrades and the Node page |
 | **H-2** | `k4all-upgrade` `merge_release_manifest` | Make the Removed rule explicit: keep a cluster-side `management: Removed` unless the release changed that component's management itself | the UI warns that a release can set it back |
 | **H-3** | node scripts | Proxy: read `spec.proxy` from the ClusterConfig on boot (or document it as install-time in the CRD) | read-only with explanation |
@@ -675,8 +682,9 @@ plugin/
     changes.ts                      change list, consequences, re-applied components
     components.ts, semver.ts        activation (port of shouldInstall), rows,
                                     upgrade path (port of UpgradeStep), guards
-    upgrades.ts                     path (port of plan_path), view, node order, drain
-                                    timer, estimate, guidance, ClusterUpgrade writes
+    upgrades.ts                     path (operator's), view, conditions, durations,
+                                    node order, drain timer, estimate, guidance by
+                                    reason, ClusterUpgrade writes
     health.ts                       health headline, banners, node rows
     overrides.ts                    overrides form <-> componentOverrides
     textDiff.ts                     line diff, folding, YAML dump
@@ -694,24 +702,27 @@ npm ci
 npm run lint && npm run tsc && npm test && npm run build   # dist/main.js
 ```
 
-Tests: 237 (vitest, jsdom). The model tests cover patch generation and
+Tests: 239 (vitest, jsdom). The model tests cover patch generation and
 application, preconditions, rebase/conflicts, the editor reducer, the
 ingress controller of the release (ingress-nginx and Traefik), Traefik
 fallback/mirror/exposure, capabilities, overrides form round-trips
 (including Helm nulls), validation (IPs, CIDRs, devices, helmArgs, YAML),
 operator parity (`shouldInstall` of v0.4.0, `UpgradeStep`, semver), change
 descriptions and re-applied components, health and node rows, error
-classification, text diff, and the upgrade logic (path planning against
-`plan_path`'s rules and with `minFrom`, hop changes, cluster facts, node
-order, estimates, drain timer, stages, guidance for HOLD, refused targets,
-ABANDONED, drain timeouts, Retry, and the spec of every intent). Rendering
+classification, text diff, and the upgrade logic (the operator's path and
+what each hop changes from `currentReleaseInfo`, an unreachable release,
+node order, estimates, drain timer, durations, stages including an
+unreadable graph, the Failed and Succeeded conditions, guidance for every
+node reason and none from message texts, Retry, and the spec of every
+intent). Rendering
 tests (Testing Library) cover the Ingress (both controllers), Features and
 Networking sections (including the capability-gated controls), the review
 dialog's acknowledgement gate, the conflict table, and for upgrades the
-release list, the review dialog (path, order, drain, downtime, single node,
-the acknowledgement, re-checking with new drain options), the progress panel
-(order, drain timer, pause, stop, retry, HOLD guidance), the states without
-ClusterUpgrade and the Overview card. The two save flows run against a fake
+release list (including an unreadable graph and a release without a path),
+the review dialog (path, order, drain, downtime, single node, the
+acknowledgement, re-checking with new drain options), the progress panel
+(order, drain timer, durations, pause, stop, retry, HOLD and ABANDONED
+guidance), the states without ClusterUpgrade and the Overview card. The two save flows run against a fake
 API server applying the patches (dry run then apply, rebase or rebuild on a
 newer version, conflict then "keep mine", late results after closing, API
 errors, pause with a conflict retried once, the retry annotation), and the
@@ -728,8 +739,8 @@ same session guard.
 
 A second independent review compared the Upgrades page with the operator's
 controller (`feat/cluster-upgrade`, `decide.go`) and found that abandoned
-hops and drain timeouts were told apart wrongly (fixed: by message and Node
-annotation, not by `drainStartedAt`), Retry was offered for failed plans
+hops and drain timeouts were told apart wrongly (fixed, and since operator
+7ef70c4 read from `nodes[].reason` instead of messages), Retry was offered for failed plans
 where the operator ignores it (fixed), the upgrade settings form reset on
 every status write (fixed: filled when it opens), and smaller issues (a
 bounded conflict loop, "Try again" on the newest object, discovery and
@@ -743,7 +754,6 @@ see DISTRIBUTION.md) with the real ClusterUpgrade controller.
 ## 11. Later
 
 - An app-bar indicator while an upgrade runs (needs a cheap watch).
-- Exact paths before the start (U-1), elapsed times per hop and node (U-5).
 - Overrides editor with Monaco and the chart's values schema for completion.
 - CNI switch and OVS bridge once operator v0.5.0 ships (4.1).
 - Italian (and other) translations through Headlamp's i18n.

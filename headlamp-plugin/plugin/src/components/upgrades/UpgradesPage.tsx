@@ -7,6 +7,7 @@
  */
 
 import { Icon } from '@iconify/react';
+import { Utils } from '@kinvolk/headlamp-plugin/lib';
 import {
   Alert,
   AlertTitle,
@@ -35,7 +36,7 @@ import {
   DEFAULT_DRAIN_TIMEOUT_MINUTES,
   drainBehaviour,
   estimate,
-  problemConditions,
+  PLAN_FAILURE,
   upgradeOrder,
   UpgradeView,
   upgradeView,
@@ -176,7 +177,6 @@ function StageBanner(props: {
   canPatch: boolean;
 }) {
   const { cu, view, flow, canPatch } = props;
-  const failedConditions = problemConditions(cu.status?.conditions);
   return (
     <Stack spacing={1.5} sx={{ mb: 2 }}>
       {view.stage === 'waiting' && (
@@ -204,8 +204,11 @@ function StageBanner(props: {
         >
           <AlertTitle>The upgrade stopped</AlertTitle>
           {cu.status?.message || 'A node needs attention: see below.'}
-          {!(cu.status?.nodes ?? []).some(n => n.phase === 'Failed') &&
-            ' Choose another target below, or Stop the upgrade.'}
+          {view.failedReason && PLAN_FAILURE[view.failedReason] && (
+            <Typography variant="body2" sx={{ mt: 0.5 }}>
+              {PLAN_FAILURE[view.failedReason]}
+            </Typography>
+          )}
         </Alert>
       )}
       {view.stage === 'paused' && (
@@ -231,7 +234,8 @@ function StageBanner(props: {
       {view.stage === 'succeeded' && (
         <Alert severity="success">
           <AlertTitle>Upgrade complete</AlertTitle>
-          Every node runs {view.current ?? view.target}.
+          Every node runs {view.current ?? view.target}
+          {view.succeededAt ? ` (since ${Utils.timeAgo(view.succeededAt)} ago).` : '.'}
           {view.available.length > 0 && ' A newer release is already available below.'}
         </Alert>
       )}
@@ -241,12 +245,25 @@ function StageBanner(props: {
           {cu.metadata.generation}, processed {cu.status?.observedGeneration}).
         </Alert>
       )}
-      {failedConditions.map(c => (
-        <Alert key={c.type} severity="warning">
-          <AlertTitle>{c.reason || c.type}</AlertTitle>
-          {c.message || `${c.type} is ${c.status}.`}
+      {view.graph.available === false && (
+        <Alert severity="warning" icon={<Icon icon="mdi:cloud-alert-outline" />}>
+          <AlertTitle>k4all-operator cannot read the upgrade graph</AlertTitle>
+          {view.graph.error}
+          <Typography variant="body2" sx={{ mt: 0.5 }}>
+            Until it can, the releases to move to are unknown and an upgrade does not start its next
+            hop. It tries again by itself; check the graph URL
+            {view.graph.url ? (
+              <>
+                {' '}
+                (<Mono>{view.graph.url}</Mono>)
+              </>
+            ) : (
+              ''
+            )}{' '}
+            and that the cluster can reach it.
+          </Typography>
         </Alert>
-      ))}
+      )}
     </Stack>
   );
 }
@@ -382,7 +399,6 @@ function UpgradesContent(props: {
           <ReleaseList
             cu={cu}
             view={view}
-            nodes={data.nodes}
             canPatch={canPatch && view.stage !== 'waiting'}
             onChoose={version => flow.review({ kind: 'start', target: version })}
           />

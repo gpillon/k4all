@@ -91,9 +91,7 @@ describe('ReleaseList', () => {
   it('lists the targets newest first with kind, versions, hops and notes', () => {
     const cu = clusterUpgrade();
     const onChoose = vi.fn();
-    render(
-      <ReleaseList cu={cu} view={upgradeView(cu)} nodes={nodes()} canPatch onChoose={onChoose} />
-    );
+    render(<ReleaseList cu={cu} view={upgradeView(cu)} canPatch onChoose={onChoose} />);
     const buttons = screen.getAllByRole('button', { name: /^Upgrade to v/ });
     expect(buttons.map(b => b.textContent)).toEqual([
       'Upgrade to v2.7.0',
@@ -111,15 +109,7 @@ describe('ReleaseList', () => {
 
   it('marks the current target and disables the choice without permission', () => {
     const cu = clusterUpgradeInProgress();
-    render(
-      <ReleaseList
-        cu={cu}
-        view={upgradeView(cu)}
-        nodes={nodes()}
-        canPatch={false}
-        onChoose={vi.fn()}
-      />
-    );
+    render(<ReleaseList cu={cu} view={upgradeView(cu)} canPatch={false} onChoose={vi.fn()} />);
     expect(screen.getByText('current target')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Change target to v2.6.0' })).toBeNull();
     const other = screen.getByRole('button', {
@@ -131,10 +121,29 @@ describe('ReleaseList', () => {
   it('says when the cluster is up to date', () => {
     const cu = clusterUpgrade();
     cu.status!.availableReleases = [];
-    render(
-      <ReleaseList cu={cu} view={upgradeView(cu)} nodes={nodes()} canPatch onChoose={vi.fn()} />
-    );
+    render(<ReleaseList cu={cu} view={upgradeView(cu)} canPatch onChoose={vi.fn()} />);
     expect(screen.getByText('Nothing newer than v2.4.0')).toBeTruthy();
+  });
+
+  it('does not call an unreadable graph up to date', () => {
+    const cu = clusterUpgrade();
+    cu.status!.availableReleases = [];
+    cu.status!.conditions = cu.status!.conditions!.map(c =>
+      c.type === 'GraphAvailable' ? { ...c, status: 'False', message: 'HTTP 404' } : c
+    );
+    render(<ReleaseList cu={cu} view={upgradeView(cu)} canPatch onChoose={vi.fn()} />);
+    expect(screen.getByText('Cannot read the upgrade graph')).toBeTruthy();
+    expect(screen.getByText(/HTTP 404/)).toBeTruthy();
+    expect(screen.queryByText(/Nothing newer/)).toBeNull();
+  });
+
+  it('disables a release the graph has no way to', () => {
+    const cu = clusterUpgrade();
+    cu.status!.availableReleases!.find(r => r.version === 'v2.7.0')!.path = [];
+    render(<ReleaseList cu={cu} view={upgradeView(cu)} canPatch onChoose={vi.fn()} />);
+    const button = screen.getByRole('button', { name: 'Upgrade to v2.7.0' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText(/no way from v2.4.0 to v2.7.0/)).toBeTruthy();
   });
 });
 
@@ -273,6 +282,7 @@ describe('UpgradeProgressPanel', () => {
       name: 'cp-2',
       role: 'control',
       phase: 'Failed',
+      reason: 'HostHold',
       hostPhase: 'HOLD',
       message: 'kubeadm upgrade node failed',
     };
@@ -290,6 +300,7 @@ describe('UpgradeProgressPanel', () => {
     cu.status!.nodes![1] = {
       ...cu.status!.nodes![1],
       phase: 'Failed',
+      reason: 'DrainTimeout',
       message: 'drain timed out after 30 minutes, 3 pods left',
     };
     const flow = renderPanel(cu);
@@ -298,7 +309,7 @@ describe('UpgradeProgressPanel', () => {
     expect(flow.retry).toHaveBeenCalled();
   });
 
-  it('reads ABANDONED from the Node when the operator reports only a failure', () => {
+  it("shows an abandoned hop from the operator's reason and host phase", () => {
     const cu = clusterUpgradeInProgress();
     cu.status!.phase = 'Failed';
     cu.status!.nodes![1] = {
@@ -306,22 +317,23 @@ describe('UpgradeProgressPanel', () => {
       role: 'control',
       release: 'v2.4.1',
       phase: 'Failed',
+      reason: 'Abandoned',
+      hostPhase: 'ABANDONED',
       message: 'v2.5.0 abandoned: disk full',
     };
-    const withAnnotation = nodes();
-    withAnnotation[1].metadata.annotations!['k4all.magesgate.com/upgrade-phase'] = 'ABANDONED';
-    render(
-      <UpgradeProgressPanel
-        cu={cu}
-        view={upgradeView(cu)}
-        nodes={withAnnotation}
-        flow={flowStub({ kind: 'idle' })}
-        canPatch
-        now={now}
-      />
-    );
+    const flow = renderPanel(cu);
     expect(screen.getByText('The hop was abandoned on cp-2')).toBeTruthy();
     expect(screen.getByText('Abandoned')).toBeTruthy(); // host phase column
+    fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0]);
+    expect(flow.retry).toHaveBeenCalled();
+  });
+
+  it('shows how long hops and nodes took', () => {
+    renderPanel(clusterUpgradeInProgress());
+    expect(screen.getByText('took 27 min')).toBeTruthy(); // hop v2.4.1
+    expect(screen.getByText('running for 36 min')).toBeTruthy(); // hop v2.5.0
+    expect(screen.getByText('took 11 min')).toBeTruthy(); // cp-1
+    expect(screen.getByText('running for 6 min')).toBeTruthy(); // cp-2
   });
 
   it('resumes a paused upgrade', () => {

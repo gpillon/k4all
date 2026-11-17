@@ -16,8 +16,15 @@ import {
   useTheme,
 } from '@mui/material';
 import React from 'react';
-import { ClusterUpgradeObject, NodeLike, ReleaseInfo } from '../../model/types';
-import { clusterFacts, planPath, sortedReleases, UpgradeView } from '../../model/upgrades';
+import { ClusterUpgradeObject, ReleaseInfo } from '../../model/types';
+import {
+  HopChange,
+  hopChanges,
+  ReleaseFacts,
+  releasePlan,
+  sortedReleases,
+  UpgradeView,
+} from '../../model/upgrades';
 import { Panel } from '../common/ui';
 import { HopChanges, KindChip } from './parts';
 
@@ -45,6 +52,31 @@ function Notes(props: { text: string }) {
   );
 }
 
+/**
+ * Kubernetes and Fedora of a release, as a change from the current release
+ * when they differ, and CRI-O when it changes.
+ */
+function releaseChanges(facts: ReleaseFacts, rel: ReleaseInfo): HopChange[] {
+  const changed = hopChanges(facts, rel);
+  const out: HopChange[] = [];
+  if (rel.kubernetes) {
+    out.push(
+      changed.find(c => c.what === 'Kubernetes') ?? {
+        what: 'Kubernetes',
+        to: rel.kubernetes.replace(/^v/, ''),
+      }
+    );
+  }
+  if (rel.fedora) {
+    out.push(changed.find(c => c.what === 'Fedora') ?? { what: 'Fedora', to: String(rel.fedora) });
+  }
+  const crio = changed.find(c => c.what === 'CRI-O');
+  if (crio) {
+    out.push(crio);
+  }
+  return out;
+}
+
 function ReleaseRow(props: {
   rel: ReleaseInfo;
   latest: boolean;
@@ -54,14 +86,11 @@ function ReleaseRow(props: {
   actionLabel: string;
   canPatch: boolean;
   onChoose: () => void;
-  facts: ReturnType<typeof clusterFacts>;
+  facts: ReleaseFacts;
 }) {
   const theme = useTheme();
   const { rel } = props;
-  const changes = [
-    rel.kubernetes ? { what: 'Kubernetes' as const, to: rel.kubernetes } : null,
-    rel.fedora ? { what: 'Fedora' as const, to: String(rel.fedora) } : null,
-  ].filter(Boolean) as { what: 'Kubernetes' | 'Fedora'; to: string }[];
+  const changes = releaseChanges(props.facts, rel);
   return (
     <Box
       sx={{
@@ -99,24 +128,12 @@ function ReleaseRow(props: {
             )}
           </Stack>
           <Box sx={{ mt: 0.75 }}>
-            <HopChanges
-              changes={changes.map(c => ({
-                ...c,
-                from:
-                  c.what === 'Kubernetes'
-                    ? props.facts.kubernetes !== c.to
-                      ? props.facts.kubernetes
-                      : undefined
-                    : props.facts.fedora && String(props.facts.fedora) !== c.to
-                    ? String(props.facts.fedora)
-                    : undefined,
-              }))}
-            />
+            <HopChanges changes={changes} />
           </Box>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
             {props.error
               ? props.error
-              : props.via.length <= 1
+              : props.via.length === 1
               ? 'One hop: every node reboots once.'
               : `${props.via.length} hops: ${props.via.join(
                   ' → '
@@ -136,7 +153,7 @@ function ReleaseRow(props: {
               <Button
                 variant={props.latest ? 'contained' : 'outlined'}
                 startIcon={<Icon icon="mdi:arrow-up-bold-circle-outline" />}
-                disabled={!props.canPatch}
+                disabled={!props.canPatch || !!props.error}
                 onClick={props.onChoose}
               >
                 {props.actionLabel} {rel.version}
@@ -152,13 +169,12 @@ function ReleaseRow(props: {
 export function ReleaseList(props: {
   cu: ClusterUpgradeObject;
   view: UpgradeView;
-  nodes: NodeLike[];
   canPatch: boolean;
   onChoose: (version: string) => void;
 }) {
   const { cu, view } = props;
   const releases = sortedReleases(cu.status?.availableReleases).reverse();
-  const facts = clusterFacts(props.nodes);
+  const facts: ReleaseFacts = cu.status?.currentReleaseInfo ?? {};
   const current = cu.status?.currentRelease ?? '';
   return (
     <Panel
@@ -172,7 +188,19 @@ export function ReleaseList(props: {
         ) : undefined
       }
     >
-      {releases.length === 0 ? (
+      {releases.length === 0 && view.graph.available === false ? (
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 2 }}>
+          <Icon icon="mdi:cloud-alert-outline" width={28} height={28} />
+          <Box>
+            <Typography sx={{ fontWeight: 600 }}>Cannot read the upgrade graph</Typography>
+            <Typography variant="body2" color="text.secondary">
+              So it is not known whether a newer release exists. k4all-operator tries again by
+              itself.
+              {view.graph.error ? ` ${view.graph.error}` : ''}
+            </Typography>
+          </Box>
+        </Stack>
+      ) : releases.length === 0 ? (
         <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 2 }}>
           <Icon icon="mdi:check-circle-outline" width={28} height={28} />
           <Box>
@@ -180,15 +208,14 @@ export function ReleaseList(props: {
               {current ? `Nothing newer than ${current}` : 'No newer release'}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              New releases of the upgrade graph show up here. If you expected one, check that
-              k4all-operator can read the graph (How upgrades run).
+              New releases of the upgrade graph show up here.
             </Typography>
           </Box>
         </Stack>
       ) : (
         <Box>
           {releases.map(rel => {
-            const plan = planPath(current, rel.version, cu.status?.availableReleases ?? [], facts);
+            const plan = releasePlan(cu, rel.version);
             return (
               <ReleaseRow
                 key={rel.version}

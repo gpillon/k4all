@@ -23,9 +23,11 @@ import {
   Command,
   DrainTimer,
   formatDuration,
+  formatSpan,
   HopChange,
   OrderedNode,
   PlannedHop,
+  span,
 } from '../../model/upgrades';
 import { toneColor } from '../common/ui';
 
@@ -116,12 +118,13 @@ function Dot(props: { tone: Tone; state: 'done' | 'active' | 'pending' | 'start'
  * The upgrade path as a horizontal trail: where it started, each hop with
  * its state, the hop in progress spinning.
  */
-export function HopTrail(props: { from?: string; path: Hop[] }) {
+export function HopTrail(props: { from?: string; path: Hop[]; now?: number }) {
   const theme = useTheme();
   const steps: {
     key: string;
     label: string;
     kind?: string;
+    took?: string;
     state: 'done' | 'active' | 'pending' | 'start';
     tone: Tone;
   }[] = [];
@@ -129,7 +132,12 @@ export function HopTrail(props: { from?: string; path: Hop[] }) {
     steps.push({ key: 'from', label: props.from, state: 'start', tone: 'success' });
   }
   for (const hop of props.path) {
+    const took =
+      props.now !== undefined
+        ? formatSpan(span(hop.startedAt, hop.completedAt, props.now))
+        : undefined;
     steps.push({
+      took,
       key: hop.release,
       label: hop.release,
       kind: hop.kind,
@@ -161,6 +169,11 @@ export function HopTrail(props: { from?: string; path: Hop[] }) {
                 </Typography>
               ) : (
                 <KindChip kind={s.kind} />
+              )}
+              {s.took && (
+                <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
+                  {s.took}
+                </Typography>
               )}
             </Stack>
             {i < steps.length - 1 && (

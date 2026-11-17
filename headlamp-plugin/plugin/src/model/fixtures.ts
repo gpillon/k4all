@@ -194,26 +194,65 @@ export function releaseManifestV240(): ReleaseManifestObject {
   return rm;
 }
 
-/** The releases a v2.4.0 cluster can move to, as the operator lists them (oldest first). */
-export function availableReleases(): ReleaseInfo[] {
-  return [
-    { version: 'v2.4.1', kind: 'patch', kubernetes: '1.35.10', fedora: 43, notes: 'Fixes.' },
-    { version: 'v2.5.0', kind: 'minor', kubernetes: '1.35.10', fedora: 45, notes: 'Fedora 45.' },
-    {
-      version: 'v2.6.0',
-      kind: 'minor',
-      kubernetes: '1.35.10',
-      fedora: 45,
-      notes: 'Traefik replaces ingress-nginx.',
-    },
-    {
-      version: 'v2.7.0',
-      kind: 'minor',
-      kubernetes: '1.36.4',
-      fedora: 45,
-      notes: 'Kubernetes 1.36.',
-    },
-  ];
+/** The fixture graph: a linear ladder, every release one hop after the previous one. */
+const LADDER: ReleaseInfo[] = [
+  {
+    version: 'v2.4.0',
+    kind: 'minor',
+    minFrom: 'v2.3.0',
+    kubernetes: '1.35.10',
+    crio: '1.35',
+    fedora: 43,
+  },
+  {
+    version: 'v2.4.1',
+    kind: 'patch',
+    minFrom: 'v2.4.0',
+    kubernetes: '1.35.10',
+    crio: '1.35',
+    fedora: 43,
+    notes: 'Fixes.',
+  },
+  {
+    version: 'v2.5.0',
+    kind: 'minor',
+    minFrom: 'v2.4.1',
+    kubernetes: '1.35.10',
+    crio: '1.35',
+    fedora: 45,
+    notes: 'Fedora 45.',
+  },
+  {
+    version: 'v2.6.0',
+    kind: 'minor',
+    minFrom: 'v2.5.0',
+    kubernetes: '1.35.10',
+    crio: '1.35',
+    fedora: 45,
+    notes: 'Traefik replaces ingress-nginx.',
+  },
+  {
+    version: 'v2.7.0',
+    kind: 'minor',
+    minFrom: 'v2.6.0',
+    kubernetes: '1.36.4',
+    crio: '1.36',
+    fedora: 45,
+    notes: 'Kubernetes 1.36.',
+  },
+];
+
+/** The releases newer than current, as the operator lists them (oldest first, with their path). */
+export function availableReleases(current = 'v2.4.0'): ReleaseInfo[] {
+  const start = LADDER.findIndex(r => r.version === current);
+  return LADDER.slice(start + 1).map((r, i, newer) => ({
+    ...r,
+    path: newer.slice(0, i + 1).map(h => h.version),
+  }));
+}
+
+export function releaseInfo(version: string): ReleaseInfo {
+  return { ...LADDER.find(r => r.version === version)! };
 }
 
 /** The ClusterUpgrade as the operator keeps it on an idle three-node v2.4.0 cluster. */
@@ -226,13 +265,26 @@ export function clusterUpgrade(extra: Partial<ClusterUpgradeObject> = {}): Clust
     status: {
       phase: 'Idle',
       currentRelease: 'v2.4.0',
-      availableReleases: availableReleases(),
+      currentReleaseInfo: releaseInfo('v2.4.0'),
+      availableReleases: availableReleases('v2.4.0'),
       nodes: [
         { name: 'cp-1', role: 'bootstrap', release: 'v2.4.0', phase: 'Done' },
         { name: 'cp-2', role: 'control', release: 'v2.4.0', phase: 'Done' },
         { name: 'w-1', role: 'worker', release: 'v2.4.0', phase: 'Done' },
       ],
+      graphUrl: 'https://github.com/gpillon/k4all/releases/latest/download/upgrade-graph.json',
       observedGeneration: 1,
+      conditions: [
+        {
+          type: 'GraphAvailable',
+          status: 'True',
+          reason: 'Read',
+          message: 'https://github.com/gpillon/k4all/releases/latest/download/upgrade-graph.json',
+        },
+        { type: 'Progressing', status: 'False', reason: 'Idle' },
+        { type: 'Succeeded', status: 'False', reason: 'Idle' },
+        { type: 'Failed', status: 'False', reason: 'Idle' },
+      ],
     },
     ...extra,
   };
@@ -249,14 +301,28 @@ export function clusterUpgradeInProgress(): ClusterUpgradeObject {
     message: 'v2.5.0: draining cp-2, 3 pods left',
     currentHop: 'v2.5.0',
     path: [
-      { release: 'v2.4.1', kind: 'patch', phase: 'Done' },
-      { release: 'v2.5.0', kind: 'minor', phase: 'InProgress' },
+      {
+        release: 'v2.4.1',
+        kind: 'patch',
+        phase: 'Done',
+        startedAt: '2026-11-17T09:00:00Z',
+        completedAt: '2026-11-17T09:27:00Z',
+      },
+      { release: 'v2.5.0', kind: 'minor', phase: 'InProgress', startedAt: '2026-11-17T09:30:00Z' },
       { release: 'v2.6.0', kind: 'minor', phase: 'Pending' },
     ],
     currentRelease: 'v2.4.1',
-    availableReleases: availableReleases().slice(1),
+    currentReleaseInfo: releaseInfo('v2.4.1'),
+    availableReleases: availableReleases('v2.4.1'),
     nodes: [
-      { name: 'cp-1', role: 'bootstrap', release: 'v2.5.0', phase: 'Done' },
+      {
+        name: 'cp-1',
+        role: 'bootstrap',
+        release: 'v2.5.0',
+        phase: 'Done',
+        startedAt: '2026-11-17T09:30:00Z',
+        completedAt: '2026-11-17T09:41:00Z',
+      },
       {
         name: 'cp-2',
         role: 'control',
@@ -264,10 +330,52 @@ export function clusterUpgradeInProgress(): ClusterUpgradeObject {
         phase: 'Draining',
         message: '3 pods left',
         drainStartedAt: '2026-11-17T10:00:00Z',
+        startedAt: '2026-11-17T10:00:00Z',
       },
-      { name: 'w-1', role: 'worker', release: 'v2.4.1', phase: 'Pending' },
+      {
+        name: 'w-1',
+        role: 'worker',
+        release: 'v2.4.1',
+        phase: 'Pending',
+        startedAt: '2026-11-17T09:15:00Z',
+        completedAt: '2026-11-17T09:27:00Z',
+      },
     ],
     observedGeneration: 2,
+    conditions: [
+      {
+        type: 'GraphAvailable',
+        status: 'True',
+        reason: 'Read',
+        message: 'https://example/graph.json',
+      },
+      {
+        type: 'Progressing',
+        status: 'True',
+        reason: 'Progressing',
+        message: 'v2.5.0: draining cp-2, 3 pods left',
+      },
+      { type: 'Succeeded', status: 'False', reason: 'Progressing' },
+      { type: 'Failed', status: 'False', reason: 'Progressing' },
+    ],
   };
+  return cu;
+}
+
+/** Marks the in-progress fixture Failed, with the Failed condition the operator sets. */
+export function failWith(
+  cu: ClusterUpgradeObject,
+  reason: string,
+  message: string
+): ClusterUpgradeObject {
+  cu.status!.phase = 'Failed';
+  cu.status!.message = message;
+  cu.status!.conditions = (cu.status!.conditions ?? []).map(c =>
+    c.type === 'Failed'
+      ? { ...c, status: 'True', reason, message }
+      : c.type === 'Progressing'
+      ? { ...c, status: 'False', reason: 'Failed' }
+      : c
+  );
   return cu;
 }
