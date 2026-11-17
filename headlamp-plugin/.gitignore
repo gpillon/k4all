@@ -1,0 +1,7 @@
+# Build output and local caches of the k4all Headlamp plugin
+plugin/node_modules/
+plugin/dist/
+plugin/.eslintcache
+plugin/*.tar.gz
+# helm caches of distribution/test-helm-template.sh
+.helm/
