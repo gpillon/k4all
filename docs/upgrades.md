@@ -44,7 +44,7 @@ The 2.x upgrade path:
 |---|---|
 | v2.2.4 | bridge: `k4all-upgrade`, bootc timer masked, script fixes (Kubernetes 1.35, CRI-O 1.32, Fedora 43 unchanged) |
 | v2.3.0 | CRI-O 1.35, matching Kubernetes 1.35, plus the latest 1.35 patch; image names without a registry (`nginx:latest`) resolve on docker.io only |
-| v2.4.0 | cluster components updated and pinned; first ReleaseManifest sync |
+| v2.4.0 | cluster components updated and pinned; first ReleaseManifest sync; operator-driven upgrades (ClusterUpgrade) |
 | v2.5.0 | Fedora 45 |
 | v2.6.0 | Traefik replaces ingress-nginx |
 | v2.7.0 | Kubernetes 1.36 |
@@ -70,8 +70,12 @@ window:
   (`patch`), minor releases wait for `k4all-upgrade run`. Set `autoAllow: minor`
   to run everything automatically.
 - `mode: manual`: nothing happens until you run `k4all-upgrade run`.
-- `mode: managed`: the k4all-operator drives the upgrade (multi-node rollouts);
-  the timer does nothing.
+- `mode: managed`: the timer does nothing. Hops start only when the
+  k4all-operator asks for one (see
+  [Operator-driven upgrades](#operator-driven-upgrades-from-v240)), or with
+  `k4all-upgrade run`.
+
+In every mode the node also follows the k4all-operator's requests.
 
 bootc ships its own `bootc-fetch-apply-updates.timer`, which runs
 `bootc upgrade --apply`. That command would reboot a node into a new
@@ -132,11 +136,64 @@ workers, one at a time. `k4all-upgrade` refuses the wrong order:
 
 A kubelet minor upgrade needs a drain, which requires the admin kubeconfig. On
 workers without it, the hop stops and asks you to drain the node from a control
-plane. The k4all-operator will drive multi-node rollouts (`mode: managed`)
-before the first Kubernetes minor release (v2.7.0).
+plane. From v2.4.0 the k4all-operator can drive the whole rollout instead,
+drain included (next section).
 
 With only two control planes, every control-plane reboot loses the etcd
 quorum. Use one or three.
+
+## Operator-driven upgrades (from v2.4.0)
+
+From v2.4.0 the k4all-operator can upgrade the whole cluster: set the target
+release on the `ClusterUpgrade` named `k4all` (or in the Headlamp plugin). The
+operator walks the hops one at a time, and for each hop one node at a time:
+the bootstrap node, then the other control planes, then the workers. For each
+node it cordons and drains it, then asks it for the hop through annotations on
+the Node. Set `mode: managed` on these nodes, so that they never start a hop on
+their own.
+
+On each node `k4all-upgrade-agent.timer` runs `k4all-upgrade agent` every
+minute and after boot. The agent reads the node's own Node object, with
+`/etc/kubernetes/admin.conf` on control planes and
+`/etc/kubernetes/kubelet.conf` on workers. The Node name is the kubelet's
+(the `system:node:<name>` client certificate).
+
+| Annotation (`k4all.magesgate.com/…`) | Written by | Meaning |
+|---|---|---|
+| `upgrade-target` | operator | release of the hop this node must run now |
+| `upgrade-cordoned` | operator | the operator cordoned the node; it uncordons it after the hop |
+| `release` | node | release the node runs: the last committed hop |
+| `node-type` | node | `bootstrap`, `control` or `worker` (from `/etc/node-type`) |
+| `upgrade-phase` | node | phase of the hop in progress (`PREFLIGHT` … `COMMIT`), `HOLD` or `ABANDONED`; absent when idle |
+| `upgrade-message` | node | the reason for `HOLD` or `ABANDONED` |
+| `upgrade-done` | node | the target, once its hop is committed |
+| `upgrade-in-progress` | node | the pause gate, as before |
+
+When `upgrade-target` names a newer release, the agent runs that hop in any
+mode, outside the window, and also when it is a minor. The node is not drained
+again, and on workers the admin kubeconfig is not needed. The k4all-operator
+is not scaled down either: it knows the pause gate. On the bootstrap node the
+component sync and its wait happen before the commit, so before
+`upgrade-done`. When the target is the release the node already runs,
+`upgrade-done` is written at once.
+
+The agent accepts only one legal hop: the release that `k4all-upgrade plan`
+would visit next. A target that is older, skips a minor or the latest patch of
+the stream, is blocked, or is not in the graph puts the node in `HOLD` with the
+reason in `upgrade-message`, and nothing starts. A corrected target is picked
+up at the next minute.
+
+A HOLD during the hop works as described above: after `clear-hold` and
+`resume`, the operator goes on by itself. `clear-hold --abandon` also removes
+`upgrade-target` and writes `upgrade-phase: ABANDONED`. The node then does not
+retry on its own: retry from the operator.
+
+To see what a node reports:
+
+```bash
+kubectl get node <name> -o jsonpath='{.metadata.annotations}'
+sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
+```
 
 ## Things to know
 
