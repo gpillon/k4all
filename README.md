@@ -16,7 +16,7 @@ disk (the first fixed disk of at least 10 GiB). Back up your data first.**
 - Kubernetes (kubeadm) with CRI-O
 - Calico or Cilium as CNI, plus Multus and the OVS CNI (optional)
 - TopoLVM for persistent volumes on the `vg_data` volume group
-- ingress-nginx as ingress controller (Traefik replaces it in v2.6.0), MetalLB,
+- Traefik as ingress controller (it replaced ingress-nginx in v2.4.0), MetalLB,
   cert-manager
 - Headlamp dashboard and metrics-server
 - HA control plane with kube-vip or keepalived (optional)
@@ -154,7 +154,7 @@ the installer addon.
 Next features:
 
 - [x] Kubernetes and OS upgrades ([docs/upgrades.md](docs/upgrades.md))
-- [ ] Traefik as ingress controller (v2.6.0)
+- [ ] Traefik as ingress controller (v2.4.0)
 - [ ] Multi-node upgrades driven by the k4all-operator
 - [ ] Fancy UI to manage your k4all installation
 - [ ] Applications catalog

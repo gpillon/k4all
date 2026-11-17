@@ -176,6 +176,53 @@ class TestK4AllData:
             data.finalize()
 
     # -------------------------------------------------------------------------
+    # ingress: Traefik, with the ingress-nginx options as aliases
+    # -------------------------------------------------------------------------
+    def _ingress(self, args):
+        data = self._make_data()
+        data.handle_header(args)
+        return data.cluster_config["ingress"]
+
+    def test_ingress_defaults_to_traefik(self):
+        ingress = self._ingress([])
+        assert ingress["traefik"] == {"isDefault": True, "dedicatedIP": ""}
+        assert "nginx" not in ingress
+
+    def test_ingress_traefik_ip(self):
+        assert self._ingress(["--ingress-traefik-ip=10.0.0.5"])["traefik"]["dedicatedIP"] == "10.0.0.5"
+
+    @pytest.mark.parametrize("args", [
+        ["--ingress-nginx-ip=10.0.0.6"],
+        ["--ingress-nginx", "--ingress-nginx-ip=10.0.0.6", "--ingress-default=nginx"],
+    ])
+    def test_old_nginx_options_configure_traefik(self, args):
+        ingress = self._ingress(args)
+        assert ingress["traefik"] == {"isDefault": True, "dedicatedIP": "10.0.0.6"}
+        assert "nginx" not in ingress
+
+    @pytest.mark.parametrize("args", [
+        ["--ingress-default=cilium"],
+        ["--no-ingress-traefik"],
+        ["--no-ingress-nginx", "--ingress-cilium", "--ingress-default=cilium"],
+    ])
+    def test_cilium_can_be_the_default_ingress(self, args):
+        assert self._ingress(args)["traefik"]["isDefault"] is False
+
+    def test_str_roundtrips_the_ingress_options(self):
+        data = self._make_data()
+        data.handle_header(["--ingress-traefik-ip=10.0.0.5", "--ingress-cilium-ip=10.0.0.7",
+                            "--ingress-default=cilium"])
+        data.finalize()
+        s = str(data)
+        assert "--ingress-traefik-ip=10.0.0.5" in s
+        assert "--ingress-default=cilium" in s
+        assert "nginx" not in s
+        header = s.split("%addon com_k4all_installer", 1)[1].splitlines()[0].split()
+        again = self._make_data()
+        again.handle_header(header)
+        assert again.cluster_config["ingress"] == data.cluster_config["ingress"]
+
+    # -------------------------------------------------------------------------
     # __str__ roundtrip tests
     # -------------------------------------------------------------------------
     def test_str_contains_addon_directive(self):

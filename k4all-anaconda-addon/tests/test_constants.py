@@ -87,8 +87,9 @@ class TestConstants:
     def test_cluster_config_ingress(self):
         from com_k4all_installer.constants import DEFAULT_CLUSTER_CONFIG
         ingress = DEFAULT_CLUSTER_CONFIG["ingress"]
-        assert ingress["nginx"]["isDefault"] is True
-        assert ingress["nginx"]["dedicatedIP"] == ""
+        assert ingress["traefik"]["isDefault"] is True
+        assert ingress["traefik"]["dedicatedIP"] == ""
+        assert "nginx" not in ingress
         assert ingress["cilium"]["dedicatedIP"] == ""
 
     def test_cluster_config_proxy(self):

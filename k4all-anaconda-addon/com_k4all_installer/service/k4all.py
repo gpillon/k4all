@@ -250,27 +250,27 @@ class K4All(KickstartService):
 
     # --- Ingress configuration ---
     @property
-    def ingress_nginx_enabled(self):
-        return self._config.get("ingress", {}).get("nginx", {}).get("isDefault", True)
+    def ingress_traefik_enabled(self):
+        return self._config.get("ingress", {}).get("traefik", {}).get("isDefault", True)
 
-    def set_ingress_nginx_enabled(self, enabled):
-        self._config.setdefault("ingress", {}).setdefault("nginx", {})["isDefault"] = bool(enabled)
+    def set_ingress_traefik_enabled(self, enabled):
+        self._config.setdefault("ingress", {}).setdefault("traefik", {})["isDefault"] = bool(enabled)
         self.config_changed.emit()
 
     @property
-    def ingress_nginx_default(self):
-        return bool(self._config.get("ingress", {}).get("nginx", {}).get("isDefault", True))
+    def ingress_traefik_default(self):
+        return bool(self._config.get("ingress", {}).get("traefik", {}).get("isDefault", True))
 
-    def set_ingress_nginx_default(self, is_default):
-        self._config.setdefault("ingress", {}).setdefault("nginx", {})["isDefault"] = bool(is_default)
+    def set_ingress_traefik_default(self, is_default):
+        self._config.setdefault("ingress", {}).setdefault("traefik", {})["isDefault"] = bool(is_default)
         self.config_changed.emit()
 
     @property
-    def ingress_nginx_dedicated_ip(self):
-        return self._config.get("ingress", {}).get("nginx", {}).get("dedicatedIP", "")
+    def ingress_traefik_dedicated_ip(self):
+        return self._config.get("ingress", {}).get("traefik", {}).get("dedicatedIP", "")
 
-    def set_ingress_nginx_dedicated_ip(self, value):
-        self._config.setdefault("ingress", {}).setdefault("nginx", {})["dedicatedIP"] = value
+    def set_ingress_traefik_dedicated_ip(self, value):
+        self._config.setdefault("ingress", {}).setdefault("traefik", {})["dedicatedIP"] = value
         self.config_changed.emit()
 
     @property
@@ -283,10 +283,10 @@ class K4All(KickstartService):
 
     @property
     def ingress_cilium_default(self):
-        return not self.ingress_nginx_default
+        return not self.ingress_traefik_default
 
     def set_ingress_cilium_default(self, is_default):
-        self._config.setdefault("ingress", {}).setdefault("nginx", {})["isDefault"] = not is_default
+        self._config.setdefault("ingress", {}).setdefault("traefik", {})["isDefault"] = not is_default
         self.config_changed.emit()
 
     @property

@@ -196,6 +196,9 @@ RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
 # pod on the control planes of HA clusters after a reboot, once the manifest
 # pins a kube-vip release (v2.4.0); with "latest" nothing is cached and
 # k4all-upgrade leaves kube-vip.yaml as it is.
+# Traefik's image is there too: it replaces ingress-nginx during the v2.4.0
+# manifest sync, and with the image local it starts without waiting on a
+# pull. Its tag is the appVersion of the pinned chart.
 RUN set -eux; \
     OPERATOR_VERSION="$(yq '.spec.components.k4all-operator.version' /usr/local/share/k4all-release.yaml)"; \
     case "$OPERATOR_VERSION" in v[0-9]*) ;; \
@@ -210,6 +213,13 @@ RUN set -eux; \
     case "$KUBE_VIP_VERSION" in v[0-9]*) \
         echo "ghcr.io/kube-vip/kube-vip:${KUBE_VIP_VERSION}" >> /tmp/k8s-images.txt ;; \
     esac; \
+    TRAEFIK_CHART="$(yq '.spec.components.traefik.version' /usr/local/share/k4all-release.yaml)"; \
+    TRAEFIK_REPO="$(yq '.spec.components.traefik.repo' /usr/local/share/k4all-release.yaml)"; \
+    TRAEFIK_TAG="$(HELM_CACHE_HOME=/tmp/helm HELM_CONFIG_HOME=/tmp/helm HELM_DATA_HOME=/tmp/helm \
+        helm show chart traefik --repo "$TRAEFIK_REPO" --version "$TRAEFIK_CHART" | yq '.appVersion')"; \
+    rm -rf /tmp/helm; \
+    case "$TRAEFIK_TAG" in v[0-9]*) ;; *) echo "no appVersion for traefik chart ${TRAEFIK_CHART}" >&2; exit 1 ;; esac; \
+    echo "docker.io/traefik:${TRAEFIK_TAG}" >> /tmp/k8s-images.txt; \
     while read -r img; do \
     file="$(printf '%s' "$img" | tr '/:@' '_')"; \
     skopeo copy \

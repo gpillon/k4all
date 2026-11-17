@@ -60,11 +60,11 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
         self._cilium_l2 = False
         self._cilium_hubble = False
         # Ingress
-        self._ingress_nginx = True
-        self._ingress_nginx_ip = ""
+        self._ingress_traefik = True
+        self._ingress_traefik_ip = ""
         self._ingress_cilium = False
         self._ingress_cilium_ip = ""
-        self._ingress_default = "nginx"
+        self._ingress_default = "traefik"
 
     def initialize(self):
         super().initialize()
@@ -91,11 +91,11 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
             self._cilium_gateway = self._k4all_module.CiliumGatewayApi
             self._cilium_l2 = self._k4all_module.CiliumL2Announcements
             self._cilium_hubble = self._k4all_module.CiliumHubble
-            self._ingress_nginx = self._k4all_module.IngressNginxEnabled
-            self._ingress_nginx_ip = self._k4all_module.IngressNginxDedicatedIP
+            self._ingress_traefik = self._k4all_module.IngressTraefikEnabled
+            self._ingress_traefik_ip = self._k4all_module.IngressTraefikDedicatedIP
             self._ingress_cilium = self._k4all_module.IngressCiliumEnabled
             self._ingress_cilium_ip = self._k4all_module.IngressCiliumDedicatedIP
-            self._ingress_default = "cilium" if self._k4all_module.IngressCiliumDefault else "nginx"
+            self._ingress_default = "cilium" if self._k4all_module.IngressCiliumDefault else "traefik"
         except Exception:
             log.error("K4All TUI spoke: error during setup", exc_info=True)
         return True
@@ -153,13 +153,13 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
         # Ingress section (bootstrap only)
         if self._role == "bootstrap":
             self._container.add(
-                CheckboxWidget(title=_("NGINX Ingress Controller"), completed=self._ingress_nginx),
-                callback=self._toggle_ingress_nginx)
-            if self._ingress_nginx:
+                CheckboxWidget(title=_("Traefik Ingress Controller"), completed=self._ingress_traefik),
+                callback=self._toggle_ingress_traefik)
+            if self._ingress_traefik:
                 self._container.add(
-                    EntryWidget(title=_("  NGINX Dedicated IP"),
-                                value=self._ingress_nginx_ip if self._ingress_nginx_ip else _("(cluster IP)")),
-                    callback=self._change_ingress_nginx_ip)
+                    EntryWidget(title=_("  Traefik Dedicated IP"),
+                                value=self._ingress_traefik_ip if self._ingress_traefik_ip else _("(cluster IP)")),
+                    callback=self._change_ingress_traefik_ip)
 
             if self._cni == "cilium":
                 self._container.add(
@@ -171,7 +171,7 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
                                     value=self._ingress_cilium_ip if self._ingress_cilium_ip else _("(cluster IP)")),
                         callback=self._change_ingress_cilium_ip)
 
-            if self._ingress_nginx and self._ingress_cilium:
+            if self._ingress_traefik and self._ingress_cilium:
                 self._container.add(
                     EntryWidget(title=_("Default Controller"), value=self._ingress_default),
                     callback=self._change_ingress_default)
@@ -220,12 +220,12 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
             self._k4all_module.SetCiliumL2Announcements(self._cilium_l2)
             self._k4all_module.SetCiliumHubble(self._cilium_hubble)
             # Ingress
-            self._k4all_module.SetIngressNginxEnabled(self._ingress_nginx)
-            self._k4all_module.SetIngressNginxDedicatedIP(self._ingress_nginx_ip)
+            self._k4all_module.SetIngressTraefikEnabled(self._ingress_traefik)
+            self._k4all_module.SetIngressTraefikDedicatedIP(self._ingress_traefik_ip)
             self._k4all_module.SetIngressCiliumEnabled(self._ingress_cilium)
             self._k4all_module.SetIngressCiliumDedicatedIP(self._ingress_cilium_ip)
             is_cilium_default = self._ingress_default == "cilium"
-            self._k4all_module.SetIngressNginxDefault(not is_cilium_default)
+            self._k4all_module.SetIngressTraefikDefault(not is_cilium_default)
             self._k4all_module.SetIngressCiliumDefault(is_cilium_default)
         except Exception:
             log.error("K4All TUI spoke: error during apply", exc_info=True)
@@ -245,12 +245,12 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
                     if not self._k4all_module.ApiControlEndpoint or not self._k4all_module.ApiControlEndpointSubnetSize:
                         return False
                 if role == "bootstrap":
-                    nginx_on = self._k4all_module.IngressNginxEnabled
+                    traefik_on = self._k4all_module.IngressTraefikEnabled
                     cilium_on = self._k4all_module.IngressCiliumEnabled
-                    if not nginx_on and not cilium_on:
+                    if not traefik_on and not cilium_on:
                         return False
-                    if nginx_on and cilium_on:
-                        n_ip = self._k4all_module.IngressNginxDedicatedIP
+                    if traefik_on and cilium_on:
+                        n_ip = self._k4all_module.IngressTraefikDedicatedIP
                         c_ip = self._k4all_module.IngressCiliumDedicatedIP
                         if not n_ip and not c_ip:
                             return False
@@ -361,11 +361,11 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
     def _toggle_cilium_hubble(self, data):
         self._cilium_hubble = not self._cilium_hubble
 
-    def _toggle_ingress_nginx(self, data):
-        self._ingress_nginx = not self._ingress_nginx
+    def _toggle_ingress_traefik(self, data):
+        self._ingress_traefik = not self._ingress_traefik
 
-    def _change_ingress_nginx_ip(self, data):
-        self._ingress_nginx_ip = ""
+    def _change_ingress_traefik_ip(self, data):
+        self._ingress_traefik_ip = ""
 
     def _toggle_ingress_cilium(self, data):
         self._ingress_cilium = not self._ingress_cilium
@@ -374,7 +374,7 @@ class K4AllSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
         self._ingress_cilium_ip = ""
 
     def _change_ingress_default(self, data):
-        self._ingress_default = "cilium" if self._ingress_default == "nginx" else "nginx"
+        self._ingress_default = "cilium" if self._ingress_default == "traefik" else "traefik"
 
     def _toggle_virt(self, data):
         self._virt = not self._virt

@@ -115,6 +115,23 @@ def test_release_manifest_pins_every_component():
         assert len(set(steps)) == len(steps), name
 
 
+def test_traefik_waits_only_for_metallb():
+    # Traefik needs MetalLB for its LoadBalancer IP (the operator's helm
+    # wait), not cert-manager: that dependency came from ingress-nginx.
+    with open(os.path.join(BOOTC, "overlay", "usr", "local", "share",
+                           "k4all-release.yaml"), encoding="utf-8") as fh:
+        components = yaml.safe_load(fh)["spec"]["components"]
+    assert components["traefik"]["dependsOn"] == ["metallb"]
+
+
+def test_traefik_image_ships_with_the_image():
+    # Traefik replaces ingress-nginx during a manifest sync; k4all-upgrade
+    # loads the shipped images first, so the routes come back without a pull.
+    _, text = containerfile_args()
+    assert "helm show chart traefik" in text
+    assert '"docker.io/traefik:${TRAEFIK_TAG}"' in text
+
+
 def test_image_records_its_release():
     _, text = containerfile_args()
     assert '"${K4ALL_VERSION}" > /usr/local/share/k4all-upgrade/version' in text

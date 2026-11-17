@@ -8,16 +8,30 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_release_manifest_uses_helm_map_for_ingress_extra_args():
+def test_traefik_serves_the_routes_written_for_ingress_nginx():
+    # The routes the image ships (and argocd's) keep ingressClassName nginx
+    # and nginx.ingress.kubernetes.io annotations: Traefik's Ingress-NGINX
+    # provider serves them, but only through an IngressClass "nginx" whose
+    # controller is the ingress-nginx one.
     yaml = pytest.importorskip("yaml")
     release_path = PROJECT_ROOT / "bootc/overlay/usr/local/share/k4all-release.yaml"
-    release = yaml.safe_load(release_path.read_text())
+    components = yaml.safe_load(release_path.read_text())["spec"]["components"]
 
-    extra_args = (
-        release["spec"]["components"]["ingress-nginx"]
-        ["values"]["controller"]["extraArgs"]
-    )
-    assert extra_args == {"enable-ssl-passthrough": ""}
+    assert components["ingress-nginx"]["management"] == "Removed"
+    traefik = components["traefik"]["values"]
+    assert traefik["providers"]["kubernetesIngressNGINX"]["enabled"] is True
+    classes = [obj for obj in traefik["extraObjects"] if obj["kind"] == "IngressClass"]
+    assert [(c["metadata"]["name"], c["spec"]["controller"]) for c in classes] == [
+        ("nginx", "k8s.io/ingress-nginx")]
+    assert "annotations" not in classes[0]["metadata"]
+    # The operator's Traefik hook owns the service: the chart has no
+    # service.type any more (42.3.1).
+    assert "type" not in traefik.get("service", {})
+    for name, comp in components.items():
+        assert "ingress-nginx" not in comp.get("dependsOn", []), name
+
+    for route in (PROJECT_ROOT / "bootc/overlay/usr/local/share").glob("*-ingress-routes.yaml"):
+        assert yaml.safe_load(route.read_text())["spec"]["ingressClassName"] == "nginx", route.name
 
 
 def test_lvm_setup_repairs_missing_topolvm_thin_pool():

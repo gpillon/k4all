@@ -208,28 +208,28 @@ class K4AllInterface(KickstartModuleInterface):
     # --- Ingress configuration ---
 
     @property
-    def IngressNginxEnabled(self) -> Bool:
-        return self.implementation.ingress_nginx_enabled
+    def IngressTraefikEnabled(self) -> Bool:
+        return self.implementation.ingress_traefik_enabled
 
     @emits_properties_changed
-    def SetIngressNginxEnabled(self, enabled: Bool):
-        self.implementation.set_ingress_nginx_enabled(enabled)
+    def SetIngressTraefikEnabled(self, enabled: Bool):
+        self.implementation.set_ingress_traefik_enabled(enabled)
 
     @property
-    def IngressNginxDefault(self) -> Bool:
-        return self.implementation.ingress_nginx_default
+    def IngressTraefikDefault(self) -> Bool:
+        return self.implementation.ingress_traefik_default
 
     @emits_properties_changed
-    def SetIngressNginxDefault(self, is_default: Bool):
-        self.implementation.set_ingress_nginx_default(is_default)
+    def SetIngressTraefikDefault(self, is_default: Bool):
+        self.implementation.set_ingress_traefik_default(is_default)
 
     @property
-    def IngressNginxDedicatedIP(self) -> Str:
-        return self.implementation.ingress_nginx_dedicated_ip
+    def IngressTraefikDedicatedIP(self) -> Str:
+        return self.implementation.ingress_traefik_dedicated_ip
 
     @emits_properties_changed
-    def SetIngressNginxDedicatedIP(self, value: Str):
-        self.implementation.set_ingress_nginx_dedicated_ip(value)
+    def SetIngressTraefikDedicatedIP(self, value: Str):
+        self.implementation.set_ingress_traefik_dedicated_ip(value)
 
     @property
     def IngressCiliumEnabled(self) -> Bool:
