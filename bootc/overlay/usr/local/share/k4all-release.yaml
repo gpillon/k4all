@@ -48,6 +48,10 @@ spec:
       version: "1.19.1"
       repo: "quay.io/cilium/charts/cilium"
       namespace: kube-system
+      # Gateway API CRDs must exist before the Cilium operator starts,
+      # otherwise networking.cni.cilium.gatewayAPI is silently ignored.
+      dependsOn:
+        - gateway-api
       custom: {}
 
     cilium-cli:
@@ -208,8 +212,10 @@ spec:
     # --- Monitoring ---
     metrics-server:
       type: manifest
-      version: "latest"
-      source: "https://github.com/kubernetes-sigs/metrics-server/releases/{{ version }}/download/components.yaml"
+      # Pinned: without a versionUrl "latest" is never resolved, so each install
+      # would get whatever release is current and the args patch could break.
+      version: "v0.9.1"
+      source: "https://github.com/kubernetes-sigs/metrics-server/releases/download/{{ version }}/components.yaml"
       namespace: kube-system
       dependsOn:
         - calico
@@ -269,14 +275,24 @@ spec:
 
     kubevirt-manager:
       type: manifest
-      version: "latest"
+      version: "v1.5.4"
       sources:
-        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/main/kubernetes/bundled.yaml"
-        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/main/kubernetes/crd.yaml"
+        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/{{ version }}/kubernetes/bundled.yaml"
+        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/{{ version }}/kubernetes/crd.yaml"
       namespace: kubevirt-manager
       featureGate: virt
       dependsOn:
         - kubevirt
+      # The tagged manifest still uses the floating :nightly image. Patches are
+      # not templated: bump the image tag together with version.
+      patches:
+        - target:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: kubevirt-manager
+            namespace: kubevirt-manager
+          type: strategic
+          patch: '{"spec":{"template":{"spec":{"containers":[{"name":"kubevirtmgr","image":"kubevirtmanager/kubevirt-manager:1.5.4"}]}}}}'
       custom: {}
 
     # --- GitOps ---
@@ -309,21 +325,41 @@ spec:
     # --- OVS/Multus ---
     multus-cni:
       type: manifest
-      version: "master"
-      source: "https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml"
+      version: "v4.3.2"
+      source: "https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/{{ version }}/deployments/multus-daemonset.yml"
       featureGate: ovsCni
       dependsOn:
         - calico
         - cilium
+      # The tagged manifest still uses the floating :snapshot image. Patches are
+      # not templated: bump the image tag together with version.
+      patches:
+        - target:
+            apiVersion: apps/v1
+            kind: DaemonSet
+            name: kube-multus-ds
+            namespace: kube-system
+          type: strategic
+          patch: '{"spec":{"template":{"spec":{"initContainers":[{"name":"install-multus-binary","image":"ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.2"}],"containers":[{"name":"kube-multus","image":"ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.2"}]}}}}'
       custom: {}
 
     ovs-cni:
       type: manifest
-      version: "master"
-      source: "https://raw.githubusercontent.com/k8snetworkplumbingwg/ovs-cni/master/examples/ovs-cni.yml"
+      version: "v0.40.0"
+      source: "https://raw.githubusercontent.com/k8snetworkplumbingwg/ovs-cni/{{ version }}/examples/ovs-cni.yml"
       featureGate: ovsCni
       dependsOn:
         - multus-cni
+      # The tagged manifest still uses the floating :latest image. Patches are
+      # not templated: bump the image tag together with version.
+      patches:
+        - target:
+            apiVersion: apps/v1
+            kind: DaemonSet
+            name: ovs-cni-amd64
+            namespace: kube-system
+          type: strategic
+          patch: '{"spec":{"template":{"spec":{"initContainers":[{"name":"ovs-cni-plugin","image":"ghcr.io/k8snetworkplumbingwg/ovs-cni-plugin:v0.40.0"}],"containers":[{"name":"ovs-cni-marker","image":"ghcr.io/k8snetworkplumbingwg/ovs-cni-plugin:v0.40.0"}]}}}}'
       custom: {}
 
     # --- Operator (bootstrapped by deploy-operator.sh, tracked here for version/source) ---
