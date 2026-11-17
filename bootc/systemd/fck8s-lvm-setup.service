@@ -1,6 +1,5 @@
 [Unit]
 Description=K4All - Setup LVM (vg_data)
-ConditionPathExists=!/opt/k4all/lvm-setup.done
 
 [Service]
 Type=oneshot
@@ -9,4 +8,3 @@ RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
-

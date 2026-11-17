@@ -106,6 +106,19 @@ if systemctl is-enabled --quiet firewalld; then
   firewall-cmd --reload
 fi
 
+cat <<'EOF' > /etc/NetworkManager/dispatcher.d/90-ovs-arp.sh
+#!/bin/bash
+case "$1" in
+  ovs-bridge)
+    if [ "$2" = "up" ]; then
+      sysctl -w net.ipv4.conf.$1.arp_ignore=1
+      sysctl -w net.ipv4.conf.$1.arp_announce=2
+    fi
+    ;;
+esac
+EOF
+chmod +x /etc/NetworkManager/dispatcher.d/90-ovs-arp.sh
+
 systemctl restart NetworkManager
 
 # Mark the setup phase as done
