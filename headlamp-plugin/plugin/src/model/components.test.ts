@@ -197,7 +197,7 @@ describe('removalBlockers', () => {
 
 describe('releaseVersion', () => {
   it('reads the k4all release from the OS image tag', () => {
-    expect(releaseVersion(releaseManifest())).toBe('v2.7.0');
+    expect(releaseVersion(releaseManifest())).toBe('v2.6.0');
     const rm = releaseManifest();
     rm.spec!.osImage!.imageTag = 'latest';
     expect(releaseVersion(rm)).toBeNull();

@@ -19,10 +19,10 @@ export const OPERATOR_COMPONENT = 'k4all-operator';
 export const CAPABILITY_SINCE = {
   /** ClusterUpgrade: node upgrades driven from the cluster (k4all v2.4.0). */
   clusterUpgrade: 'v0.4.0',
-  /** Switching spec.networking.cni.type on a running cluster. */
-  cniSwitch: 'v0.5.0',
-  /** Turning spec.features.ovsBridge.enabled on and off on a running cluster. */
-  ovsBridgeToggle: 'v0.5.0',
+  /** Switching spec.networking.cni.type on a running cluster (not in v0.5.0). */
+  cniSwitch: 'v0.6.0',
+  /** Turning spec.features.ovsBridge.enabled on and off on a running cluster (not in v0.5.0). */
+  ovsBridgeToggle: 'v0.6.0',
 } as const;
 
 export type CapabilityId = keyof typeof CAPABILITY_SINCE;
@@ -66,7 +66,7 @@ export function capabilities(rm: ReleaseManifestObject | null | undefined): Capa
   return capabilitiesOf(operatorVersion(rm));
 }
 
-/** "coming with k4all-operator v0.5.0" style note for a missing capability. */
+/** "coming with k4all-operator v0.6.0" style note for a missing capability. */
 export function capabilityNote(id: CapabilityId): string {
   const release = CAPABILITY_RELEASE[id];
   return `coming with k4all-operator ${CAPABILITY_SINCE[id]}${

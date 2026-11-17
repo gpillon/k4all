@@ -29,10 +29,12 @@ export function setField(draft: Draft, path: Path, value: unknown): Draft {
 // ------------------------------------------------------------------ Ingress
 
 /**
- * The ingress controller of the release: ingress-nginx up to k4all v2.5.x,
- * Traefik from v2.6.0 (ingress-nginx is then Removed). The operator's
- * ingress-nginx hook reads spec.ingress.nginx only; the Traefik hook reads
- * spec.ingress.traefik, or spec.ingress.nginx while the traefik key is absent.
+ * The ingress controller of the release: ingress-nginx up to k4all v2.3.x,
+ * Traefik from v2.4.0 (ingress-nginx is then Removed), the first release with
+ * this plugin. ingress-nginx is still met where a ReleaseManifest was changed
+ * by hand to keep it. The operator's ingress-nginx hook reads
+ * spec.ingress.nginx only; the Traefik hook reads spec.ingress.traefik, or
+ * spec.ingress.nginx while the traefik key is absent.
  */
 export type IngressController = 'traefik' | 'nginx';
 
@@ -74,9 +76,10 @@ function pick(cfg: IngressControllerConfig | undefined, source: TraefikSource): 
 
 /**
  * The Traefik settings the operator uses: spec.ingress.traefik, or, on
- * clusters installed before v2.6.0 whose ClusterConfig was not migrated yet
- * (k4all-operator v0.4.2 writes the key), the values inherited from the
- * ingress-nginx settings (source "nginx"). The plugin only reads those: any
+ * clusters installed before v2.4.0 whose ClusterConfig was not migrated yet
+ * (k4all-operator v0.4.2 and later write the key; v0.5.0 does it in the
+ * v2.4.0 sync), the values inherited from the ingress-nginx settings
+ * (source "nginx"). The plugin only reads those: any
  * change is saved to spec.ingress.traefik. A missing isDefault reads as
  * false, as the operator's Go types did before v0.4.0.
  */

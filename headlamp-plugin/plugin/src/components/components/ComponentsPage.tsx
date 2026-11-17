@@ -163,7 +163,7 @@ function ComponentsContent({ data }: { data: K4allData }) {
           <ToggleButton value="off">Off {rows.filter(FILTERS.off).length}</ToggleButton>
         </ToggleButtonGroup>
         {removed > 0 && (
-          <Tooltip title="Components the release took out (management: Removed), e.g. ingress-nginx from k4all v2.6.0.">
+          <Tooltip title="Components the release took out (management: Removed), e.g. ingress-nginx from k4all v2.4.0.">
             <FormControlLabel
               control={
                 <Switch

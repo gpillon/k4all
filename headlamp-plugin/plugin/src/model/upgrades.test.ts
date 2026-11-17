@@ -299,11 +299,11 @@ describe("releasePlan (the operator's availableReleases[].path)", () => {
     expect(plan.hops.map(h => h.changes)).toEqual([
       [],
       [{ what: 'Fedora', from: '43', to: '45' }],
-      [],
       [
         { what: 'Kubernetes', from: '1.35.10', to: '1.36.4' },
         { what: 'CRI-O', from: '1.35', to: '1.36' },
       ],
+      [],
     ]);
   });
 

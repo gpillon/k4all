@@ -1,7 +1,7 @@
 /*
- * Moving Ingresses from the nginx class to the traefik class (k4all v2.6.0+).
+ * Moving Ingresses from the nginx class to the traefik class (k4all v2.4.0+).
  *
- * Since v2.6.0 Traefik serves the Ingresses of class nginx through its
+ * Since v2.4.0 Traefik serves the Ingresses of class nginx through its
  * ingress-nginx provider, with the nginx annotations it understands. Moving
  * an Ingress to the traefik class makes it a plain Traefik Ingress:
  *

@@ -52,8 +52,9 @@ export function IngressSection(props: SectionProps & { controller?: IngressContr
   const isTraefik = controller === 'traefik';
   const current = effectiveIngress(draft, controller);
   const before = effectiveIngress(base, controller);
-  // Before the operator migrates the key (v0.4.2), Traefik runs on the
-  // values it inherited; the first change saves them to spec.ingress.traefik.
+  // Before the operator migrates the key (v0.4.2 and later, in the v2.4.0
+  // sync), Traefik runs on the values it inherited; the first change saves
+  // them to spec.ingress.traefik.
   const inherited = isTraefik && current.source === 'nginx';
   const exposure = ingressExposure(draft, controller);
   const ciliumIP = draft.ingress?.cilium?.dedicatedIP ?? '';
@@ -70,9 +71,9 @@ export function IngressSection(props: SectionProps & { controller?: IngressContr
       )}
       {!isTraefik && (
         <Alert severity="info">
-          This release runs ingress-nginx, configured by <Mono>spec.ingress.nginx</Mono>. k4all
-          v2.6.0 replaces it with Traefik, which takes over these settings and keeps serving the
-          Ingresses of class <Mono>nginx</Mono>.
+          This cluster runs ingress-nginx, configured by <Mono>spec.ingress.nginx</Mono>. From k4all
+          v2.4.0 the release replaces it with Traefik, which takes over these settings and keeps
+          serving the Ingresses of class <Mono>nginx</Mono>.
         </Alert>
       )}
 

@@ -347,7 +347,7 @@ export function SettingRow(props: {
   );
 }
 
-/** "Coming with k4all-operator v0.5.0": a control the installed operator cannot apply yet. */
+/** "Coming with k4all-operator v0.6.0": a control the installed operator cannot apply yet. */
 export function CapabilityChip(props: { id: CapabilityId }) {
   const note = capabilityNote(props.id);
   return (

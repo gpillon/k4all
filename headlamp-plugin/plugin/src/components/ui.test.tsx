@@ -9,7 +9,7 @@ import React from 'react';
 import { vi } from 'vitest';
 import { Capabilities, capabilitiesOf } from '../model/capabilities';
 import { describeChanges } from '../model/changes';
-import { clusterConfigV240, defaultClusterConfig, releaseManifest } from '../model/fixtures';
+import { clusterConfigNginx, defaultClusterConfig, releaseManifest } from '../model/fixtures';
 import { setIn } from '../model/objects';
 import { buildSpecPatch } from '../model/patch';
 import { Draft, setTraefik } from '../model/settings';
@@ -70,12 +70,12 @@ describe('IngressSection', () => {
     expect(screen.getByText(/Host ports 80 and 443/)).toBeTruthy();
   });
 
-  it('edits spec.ingress.nginx on clusters that run ingress-nginx (k4all v2.4.0)', () => {
-    const draft = clusterConfigV240().spec!;
+  it('edits spec.ingress.nginx on clusters that kept ingress-nginx', () => {
+    const draft = clusterConfigNginx().spec!;
     const update = vi.fn();
     render(
       <IngressSection
-        {...sectionProps(draft, update, capabilitiesOf('v0.4.0'))}
+        {...sectionProps(draft, update, capabilitiesOf('v0.5.0'))}
         base={draft}
         controller="nginx"
       />
@@ -131,29 +131,41 @@ describe('FeaturesSection', () => {
   });
 });
 
-describe('settings that need k4all-operator v0.5.0', () => {
+describe('settings that need k4all-operator v0.6.0', () => {
   const components = releaseManifest().spec!.components!;
 
   it('keeps the OVS bridge and the CNI read-only with an older operator', () => {
     const draft = defaultClusterConfig().spec!;
     render(<FeaturesSection {...sectionProps(draft)} components={components} />);
     expect(screen.queryByRole('checkbox', { name: 'OVS bridge on every node' })).toBeNull();
-    expect(screen.getByText('Coming with k4all-operator v0.5.0')).toBeTruthy();
+    expect(screen.getByText('Coming with k4all-operator v0.6.0')).toBeTruthy();
     render(<NetworkingSection {...sectionProps(draft)} nodeConfigs={[]} />);
     expect(screen.queryByRole('combobox', { name: 'CNI' })).toBeNull();
-    expect(screen.getAllByText('Coming with k4all-operator v0.5.0')).toHaveLength(2);
+    expect(screen.getAllByText('Coming with k4all-operator v0.6.0')).toHaveLength(2);
+  });
+
+  it('keeps them read-only with k4all-operator v0.5.0, the one k4all v2.4.0 pins', () => {
+    // v0.5.0 cannot switch the CNI of a running cluster: a cni.type change
+    // would re-create every pod network. Plugin 0.1.1 unlocked both here.
+    const draft = defaultClusterConfig().spec!;
+    const caps = capabilitiesOf('v0.5.0');
+    render(<FeaturesSection {...sectionProps(draft, vi.fn(), caps)} components={components} />);
+    expect(screen.queryByRole('checkbox', { name: 'OVS bridge on every node' })).toBeNull();
+    render(<NetworkingSection {...sectionProps(draft, vi.fn(), caps)} nodeConfigs={[]} />);
+    expect(screen.queryByRole('combobox', { name: 'CNI' })).toBeNull();
+    expect(screen.getAllByText('Coming with k4all-operator v0.6.0')).toHaveLength(2);
   });
 
   it('turns them into controls once the operator has the capability', () => {
     const draft = defaultClusterConfig().spec!;
     const update = vi.fn();
-    const caps = capabilitiesOf('v0.5.0');
+    const caps = capabilitiesOf('v0.6.0');
     render(<FeaturesSection {...sectionProps(draft, update, caps)} components={components} />);
     fireEvent.click(screen.getByRole('checkbox', { name: 'OVS bridge on every node' }));
     expect(applied(update, draft).features?.ovsBridge?.enabled).toBe(false);
     render(<NetworkingSection {...sectionProps(draft, update, caps)} nodeConfigs={[]} />);
     expect(screen.getByRole('combobox', { name: 'CNI' })).toBeTruthy();
-    expect(screen.queryByText('Coming with k4all-operator v0.5.0')).toBeNull();
+    expect(screen.queryByText('Coming with k4all-operator v0.6.0')).toBeNull();
   });
 });
 

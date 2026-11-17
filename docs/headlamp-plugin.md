@@ -18,7 +18,7 @@ kubectl get secret admin-user -n headlamp -o jsonpath='{.data.token}' | base64 -
 | **Overview** | The k4all release, whether an upgrade is available or running, health, components, features, ingress, and each node with its release and upgrade phase. |
 | **Upgrades** | Move every node to a newer k4all release and follow it. |
 | **Settings** | Features (Virtualization, Argo CD, OVS secondary networks), ingress (dedicated IP, default IngressClass, Ingresses still on the nginx class), Cilium options. Install-time settings are shown read-only, with the reason. |
-| **Components** | Every component of the release: state, versions, Helm value overrides that survive upgrades, management (Managed, Unmanaged, Removed), re-apply. Components the release removed (such as ingress-nginx from v2.6.0) are hidden unless you turn on "Show removed". |
+| **Components** | Every component of the release: state, versions, Helm value overrides that survive upgrades, management (Managed, Unmanaged, Removed), re-apply. Components the release removed (such as ingress-nginx from v2.4.0) are hidden unless you turn on "Show removed". |
 
 The Node page of Headlamp also gets a k4all section: role, release, upgrade
 phase, network interfaces.
@@ -36,7 +36,8 @@ known state, say so, and retry by themselves; you do not need to reload.
 
 ## Ingresses still on the nginx class
 
-From v2.6.0 Traefik is the ingress controller. It still serves the
+From v2.4.0, the release that brings the plugin, Traefik is the ingress
+controller. It still serves the
 Ingresses of class `nginx`, through its ingress-nginx compatibility, but
 they are best moved to the `traefik` class. **Settings > Ingress** lists
 them, and the Overview counts them. **Switch to traefik** sets the class and
@@ -134,7 +135,8 @@ v2.2.4 bridge first.
 ## Settings that need a newer operator
 
 Switching the CNI (Calico, Cilium) and turning the OVS bridge on or off are
-read-only for now, marked "coming with k4all-operator v0.5.0". Once the
+read-only for now, marked "coming with k4all-operator v0.6.0" (k4all v2.4.0
+pins v0.5.0, which cannot do them yet). Once the
 cluster runs that operator, the same rows become editable.
 
 ## Users other than admin

@@ -5,15 +5,15 @@ import {
   capabilityNote,
   operatorVersion,
 } from './capabilities';
-import { releaseManifest, releaseManifestV240 } from './fixtures';
+import { releaseManifest, releaseManifestNginx, releaseManifestV240 } from './fixtures';
 
 describe('operator capabilities', () => {
   it('reads the installed operator version, then the version the release asks for', () => {
-    expect(operatorVersion(releaseManifestV240())).toBe('v0.4.0');
-    const rm = releaseManifestV240();
+    expect(operatorVersion(releaseManifestNginx())).toBe('v0.5.0');
+    const rm = releaseManifestNginx();
     delete rm.status!.components!['k4all-operator'];
-    rm.spec!.components!['k4all-operator'].version = 'v0.5.1';
-    expect(operatorVersion(rm)).toBe('v0.5.1');
+    rm.spec!.components!['k4all-operator'].version = 'v0.6.1';
+    expect(operatorVersion(rm)).toBe('v0.6.1');
     rm.spec!.components!['k4all-operator'].version = 'latest';
     expect(operatorVersion(rm)).toBeNull();
     expect(operatorVersion(null)).toBeNull();
@@ -27,24 +27,27 @@ describe('operator capabilities', () => {
     expect(atLeast('main', 'v0.4.0')).toBe(false);
   });
 
-  it('gates ClusterUpgrade on v0.4.0, CNI and OVS bridge on v0.5.0', () => {
+  it('gates ClusterUpgrade on v0.4.0, CNI and OVS bridge on v0.6.0', () => {
     const v030 = capabilities(releaseManifest());
     expect(v030).toMatchObject({
       operatorVersion: 'v0.3.0',
       clusterUpgrade: false,
       cniSwitch: false,
     });
-    const v040 = capabilities(releaseManifestV240());
-    expect(v040).toMatchObject({
+    // v0.5.0, the operator k4all v2.4.0 pins: ClusterUpgrade, no CNI switch
+    const v050 = capabilities(releaseManifestV240());
+    expect(v050).toMatchObject({
+      operatorVersion: 'v0.5.0',
       clusterUpgrade: true,
       cniSwitch: false,
       ovsBridgeToggle: false,
     });
-    expect(capabilitiesOf('v0.5.0')).toMatchObject({ cniSwitch: true, ovsBridgeToggle: true });
+    expect(capabilitiesOf('v0.5.9')).toMatchObject({ cniSwitch: false, ovsBridgeToggle: false });
+    expect(capabilitiesOf('v0.6.0')).toMatchObject({ cniSwitch: true, ovsBridgeToggle: true });
   });
 
   it('names the operator (and k4all release) that brings a capability', () => {
-    expect(capabilityNote('cniSwitch')).toBe('coming with k4all-operator v0.5.0');
+    expect(capabilityNote('cniSwitch')).toBe('coming with k4all-operator v0.6.0');
     expect(capabilityNote('clusterUpgrade')).toBe(
       'coming with k4all-operator v0.4.0 (k4all v2.4.0)'
     );

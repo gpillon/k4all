@@ -1,7 +1,8 @@
 import {
-  clusterConfigV240,
+  clusterConfigNginx,
   defaultClusterConfig,
   releaseManifest,
+  releaseManifestNginx,
   releaseManifestV240,
 } from './fixtures';
 import { setIn } from './objects';
@@ -37,7 +38,7 @@ describe('effectiveTraefik', () => {
     });
   });
 
-  it('falls back to spec.ingress.nginx on configs from before v2.6.0', () => {
+  it('falls back to spec.ingress.nginx on configs from before v2.4.0', () => {
     expect(effectiveTraefik(legacySpec())).toEqual({
       dedicatedIP: '192.168.1.240',
       isDefault: true,
@@ -144,17 +145,19 @@ describe('traefikExposure (mirror of the operator Traefik hook)', () => {
   });
 });
 
-describe('ingress-nginx clusters (k4all v2.4.0 and v2.5.x)', () => {
+describe('clusters that kept ingress-nginx', () => {
   it('finds the active controller in the ReleaseManifest', () => {
     expect(activeIngress(releaseManifest().spec!.components)).toBe('traefik'); // nginx Removed
-    expect(activeIngress(releaseManifestV240().spec!.components)).toBe('nginx');
+    // Traefik from v2.4.0, the first release with the plugin
+    expect(activeIngress(releaseManifestV240().spec!.components)).toBe('traefik');
+    expect(activeIngress(releaseManifestNginx().spec!.components)).toBe('nginx');
     // without a ReleaseManifest the config decides
-    expect(activeIngress(undefined, clusterConfigV240().spec)).toBe('nginx');
+    expect(activeIngress(undefined, clusterConfigNginx().spec)).toBe('nginx');
     expect(activeIngress(undefined, defaultClusterConfig().spec)).toBe('traefik');
   });
 
   it('reads and writes spec.ingress.nginx only, both fields explicit', () => {
-    const spec = clusterConfigV240().spec!;
+    const spec = clusterConfigNginx().spec!;
     expect(effectiveIngress(spec, 'nginx')).toEqual({
       dedicatedIP: '',
       isDefault: true,
@@ -168,7 +171,7 @@ describe('ingress-nginx clusters (k4all v2.4.0 and v2.5.x)', () => {
   });
 
   it('ignores a traefik key the ingress-nginx hook does not read', () => {
-    const spec = setIn(clusterConfigV240().spec!, ['ingress', 'traefik'], {
+    const spec = setIn(clusterConfigNginx().spec!, ['ingress', 'traefik'], {
       dedicatedIP: '10.0.0.9',
       isDefault: false,
     });

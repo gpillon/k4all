@@ -6,10 +6,10 @@ import {
   serverAdjustments,
 } from './changes';
 import {
-  clusterConfigV240,
+  clusterConfigNginx,
   defaultClusterConfig,
   releaseManifest,
-  releaseManifestV240,
+  releaseManifestNginx,
 } from './fixtures';
 import { setIn } from './objects';
 import { setIngress, setOverride, setTraefik } from './settings';
@@ -65,11 +65,11 @@ describe('describeChanges', () => {
   });
 
   it('names ingress-nginx on clusters that still run it', () => {
-    const spec = clusterConfigV240().spec!;
+    const spec = clusterConfigNginx().spec!;
     const items = describeChanges(
       spec,
       setIngress(spec, 'nginx', { dedicatedIP: '192.168.1.240', isDefault: false }),
-      releaseManifestV240().spec!.components!
+      releaseManifestNginx().spec!.components!
     );
     expect(items.map(i => [i.key, i.label])).toEqual([
       ['ingress.nginx.dedicatedIP', 'ingress-nginx address'],
@@ -77,7 +77,7 @@ describe('describeChanges', () => {
     ]);
   });
 
-  it('flags a CNI switch and the OVS bridge as dangerous (operator v0.5.0)', () => {
+  it('flags a CNI switch and the OVS bridge as dangerous (operator v0.6.0)', () => {
     const items = describeChanges(
       base(),
       setIn(

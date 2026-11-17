@@ -95,7 +95,7 @@ export function ClusterUpgradeUnavailable({ data }: { data: K4allData }) {
                 caps.operatorVersion ?? '(unknown version)'
               }. k4all ${
                 CAPABILITY_RELEASE.clusterUpgrade
-              } brings ${since} and the ClusterUpgrade API; from then on every upgrade can be run from here.`}
+              } brings the ClusterUpgrade API (k4all-operator ${since} or later); from then on every upgrade can be run from here.`}
         </Typography>
         {!caps.clusterUpgrade && (
           <>

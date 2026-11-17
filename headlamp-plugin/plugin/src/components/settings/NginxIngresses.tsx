@@ -1,5 +1,5 @@
 /*
- * "Ingresses still on the nginx class" (k4all v2.6.0+, Traefik releases):
+ * "Ingresses still on the nginx class" (k4all v2.4.0+, Traefik releases):
  * the Ingresses Traefik still serves through its ingress-nginx provider,
  * each with a "Switch to traefik" that applies planMoveToTraefik after a
  * review and a dry run. Applied at once, not part of the settings draft.

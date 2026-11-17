@@ -11,12 +11,12 @@ import { MemoryRouter } from 'react-router-dom';
 import { vi } from 'vitest';
 import { K4allData } from '../../api/hooks';
 import {
-  clusterConfigV240,
+  clusterConfigNginx,
   clusterUpgrade,
   clusterUpgradeInProgress,
   node,
   releaseManifest,
-  releaseManifestV240,
+  releaseManifestNginx,
 } from '../../model/fixtures';
 import { ClusterUpgradeObject, NodeLike } from '../../model/types';
 import { describeUpgradeChanges, desiredSpec, intentOps, upgradeView } from '../../model/upgrades';
@@ -109,9 +109,10 @@ describe('ReleaseList', () => {
       'Upgrade to v2.4.1',
     ]);
     expect(screen.getByText('latest')).toBeTruthy();
-    expect(screen.getByText('Kubernetes 1.35.10 → 1.36.4')).toBeTruthy();
+    // v2.6.0 moves Kubernetes to 1.36; v2.7.0, after it, stays there
+    expect(screen.getAllByText('Kubernetes 1.35.10 → 1.36.4')).toHaveLength(2);
     expect(screen.getByText(/4 hops: v2.4.1 → v2.5.0 → v2.6.0 → v2.7.0/)).toBeTruthy();
-    expect(screen.getByText('Traefik replaces ingress-nginx.')).toBeTruthy();
+    expect(screen.getByText('Unattended join.')).toBeTruthy();
     fireEvent.click(buttons[0]);
     expect(onChoose).toHaveBeenCalledWith('v2.7.0');
   });
@@ -168,8 +169,8 @@ describe('UpgradeReviewDialog', () => {
     expect(hops.map(h => h.textContent)).toEqual([
       expect.stringContaining('v2.4.0 → v2.4.1'),
       expect.stringContaining('Fedora 43 → 45'),
-      expect.stringContaining('Traefik replaces ingress-nginx.'),
       expect.stringContaining('Kubernetes 1.35.10 → 1.36.4'),
+      expect.stringContaining('Unattended join.'),
     ]);
     expect(screen.getByText(/12 reboots/)).toBeTruthy();
     expect(screen.getByText(/at most 30 minutes/)).toBeTruthy();
@@ -357,7 +358,7 @@ describe('UpgradeProgressPanel', () => {
 
 describe('without ClusterUpgrade', () => {
   const data = (rm = releaseManifest()): K4allData => ({
-    cc: clusterConfigV240(),
+    cc: clusterConfigNginx(),
     rm,
     extraClusterConfigs: [],
     nodes: [],
@@ -370,12 +371,16 @@ describe('without ClusterUpgrade', () => {
   it('names the operator and release that bring it, and the node command meanwhile', () => {
     render(<ClusterUpgradeUnavailable data={data()} />);
     expect(screen.getByText('Upgrades from Headlamp need k4all-operator v0.4.0')).toBeTruthy();
-    expect(screen.getByText(/runs k4all-operator v0.3.0. k4all v2.4.0 brings v0.4.0/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /runs k4all-operator v0.3.0. k4all v2.4.0 brings the ClusterUpgrade API \(k4all-operator v0.4.0 or later\)/
+      )
+    ).toBeTruthy();
     expect(screen.getByText('sudo k4all-upgrade run --to v2.4.0')).toBeTruthy();
   });
 
   it('points at the installation when the operator should serve it', () => {
-    render(<ClusterUpgradeUnavailable data={data(releaseManifestV240())} />);
+    render(<ClusterUpgradeUnavailable data={data(releaseManifestNginx())} />);
     expect(screen.getByText(/check the k4all-operator installation/)).toBeTruthy();
   });
 });

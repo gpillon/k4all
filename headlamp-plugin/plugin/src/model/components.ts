@@ -317,7 +317,7 @@ export function buildRows(
 
 /**
  * The rows the Components page lists: components with management Removed
- * (e.g. ingress-nginx from v2.6.0) are hidden unless asked for.
+ * (e.g. ingress-nginx from v2.4.0) are hidden unless asked for.
  */
 export function visibleRows(rows: ComponentRow[], showRemoved: boolean): ComponentRow[] {
   return showRemoved ? rows : rows.filter(r => r.management !== 'Removed');
@@ -402,7 +402,7 @@ export function acceptsValues(spec: ComponentSpec): boolean {
   return spec.type === 'helm' || spec.type === 'helm-oci';
 }
 
-/** "v2.7.0" from an osImage tag like "v2.7.0-amd64"; null for "latest" or empty. */
+/** "v2.6.0" from an osImage tag like "v2.6.0-amd64"; null for "latest" or empty. */
 export function releaseVersion(rm: ReleaseManifestObject | null | undefined): string | null {
   const tag = rm?.status?.resolvedOSImageTag || rm?.spec?.osImage?.imageTag || '';
   const plain = tag.replace(/-(amd64|arm64)$/, '');

@@ -1,9 +1,9 @@
 /*
  * Test fixtures shaped like real k4all clusters: the installer's default
- * ClusterConfig and a subset of k4all-release.yaml, for a v2.7.0 cluster
- * (Traefik; its operator kept at v0.3.0, so the compatibility paths for
- * older operators stay covered) and a v2.4.0 cluster (ingress-nginx,
- * operator v0.4.0).
+ * ClusterConfig and a subset of k4all-release.yaml, for a v2.6.0 cluster
+ * (Traefik, as from v2.4.0; its operator kept at v0.3.0, so the
+ * compatibility paths for older operators stay covered) and a v2.4.0
+ * cluster that kept ingress-nginx (operator v0.5.0).
  */
 
 import {
@@ -61,7 +61,7 @@ export function releaseManifest(): ReleaseManifestObject {
       osImage: {
         name: 'k4all-bootc',
         repository: 'ghcr.io/gpillon/k4all-bootc',
-        imageTag: 'v2.7.0-amd64',
+        imageTag: 'v2.6.0-amd64',
       },
       components: {
         calico: { type: 'manifest', version: 'v3.33.1', upgradePath: [{ version: 'v3.32.4' }] },
@@ -72,7 +72,7 @@ export function releaseManifest(): ReleaseManifestObject {
         'kube-vip': { type: 'static-pod', version: 'v1.3.1' },
         'ingress-nginx': {
           type: 'helm',
-          version: '4.15.1',
+          version: '4.14.3',
           management: 'Removed',
           dependsOn: ['cert-manager', 'metallb'],
         },
@@ -90,7 +90,7 @@ export function releaseManifest(): ReleaseManifestObject {
             { version: 'v1.20.5' },
           ],
         },
-        headlamp: { type: 'helm', version: '0.46.0', dependsOn: ['cert-manager'] },
+        headlamp: { type: 'helm', version: '0.46.0', dependsOn: ['cert-manager', 'traefik'] },
         kubevirt: { type: 'manifest', version: 'v1.9.1', featureGate: 'virt' },
         virtctl: {
           type: 'binary',
@@ -169,28 +169,43 @@ export function node(
   };
 }
 
-/** A cluster installed before v2.6.0, as k4all v2.4.0 leaves it: ingress-nginx, operator v0.4.0. */
-export function clusterConfigV240(): ClusterConfigObject {
+/**
+ * A v2.4.0 cluster that still runs ingress-nginx: its ReleaseManifest was
+ * changed by hand to keep it, without Traefik (k4all's own has Traefik and
+ * ingress-nginx Removed from v2.4.0, the first release with the plugin). The
+ * ClusterConfig has spec.ingress.nginx only, as on clusters installed before
+ * v2.4.0. Operator v0.5.0, as v2.4.0 pins it.
+ */
+export function clusterConfigNginx(): ClusterConfigObject {
   const cc = defaultClusterConfig();
   cc.spec!.ingress = { nginx: { dedicatedIP: '', isDefault: true }, cilium: { dedicatedIP: '' } };
   return cc;
 }
 
-export function releaseManifestV240(): ReleaseManifestObject {
+export function releaseManifestNginx(): ReleaseManifestObject {
   const rm = releaseManifest();
   const components = rm.spec!.components!;
   delete components.traefik;
   components['ingress-nginx'] = {
     type: 'helm',
-    version: '4.15.1',
+    version: '4.14.3',
     dependsOn: ['cert-manager', 'metallb'],
   };
-  components['k4all-operator'] = { type: 'manifest', version: 'v0.4.0' };
+  components['k4all-operator'] = { type: 'manifest', version: 'v0.5.0' };
   rm.spec!.osImage!.imageTag = 'v2.4.0-amd64';
   const status = rm.status!.components!;
   delete status.traefik;
-  status['ingress-nginx'] = { state: 'Installed', installedVersion: '4.15.1' };
-  status['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.4.0' };
+  status['ingress-nginx'] = { state: 'Installed', installedVersion: '4.14.3' };
+  status['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.5.0' };
+  return rm;
+}
+
+/** The ReleaseManifest as k4all v2.4.0 leaves it: Traefik, ingress-nginx Removed, operator v0.5.0. */
+export function releaseManifestV240(): ReleaseManifestObject {
+  const rm = releaseManifest();
+  rm.spec!.osImage!.imageTag = 'v2.4.0-amd64';
+  rm.spec!.components!['k4all-operator'] = { type: 'manifest', version: 'v0.5.0' };
+  rm.status!.components!['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.5.0' };
   return rm;
 }
 
@@ -226,10 +241,10 @@ const LADDER: ReleaseInfo[] = [
     version: 'v2.6.0',
     kind: 'minor',
     minFrom: 'v2.5.0',
-    kubernetes: '1.35.10',
-    crio: '1.35',
+    kubernetes: '1.36.4',
+    crio: '1.36',
     fedora: 45,
-    notes: 'Traefik replaces ingress-nginx.',
+    notes: 'Kubernetes 1.36.',
   },
   {
     version: 'v2.7.0',
@@ -238,7 +253,7 @@ const LADDER: ReleaseInfo[] = [
     kubernetes: '1.36.4',
     crio: '1.36',
     fedora: 45,
-    notes: 'Kubernetes 1.36.',
+    notes: 'Unattended join.',
   },
 ];
 

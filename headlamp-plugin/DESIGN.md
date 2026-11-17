@@ -1,8 +1,8 @@
 # k4all Headlamp plugin: design
 
-Status: built and unit-tested (277 tests), not yet run against a live
-cluster. Ships from k4all v2.4.0 (k4all-operator v0.4.0, Headlamp chart
-0.46.0, Kubernetes 1.35 and later). User guide: `docs/headlamp-plugin.md`.
+Status: built and unit-tested (278 tests), not yet run against a live
+cluster. Ships from k4all v2.4.0 (k4all-operator v0.5.0, Traefik, Headlamp
+chart 0.46.0, Kubernetes 1.35 and later). User guide: `docs/headlamp-plugin.md`.
 Packaging and release: `DISTRIBUTION.md`.
 
 ## 1. Summary
@@ -53,8 +53,8 @@ Jobs, most frequent first:
 3. Turn a feature on or off: Virtualization (with emulation mode), Argo CD,
    OVS secondary networks.
 4. Ingress: dedicated IP and default IngressClass of the release's ingress
-   controller (ingress-nginx up to v2.5.x, Traefik from v2.6.0); Cilium
-   ingress IP.
+   controller (Traefik from v2.4.0, the first release with the plugin;
+   ingress-nginx where a cluster kept it); Cilium ingress IP.
 5. Cilium options: L2 announcements, Hubble, Gateway API, devices.
 6. Customize a component's Helm values so the customization survives k4all
    upgrades (`componentOverrides`).
@@ -73,7 +73,7 @@ Non-goals (and why):
   upgrade. Customization goes to `componentOverrides` instead.
 - **Install-time settings** (pod/service networks, API endpoint, HA,
   firewalld, proxy): shown read-only, see 4. CNI and OVS bridge are
-  read-only until k4all-operator v0.5.0 (4.1).
+  read-only until k4all-operator v0.6.0 (4.1).
 - **NodeConfig**: it has no spec, only status, shown on the Node page.
 
 ## 3. Screens
@@ -103,8 +103,8 @@ Headlamp:
  │     4 newer releases, latest v2.7.0 (Kubernetes 1.36.4, Fedora 45). [Plan →]│
  ├────────────────┬──────────────────┬───────────────────┬────────────────────┤
  │ Components     │ Features  [Change]│ Ingress  [Change] │ Release            │
- │ 14/14 active   │ Virtualization ●On│ ingress-nginx addr│ k4all-operator     │
- │ installed      │ Argo CD      ○Off │ 192.168.1.240     │ v0.4.0             │
+ │ 14/14 active   │ Virtualization ●On│ Traefik address   │ k4all-operator     │
+ │ installed      │ Argo CD      ○Off │ 192.168.1.240     │ v0.5.0             │
  │ ▇▇▇▇▇▇▇▇▇▁▁    │ OVS networks ○Off │ ● Default class   │ Operator status    │
  │ cert-manager → │ OVS bridge   ●On  │ CNI: calico       │ 14/14 installed    │
  │ v1.18.6 (+3)   │ (set at install)  │                   │ Last reconcile 2m  │
@@ -221,18 +221,20 @@ Every row carries an apply badge: **Live** (the operator applies it),
   installed/removed" while pending), the components it brings (read from the
   ReleaseManifest `featureGate`s, so it follows the release), and for
   Virtualization the emulation select. The OVS bridge card is dashed and
-  locked with "Coming with k4all-operator v0.5.0"; with that operator it
+  locked with "Coming with k4all-operator v0.6.0"; with that operator it
   gets a switch (4.1).
 - **Ingress**: the release's ingress controller, from the ReleaseManifest
   (`traefik` active → Traefik; else `ingress-nginx` active → ingress-nginx):
   dedicated IP (validated) and default IngressClass, and a computed
   "Result:" line that mirrors the operator's hook (host ports 80/443,
   LoadBalancer on the node address, through kube-vip, or on the dedicated
-  IP; both hooks follow the same rules). ingress-nginx clusters (k4all
-  v2.4.0, v2.5.x) edit `spec.ingress.nginx`, with a note that Traefik takes
-  these settings over in v2.6.0. On Traefik releases (v2.6.0+) the page
+  IP; both hooks follow the same rules). Clusters that kept ingress-nginx
+  (a ReleaseManifest changed by hand: k4all has Traefik from v2.4.0, the
+  first release with the plugin) edit `spec.ingress.nginx`, with a note that
+  Traefik takes these settings over. On Traefik releases (v2.4.0+) the page
   shows and writes `spec.ingress.traefik` only, never the nginx key; while
-  that key is still missing (before the operator's migration in v0.4.2) it
+  that key is still missing (before the operator's migration, v0.4.2 and
+  later, which runs in the v2.4.0 sync) it
   shows the values Traefik inherited and the first change saves them to
   `spec.ingress.traefik`. Cilium ingress IP (only shown on Cilium clusters,
   or when set).
@@ -245,7 +247,7 @@ Every row carries an apply badge: **Live** (the operator applies it),
   outside the settings draft. The Overview's Ingress card counts them, with
   a link here.
 - **Networking**: a CNI panel (read-only with "Coming with k4all-operator
-  v0.5.0", a select with that operator), then on Cilium clusters switches for
+  v0.6.0", a select with that operator), then on Cilium clusters switches for
   L2 announcements, Hubble, Gateway API and a chip input for devices, with
   suggestions from the interfaces the nodes report (NodeConfig status).
 - **Install-time**: four read-only panels (cluster network, API endpoint,
@@ -255,7 +257,7 @@ Every row carries an apply badge: **Live** (the operator applies it),
 ### 3.4 Components
 
 Filter (All / Needs attention / Active / Off), and "Show removed": components
-with `management: Removed` (ingress-nginx from v2.6.0) are hidden unless it
+with `management: Removed` (ingress-nginx from v2.4.0) are hidden unless it
 is on. A sortable, searchable table
 (Headlamp's `Table`): component (with icons for "has overrides" and "re-apply
 requested"), category, state pill (with the operator message as tooltip),
@@ -325,8 +327,8 @@ on the field with k4all-operator v0.4.0.
 | Software emulation | `features.virt.emulation` (`auto`/`true`/`false`) | edit | operator virt hook patches KubeVirt `useEmulation` |
 | Argo CD switch | `features.argocd.enabled` | edit | operator feature gate: argocd chart |
 | OVS secondary networks | `features.ovsCni.enabled` | edit | operator feature gate: multus-cni, ovs-cni |
-| OVS bridge | `features.ovsBridge.enabled` | read-only; edit with operator ≥ v0.5.0 | today: NodeConfig controller creates per-node NNCPs when on, never removes them; Cilium hook adds `ovs-bridge` to devices |
-| CNI | `networking.cni.type` | read-only; edit with operator ≥ v0.5.0 | today: switching would re-create every pod network; kubeadm/firewall set up at install |
+| OVS bridge | `features.ovsBridge.enabled` | read-only; edit with operator ≥ v0.6.0 | today: NodeConfig controller creates per-node NNCPs when on, never removes them; Cilium hook adds `ovs-bridge` to devices |
+| CNI | `networking.cni.type` | read-only; edit with operator ≥ v0.6.0 | today: switching would re-create every pod network; kubeadm/firewall set up at install |
 | Ingress dedicated IP (ingress-nginx) | `ingress.nginx.dedicatedIP` | edit (ingress-nginx releases) | ingress-nginx hook: LoadBalancer on that IP; MetalLB pool |
 | Default IngressClass (ingress-nginx) | `ingress.nginx.isDefault` (always written) | edit (ingress-nginx releases) | ingress-nginx hook: `ingressClassResource.default`, host ports vs LoadBalancer |
 | Traefik dedicated IP | `ingress.traefik.dedicatedIP` | edit (Traefik releases) | Traefik hook: LoadBalancer Service on that IP; MetalLB pool (`DedicatedIPs`, v0.4.0) |
@@ -361,17 +363,19 @@ release's spec version) in one table, `src/model/capabilities.ts`:
 | Capability | Since | Effect in the plugin |
 |---|---|---|
 | `clusterUpgrade` | v0.4.0 (k4all v2.4.0) | explains a missing ClusterUpgrade API (the API itself is detected by discovery) |
-| `cniSwitch` | v0.5.0 | CNI select in Networking, change reviewed as dangerous |
-| `ovsBridgeToggle` | v0.5.0 | OVS bridge switch in Features, change reviewed as dangerous |
+| `cniSwitch` | v0.6.0 | CNI select in Networking, change reviewed as dangerous |
+| `ovsBridgeToggle` | v0.6.0 | OVS bridge switch in Features, change reviewed as dangerous |
 
 An unknown or unparsable version has no optional capability. Fields that
 turn live carry `liveWith: <capability>` in `fields.ts`; the controls and
 the review texts for them already exist. Enabling them for real therefore
-needs no plugin change, only that operator v0.5.0 implements the switch on
+needs no plugin change, only that operator v0.6.0 implements the switch on
 these same fields (`networking.cni.type`, `features.ovsBridge.enabled`);
 if it chooses other fields or a different flow, the paths in `fields.ts`
 and the consequence texts in `changes.ts` (`LIVE_DANGER`) are the places to
-adjust, before the plugin version pinned with v0.5.0 is released.
+adjust, before the plugin version pinned with v0.6.0 is released. (Plugin
+0.1.1 gated them on v0.5.0; v0.5.0, which k4all v2.4.0 pins, does not have
+them, so 0.1.2 gates them on v0.6.0.)
 
 ### 4.2 ClusterUpgrade
 
@@ -517,7 +521,7 @@ Apply sends the same patch without `dryRun`.
 - Setting the ingress IP materializes the controller's key with both fields.
 - On Traefik releases nothing is written to `ingress.nginx` (0.1.0 mirrored
   the Traefik IP there for operators before v0.4.0, which the plugin never
-  meets: it ships from v2.4.0 with v0.4.0).
+  meets: it ships from v2.4.0 with v0.5.0).
 - Settings that are only for Cilium clusters are only offered there; a Cilium
   ingress IP on a Calico cluster is a warning.
 
@@ -669,7 +673,7 @@ tagged, if possible).
 | **O-4** | CRD (kubebuilder markers) | `format: ipv4/ipv6` (or CEL) on dedicated IPs; CEL `self == oldSelf` with a message on install-time fields (networks, API endpoint, `ha.*`), not on fields a migration rewrites | the plugin already treats them as read-only; server messages would show up in the dry run |
 | **O-5** | operator status | Set `status.features.ovsBridgeReady` (declared, never written); per-component `observedGeneration` or a ReleaseManifest `status.observedGeneration` | Overview could show a sync in progress |
 | **O-6** | operator `cilium_hook.go` | Enable Cilium's ingress controller when `ingress.cilium.dedicatedIP` is set; today the IP only reaches the MetalLB pool | the field is labelled "added to the MetalLB address pool" |
-| **O-7** | operator v0.5.0 | CNI switch and OVS bridge on/off on the existing fields `networking.cni.type` and `features.ovsBridge.enabled` (the plugin's controls turn on by version, 4.1), with progress in status | read-only with "coming with k4all-operator v0.5.0" |
+| **O-7** | operator v0.6.0 | CNI switch and OVS bridge on/off on the existing fields `networking.cni.type` and `features.ovsBridge.enabled` (the plugin's controls turn on by version, 4.1), with progress in status | read-only with "coming with k4all-operator v0.6.0" |
 | ~~U-1~~ | `ReleaseInfo` | `minFrom`, `crio`, and `path` (the hops the operator would plan) in `availableReleases`. **Done** (k4all-operator 7ef70c4). | the review and the list show the operator's own path |
 | ~~U-2~~ | status | `currentReleaseInfo`. **Done**. | the "from" of every change |
 | ~~U-3~~ | `nodes[]` | `reason` (DrainTimeout, HostHold, Abandoned, TargetRejected, RollbackRebooted, NodeNotReady) and `hostPhase` for every node. **Done**. | guidance by reason only |
@@ -689,7 +693,7 @@ tagged, if possible).
 2. **Precondition on `metadata.generation`, not `resourceVersion`**: status
    writes bump resourceVersion every reconcile and would make every save a
    conflict.
-3. **CNI type and OVS bridge are read-only** until operator v0.5.0 (user
+3. **CNI type and OVS bridge are read-only** until operator v0.6.0 (user
    decision: editable from the plugin once the operator supports it), gated
    by the installed operator version (4.1).
 4. **Proxy is read-only**: the cluster resource does not reach the nodes.
@@ -838,6 +842,6 @@ see DISTRIBUTION.md) with the real ClusterUpgrade controller.
 
 - An app-bar indicator while an upgrade runs (needs a cheap watch).
 - Overrides editor with Monaco and the chart's values schema for completion.
-- CNI switch and OVS bridge once operator v0.5.0 ships (4.1).
+- CNI switch and OVS bridge once operator v0.6.0 ships (4.1).
 - Italian (and other) translations through Headlamp's i18n.
 - Storybook stories for the pages with mocked resources.

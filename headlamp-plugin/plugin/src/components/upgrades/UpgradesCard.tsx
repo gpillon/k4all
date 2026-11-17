@@ -159,7 +159,7 @@ export function UpgradesCard() {
         <Typography sx={{ fontWeight: 600 }}>Upgrades</Typography>
         <Typography variant="body2" color="text.secondary">
           Upgrading the cluster from here comes with k4all {CAPABILITY_RELEASE.clusterUpgrade}{' '}
-          (k4all-operator {CAPABILITY_SINCE.clusterUpgrade}). Until then, run{' '}
+          (k4all-operator {CAPABILITY_SINCE.clusterUpgrade} or later). Until then, run{' '}
           <code>sudo k4all-upgrade</code> on each node.
         </Typography>
       </Frame>
