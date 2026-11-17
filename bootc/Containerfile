@@ -53,6 +53,21 @@ RUN dnf install -y \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 
+# CRI-O's example networks (100-crio-bridge.conflist, 200-loopback.conflist)
+# stay out of /etc/cni/net.d. Pods that start on the bridge before the
+# cluster's CNI get 10.85.0.0/16 addresses that no other node can route
+# (coredns among them); without the bridge, loopback would become the default
+# network. A node that joins a cluster waits for the cluster's CNI instead.
+# Only a new bootstrap node borrows the bridge, until the k4all-operator, whose
+# pod needs a network, has installed that CNI (lend_crio_bridge_cni in
+# k4all-utils). Existing nodes lose the unchanged files with the next image
+# (ostree's /etc merge); k4all-migrate-config.sh removes changed ones.
+RUN mkdir -p /usr/local/share/k4all-cni && \
+    for f in 100-crio-bridge.conflist 200-loopback.conflist; do \
+        [ ! -e "/etc/cni/net.d/$f" ] || mv "/etc/cni/net.d/$f" /usr/local/share/k4all-cni/; \
+    done && \
+    test -s /usr/local/share/k4all-cni/100-crio-bridge.conflist
+
 # Install yq (not available in standard repos), pinned
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then GOARCH="amd64"; else GOARCH="arm64"; fi && \
@@ -127,10 +142,14 @@ RUN systemctl enable fck8s-first-boot.service && \
 
 # Upgrades: k4all-upgrade walks release hops (kubeadm first, then reboot).
 # bootc's own timer runs `bootc upgrade --apply`, which would reboot into a
-# new Kubernetes minor without kubeadm: it stays masked.
+# new Kubernetes minor without kubeadm: it stays masked. The agent timer
+# follows the k4all-operator's ClusterUpgrade through Node annotations; until
+# an operator writes upgrade-target (from v2.4.0) it only publishes the
+# node's release and node-type.
 RUN systemctl mask bootc-fetch-apply-updates.timer && \
     systemctl enable k4all-upgrade.timer && \
-    systemctl enable k4all-upgrade-resume.service
+    systemctl enable k4all-upgrade-resume.service && \
+    systemctl enable k4all-upgrade-agent.timer
 
 # Component-install services (cni, ingress, dashboard, etc.) are now managed
 # by the k4all-operator and are NOT enabled as systemd units.
@@ -169,6 +188,10 @@ RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
 # stable operator release, without waiting for a k4all release.
 # Images live under /usr: bootc refreshes /usr on every upgrade, never /var,
 # and k4all-upgrade loads the next release's images from the staged image.
+# kube-vip's image is there for k4all-upgrade, which writes kube-vip's static
+# pod on the control planes of HA clusters after a reboot, once the manifest
+# pins a kube-vip release (v2.4.0); with "latest" nothing is cached and
+# k4all-upgrade leaves kube-vip.yaml as it is.
 RUN set -eux; \
     OPERATOR_VERSION="$(yq '.spec.components.k4all-operator.version' /usr/local/share/k4all-release.yaml)"; \
     case "$OPERATOR_VERSION" in v[0-9]*) ;; \
@@ -179,6 +202,10 @@ RUN set -eux; \
     mkdir -p /usr/local/share/k4all-images; \
     kubeadm config images list --kubernetes-version "v${KUBERNETES_VERSION}" > /tmp/k8s-images.txt; \
     echo "ghcr.io/gpillon/k4all-operator:${OPERATOR_VERSION}" >> /tmp/k8s-images.txt; \
+    KUBE_VIP_VERSION="$(yq '.spec.components.kube-vip.version' /usr/local/share/k4all-release.yaml)"; \
+    case "$KUBE_VIP_VERSION" in v[0-9]*) \
+        echo "ghcr.io/kube-vip/kube-vip:${KUBE_VIP_VERSION}" >> /tmp/k8s-images.txt ;; \
+    esac; \
     while read -r img; do \
     file="$(printf '%s' "$img" | tr '/:@' '_')"; \
     skopeo copy \

@@ -1,0 +1,13 @@
+[Unit]
+Description=K4All - Follow the k4all-operator's upgrade requests on this Node
+# Runs after the boot-time resume has started: resume holds the upgrade lock
+# while it finishes a hop, and this pass then exits at once.
+After=network-online.target kubelet.service k4all-upgrade-resume.service
+Wants=network-online.target
+# Only on a node that has joined a cluster.
+ConditionPathExists=|/etc/kubernetes/kubelet.conf
+ConditionPathExists=|/etc/kubernetes/admin.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/k4all-upgrade agent

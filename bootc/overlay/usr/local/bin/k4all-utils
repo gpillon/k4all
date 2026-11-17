@@ -18,6 +18,113 @@ _k4all_release_file() {
     fi
 }
 
+# traefik_is_active [manifest]: true when the release manifest (default: the
+# one in the image) runs Traefik as the ingress controller, as k4all does from
+# v2.4.0, unless the component is Removed.
+traefik_is_active() {
+    local manifest="${1:-$K4ALL_RELEASE_BASE}"
+    [ -f "$manifest" ] || return 1
+    [ "$(yq e '(.spec.components.traefik != null) and ((.spec.components.traefik.management // "Managed") != "Removed")' "$manifest" 2>/dev/null)" = "true" ]
+}
+
+# --- CRI-O's example CNI networks -----------------------------------------
+# The image keeps them out of /etc/cni/net.d (see the Containerfile): pods
+# that start on CRI-O's bridge get 10.85.0.0/16 addresses that no other node
+# can route. A new bootstrap node borrows the bridge until the k4all-operator
+# has installed the cluster's CNI, because the operator's own pod needs a
+# network to start. The marker says it did: only then can pods hold a
+# bridge address, and only then is there anything to hand over.
+CNI_NET_DIR="${CNI_NET_DIR:-/etc/cni/net.d}"
+K4ALL_CNI_SHARE="${K4ALL_CNI_SHARE:-/usr/local/share/k4all-cni}"
+K4ALL_CNI_MARKER="${K4ALL_CNI_MARKER:-/var/lib/k4all/crio-bridge-lent}"
+CRIO_BRIDGE_CNI="100-crio-bridge.conflist"
+CRIO_BRIDGE_PREFIX="10.85."
+
+# cluster_cni_present: a CNI config other than CRI-O's own is installed
+cluster_cni_present() {
+    local f
+    for f in "$CNI_NET_DIR"/*.conf "$CNI_NET_DIR"/*.conflist; do
+        [ -e "$f" ] || continue
+        [ -e "$K4ALL_CNI_SHARE/$(basename "$f")" ] && continue
+        return 0
+    done
+    return 1
+}
+
+# lend_crio_bridge_cni: a new cluster's first node, before kubeadm init
+lend_crio_bridge_cni() {
+    cluster_cni_present && return 0
+    [ -f "$K4ALL_CNI_SHARE/$CRIO_BRIDGE_CNI" ] || return 0
+    mkdir -p "$CNI_NET_DIR" "$(dirname "$K4ALL_CNI_MARKER")"
+    cp "$K4ALL_CNI_SHARE/$CRIO_BRIDGE_CNI" "$CNI_NET_DIR/$CRIO_BRIDGE_CNI"
+    : > "$K4ALL_CNI_MARKER"
+    echo "Lent CRI-O's bridge CNI ($CRIO_BRIDGE_CNI) until the cluster's CNI is installed"
+}
+
+# drop_crio_cni: once the cluster's CNI is installed, CRI-O's networks go
+# (and the marker: no new pod gets a bridge address any more).
+drop_crio_cni() {
+    cluster_cni_present || return 0
+    local f name
+    for f in "$K4ALL_CNI_SHARE"/*; do
+        name=$(basename "$f")
+        [ -e "$CNI_NET_DIR/$name" ] || continue
+        rm -f "$CNI_NET_DIR/$name"
+        echo "Removed $CNI_NET_DIR/$name: the cluster's CNI is installed"
+    done
+    rm -f "$K4ALL_CNI_MARKER"
+}
+
+# recreate_crio_bridge_pods: delete the pods that hold an address of CRI-O's
+# bridge, one call per namespace without waiting; their controllers create
+# them again on the cluster's CNI. Nothing to do (and no pod list) unless
+# this node lent the bridge. Fails (1) when the pods cannot be listed or a
+# delete fails: then the bridge must stay, and the caller tries again.
+recreate_crio_bridge_pods() {
+    [ -e "$K4ALL_CNI_MARKER" ] || return 0
+    local pods groups ns names rc=0
+    if ! pods=$(kubectl --kubeconfig "$KUBECONFIG" get pods -A -o json); then
+        echo "Cannot list the pods: CRI-O's bridge stays for now" >&2
+        return 1
+    fi
+    if ! groups=$(printf '%s' "$pods" | jq -r --arg prefix "$CRIO_BRIDGE_PREFIX" '[.items[]
+            | select(.spec.hostNetwork != true)
+            | select((.status.podIP // "") | startswith($prefix))]
+            | group_by(.metadata.namespace)[]
+            | "\(.[0].metadata.namespace) \(map(.metadata.name) | join(" "))"'); then
+        echo "Cannot read the pod list: CRI-O's bridge stays for now" >&2
+        return 1
+    fi
+    while read -r ns names; do
+        [ -n "$ns" ] || continue
+        echo "Recreating pods in $ns on the cluster's CNI: $names"
+        # shellcheck disable=SC2086
+        kubectl --kubeconfig "$KUBECONFIG" delete pod -n "$ns" $names \
+            --wait=false || rc=1
+    done <<< "$groups"
+    return $rc
+}
+
+# handover_crio_bridge [seconds]: wait up to that long for the cluster's
+# CNI, then move the pods off the bridge and drop CRI-O's networks. Fails
+# (1) only when that should be tried again: pods that could not be listed
+# or deleted keep the bridge and the marker. Without the CNI after the wait
+# it gives up (0): generate_join.sh and the next boot do it.
+handover_crio_bridge() {
+    local wait="${1:-0}" waited=0
+    [ -e "$K4ALL_CNI_MARKER" ] || return 0
+    until cluster_cni_present; do
+        if [ "$waited" -ge "$wait" ]; then
+            echo "The cluster's CNI is not installed yet: CRI-O's bridge stays"
+            return 0
+        fi
+        sleep 10
+        waited=$((waited + 10))
+    done
+    recreate_crio_bridge_pods || return 1
+    drop_crio_cni
+}
+
 get_component_version() {
     local component="$1"
     local rf

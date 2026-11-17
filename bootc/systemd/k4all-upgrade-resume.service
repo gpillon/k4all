@@ -8,7 +8,9 @@ ConditionPathExists=/var/lib/k4all/upgrade/state.json
 # exec, not oneshot: the post-boot checks can take minutes and must not
 # hold back multi-user.target.
 Type=exec
-ExecStart=/usr/local/bin/k4all-upgrade resume
+# --boot: only hops past their reboot; a hop that waits belongs to the
+# timer and to the agent.
+ExecStart=/usr/local/bin/k4all-upgrade resume --boot
 
 [Install]
 WantedBy=multi-user.target

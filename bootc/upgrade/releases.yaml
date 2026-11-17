@@ -38,4 +38,8 @@ releases:
     notes: >-
       Bridge release: adds k4all-upgrade, masks the bootc auto-update timer
       and fixes the scripts that later hops rely on. Kubernetes, CRI-O and
-      Fedora lines are unchanged.
+      Fedora lines are unchanged. On the bootstrap node the bridge sets
+      kube-vip to management Unmanaged in the ReleaseManifest: operators up
+      to v0.4.x rewrite its static-pod manifest without settings, which takes
+      the API VIP down. HA clusters not bridged yet: see docs/upgrades.md
+      (kube-vip on HA clusters).

@@ -65,6 +65,10 @@ if [ -f "$K4ALL_CONFIG_FILE" ]; then
   yq e '(select(.kind == "ClusterConfiguration") | .kubernetesVersion) = "'"$K8S_VERSION"'"' -i "$K8S_CONFIG"
 fi
 
+# The cluster's CNI comes from the k4all-operator, whose pod needs a network
+# to start: this first node borrows CRI-O's bridge until then.
+lend_crio_bridge_cni
+
 kubeadm init --config /etc/k8s-config.yaml
 
 setup_kubeconfig_for_user "root" "/root"

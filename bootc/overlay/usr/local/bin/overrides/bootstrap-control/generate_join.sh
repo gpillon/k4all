@@ -53,6 +53,21 @@ if [[ -z $mode ]]; then
     exit 1
 fi
 
+source /usr/local/bin/k4all-utils
+
+# Pods that started before the cluster's CNI hold addresses of CRI-O's bridge
+# (10.85.0.0/16), which no other node can reach: coredns among them. Before a
+# second node joins, start them again on the cluster's CNI and drop the
+# bridge. Messages go to stderr: --unattended prints only the join command.
+# The first boot of the bootstrap node already did it (deploy-operator.sh);
+# this is the safety net, and costs nothing once the marker is gone.
+if cluster_cni_present; then
+    handover_crio_bridge >&2 || true
+elif [ -e "$CNI_NET_DIR/$CRIO_BRIDGE_CNI" ]; then
+    echo "WARNING: the cluster's CNI is not installed yet: pods on CRI-O's bridge" \
+         "($CNI_NET_DIR/$CRIO_BRIDGE_CNI) cannot be reached from other nodes" >&2
+fi
+
 # Generate a unique join token and capture the current time as the join time
 JOIN_COMMAND=$(kubeadm token create --print-join-command)
 

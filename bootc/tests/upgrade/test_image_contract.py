@@ -124,7 +124,30 @@ def test_k4all_upgrade_units_are_installed_and_enabled():
         assert os.path.exists(os.path.join(BOOTC, "systemd", unit)), unit
     resume = read(BOOTC, "systemd", "k4all-upgrade-resume.service")
     assert "Type=exec" in resume, "post-boot checks must not block boot"
-    assert "ExecStart=/usr/local/bin/k4all-upgrade resume" in resume
+    # --boot: only hops past their reboot (a waiting hop is the timer's)
+    assert "ExecStart=/usr/local/bin/k4all-upgrade resume --boot" in resume
+    assert ku.build_parser().parse_args(["resume", "--boot"]).boot
+
+
+def test_upgrade_agent_timer_is_installed_and_enabled():
+    # The ClusterUpgrade protocol: the agent reads upgrade-target every
+    # minute and right after boot, behind the resume of a hop. Until an
+    # operator writes upgrade-target (from v2.4.0) it only publishes the
+    # node's release and node-type.
+    _, text = containerfile_args()
+    assert "systemctl enable k4all-upgrade-agent.timer" in text
+    for unit in ("k4all-upgrade-agent.timer", "k4all-upgrade-agent.service"):
+        assert os.path.exists(os.path.join(BOOTC, "systemd", unit)), unit
+    service = read(BOOTC, "systemd", "k4all-upgrade-agent.service")
+    assert "ExecStart=/usr/local/bin/k4all-upgrade agent" in service
+    assert "Type=oneshot" in service, "a hop must not run twice"
+    assert re.search(r"^After=.*\bk4all-upgrade-resume\.service\b", service, re.M)
+    assert "[Install]" not in service, "started by the timer only"
+    timer = read(BOOTC, "systemd", "k4all-upgrade-agent.timer")
+    assert re.search(r"^OnCalendar=minutely$", timer, re.M)
+    assert re.search(r"^OnBootSec=\S+$", timer, re.M)
+    assert "WantedBy=timers.target" in timer
+    assert ku.build_parser().parse_args(["agent"]).command == "agent"
 
 
 def test_upgrade_tool_is_executable():

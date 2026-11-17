@@ -47,84 +47,30 @@ function setup_k8s_for_vip()  {
 function setup_for_kubevip() {
   setup_k8s_for_vip
 
-  KVVERSION=$(get_component_version kube-vip)
-  if [ -z "$KVVERSION" ] || [ "$KVVERSION" = "null" ] || [ "$KVVERSION" = "latest" ]; then
-    KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
+  # kube-vip's static pod comes from one generator, the one k4all-upgrade
+  # uses on every hop and the control planes' join script after the join
+  # (`k4all-upgrade kube-vip-manifest`). Here only on the bootstrap node:
+  # `kubeadm join --control-plane` wants /etc/kubernetes/manifests empty, and
+  # admin.conf, which kube-vip mounts there, comes with the join.
+  # --before-init: mount super-admin.conf, which kubeadm init is about to
+  # write. A failure stops the install: kubeadm init would point at a VIP
+  # that nobody announces.
+  # Up to v2.3.0 the release manifest says kube-vip "latest": the newest
+  # kube-vip release at install time, as setup-k8s-ph3.sh always did. From
+  # v2.4.0 the manifest pins it and nothing is looked up.
+  if [ "$(cat /etc/node-type)" = "bootstrap" ]; then
+    local kv_args=()
+    local kv_version
+    kv_version=$(get_component_version kube-vip || true)
+    case "$kv_version" in
+      v[0-9]*) ;;
+      *)
+        kv_version=$(curl -fsSL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
+        kv_args=(--version "$kv_version")
+        ;;
+    esac
+    /usr/local/bin/k4all-upgrade kube-vip-manifest --write --before-init "${kv_args[@]}"
   fi
-
-  echo "
-apiVersion: v1
-kind: Pod
-metadata:
-  creationTimestamp: null
-  name: kube-vip
-  namespace: kube-system
-spec:
-  containers:
-  - args:
-    - manager
-    env:
-    - name: vip_arp
-      value: \"true\"
-    - name: port
-      value: \"6443\"
-    - name: vip_nodename
-      valueFrom:
-        fieldRef:
-          fieldPath: spec.nodeName
-    - name: vip_interface
-      value: \"$vip_interface\"
-    - name: vip_subnet
-      value: \"32\"
-    - name: dns_mode
-      value: first
-    - name: cp_enable
-      value: \"true\"
-    - name: cp_namespace
-      value: kube-system
-    - name: svc_enable
-      value: \"true\"
-    - name: svc_leasename
-      value: plndr-svcs-lock
-    - name: vip_leaderelection
-      value: \"true\"
-    - name: vip_leasename
-      value: plndr-cp-lock
-    - name: vip_leaseduration
-      value: \"15\"
-    - name: vip_renewdeadline
-      value: \"10\"
-    - name: vip_retryperiod
-      value: \"2\"
-    - name: address
-      value: \"$haEndpoint\"
-    - name: prometheus_server
-      value: :2112
-    image: ghcr.io/kube-vip/kube-vip:$KVVERSION
-    imagePullPolicy: IfNotPresent
-    name: kube-vip
-    resources: {}
-    securityContext:
-      capabilities:
-        add:
-        - NET_ADMIN
-        - NET_RAW
-        drop:
-        - ALL
-    volumeMounts:
-    - mountPath: /etc/kubernetes/admin.conf
-      name: kubeconfig
-  hostAliases:
-  - hostnames:
-    - kubernetes
-    ip: 127.0.0.1
-  hostNetwork: true
-  volumes:
-  - hostPath:
-      path: /etc/kubernetes/super-admin.conf # else the leader election will not work.
-    name: kubeconfig
-status: {}
-" > /etc/kubernetes/manifests/kube-vip.yaml
 }
 
 function setup_for_keepalived() {

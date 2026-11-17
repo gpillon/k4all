@@ -144,3 +144,16 @@ create_release_manifest_cr
 
 echo "=== K4All Operator Deployment Complete ==="
 touch "$DONE_FILE"
+
+# Pods that started on CRI-O's bridge, lent to this node until the operator
+# installs the cluster's CNI, hold addresses no other node can route
+# (coredns among them). Once the CNI is there, start them again on it and
+# drop the bridge. In the background: this unit must not wait for Calico.
+if [ -e "$K4ALL_CNI_MARKER" ]; then
+    # Restart: pods that cannot be listed or deleted now are tried again.
+    systemd-run --unit k4all-crio-bridge-handover --collect --quiet \
+        --property=Restart=on-failure --property=RestartSec=60 \
+        --setenv=KUBECONFIG=/etc/kubernetes/admin.conf \
+        bash -c 'source /usr/local/bin/k4all-utils; handover_crio_bridge 1800' \
+        || echo "WARNING: could not start the CNI handover; generate_join.sh does it"
+fi

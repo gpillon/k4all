@@ -5,12 +5,18 @@
 # schema upgrades.
 set -euo pipefail
 
-source /usr/local/bin/k4all-utils
+# K4ALL_ROOT: the tests run the script against a fake root.
+ROOT="${K4ALL_ROOT:-}"
 
-CONFIG_YAML="/etc/k4all-config.yaml"
-CONFIG_JSON="/etc/k4all-config.json"
-RELEASE_MANIFEST="/etc/k4all-release.yaml"
-RELEASE_MANIFEST_DEFAULT="/usr/local/share/k4all-release.yaml"
+source "$ROOT/usr/local/bin/k4all-utils"
+CNI_NET_DIR="$ROOT/etc/cni/net.d"
+K4ALL_CNI_SHARE="$ROOT/usr/local/share/k4all-cni"
+
+CONFIG_YAML="$ROOT/etc/k4all-config.yaml"
+CONFIG_JSON="$ROOT/etc/k4all-config.json"
+CONFIG_DEFAULT="$ROOT/usr/local/share/k4all-config.yaml.default"
+RELEASE_MANIFEST="$ROOT/etc/k4all-release.yaml"
+RELEASE_MANIFEST_DEFAULT="$ROOT/usr/local/share/k4all-release.yaml"
 
 # =========================================================================
 # JSON-to-YAML migration (one-time, for upgrades from pre-operator builds)
@@ -45,7 +51,7 @@ migrate_json_to_yaml() {
     [ "$argocd_enabled" = "true" ] && argocd_enabled="true" || argocd_enabled="false"
     [ "$api_hostname" = "true" ] && api_hostname="true" || api_hostname="false"
 
-    cp /usr/local/share/k4all-config.yaml.default "$CONFIG_YAML"
+    cp "$CONFIG_DEFAULT" "$CONFIG_YAML"
 
     yq e ".spec.networking.cni.type = \"${cni_type}\"" -i "$CONFIG_YAML"
     yq e ".spec.networking.firewalld.enabled = ${firewalld_enabled}" -i "$CONFIG_YAML"
@@ -80,13 +86,20 @@ migrate_yaml_schema() {
         return
     fi
 
-    # Ensure ingress section exists (added in operator v0.2.0)
+    # Ensure ingress section exists, for the controller the image runs:
+    # Traefik (spec.ingress.traefik) from v2.4.0, ingress-nginx
+    # (spec.ingress.nginx) before. With Traefik, spec.ingress.nginx moves
+    # there just below.
     if [ "$(yq e '.spec.ingress' "$CONFIG_YAML")" = "null" ]; then
-        yq e '.spec.ingress.nginx.isDefault = true' -i "$CONFIG_YAML"
-        yq e '.spec.ingress.nginx.dedicatedIP = ""' -i "$CONFIG_YAML"
+        local ingress_key=nginx
+        traefik_is_active "$RELEASE_MANIFEST_DEFAULT" && ingress_key=traefik
+        yq e ".spec.ingress.${ingress_key}.isDefault = true" -i "$CONFIG_YAML"
+        yq e ".spec.ingress.${ingress_key}.dedicatedIP = \"\"" -i "$CONFIG_YAML"
         yq e '.spec.ingress.cilium.dedicatedIP = ""' -i "$CONFIG_YAML"
-        echo "  Added missing ingress section"
+        echo "  Added missing ingress section (spec.ingress.${ingress_key})"
     fi
+
+    migrate_ingress_nginx_to_traefik
 
     # Ensure proxy section exists (added in operator v0.2.0)
     if [ "$(yq e '.spec.proxy' "$CONFIG_YAML")" = "null" ]; then
@@ -97,6 +110,50 @@ migrate_yaml_schema() {
     fi
 
     echo "ClusterConfig YAML schema is up to date."
+}
+
+# =========================================================================
+# spec.ingress.nginx -> spec.ingress.traefik (from v2.4.0)
+# =========================================================================
+# Traefik replaced ingress-nginx in v2.4.0. Configs written before only have
+# spec.ingress.nginx, which Traefik followed while spec.ingress.traefik was
+# missing. Once the image runs Traefik, the nginx settings (dedicatedIP,
+# isDefault) become spec.ingress.traefik, in the same place, unless that key
+# already exists; then spec.ingress.nginx goes away. k4all-operator v0.5.0
+# (pinned from v2.4.0) moves the ClusterConfig in the cluster the same way,
+# during the v2.4.0 sync. The script ships from the v2.2.4 bridge on; before
+# v2.4.0 the image runs no Traefik and nothing moves. Runs at every boot:
+# without spec.ingress.nginx there is nothing left to do.
+migrate_ingress_nginx_to_traefik() {
+    traefik_is_active "$RELEASE_MANIFEST_DEFAULT" || return 0
+    [ "$(yq e '(.spec.ingress // {}) | has("nginx")' "$CONFIG_YAML")" = "true" ] || return 0
+
+    local backup="${CONFIG_YAML}.ingress-nginx.migrated"
+    if [ ! -e "$backup" ]; then
+        cp -p "$CONFIG_YAML" "$backup"
+        echo "  Backup saved as $backup"
+    fi
+
+    if [ "$(yq e '.spec.ingress | has("traefik")' "$CONFIG_YAML")" = "true" ]; then
+        yq e 'del(.spec.ingress.nginx)' -i "$CONFIG_YAML"
+        echo "  Removed spec.ingress.nginx (spec.ingress.traefik already set)"
+        return 0
+    fi
+
+    local dedicated_ip is_default
+    dedicated_ip=$(yq e '.spec.ingress.nginx.dedicatedIP // ""' "$CONFIG_YAML")
+    # Not `// true`: yq's // also replaces an explicit false. Left out, the
+    # controller is the default class (as in the ClusterConfig CRD).
+    is_default=$(yq e '.spec.ingress.nginx.isDefault' "$CONFIG_YAML")
+    [ "$is_default" = "false" ] || is_default=true
+    # Rename the key in place (order and comments stay), then write both
+    # fields explicitly.
+    INGRESS_IP="$dedicated_ip" yq e \
+        '(.spec.ingress.nginx | key) = "traefik" |
+         .spec.ingress.traefik.dedicatedIP = strenv(INGRESS_IP) |
+         .spec.ingress.traefik.isDefault = '"$is_default" -i "$CONFIG_YAML"
+    echo "  Moved spec.ingress.nginx to spec.ingress.traefik" \
+         "(dedicatedIP '${dedicated_ip}', isDefault ${is_default})"
 }
 
 # =========================================================================
@@ -113,8 +170,8 @@ migrate_release_manifest() {
 
     if [ -f "$RELEASE_MANIFEST_DEFAULT" ]; then
         yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' \
-            "$RELEASE_MANIFEST" "$RELEASE_MANIFEST_DEFAULT" > /tmp/merged-release.yaml
-        mv /tmp/merged-release.yaml "$RELEASE_MANIFEST"
+            "$RELEASE_MANIFEST" "$RELEASE_MANIFEST_DEFAULT" > "${RELEASE_MANIFEST}.merged"
+        mv "${RELEASE_MANIFEST}.merged" "$RELEASE_MANIFEST"
         echo "Release manifest merged with defaults"
     fi
 }
@@ -139,5 +196,10 @@ fi
 
 # Step 3: Release manifest
 migrate_release_manifest
+
+# Step 4: CRI-O's example CNI networks, which the image no longer installs,
+# go once the cluster's CNI is there (a new bootstrap node borrowed the
+# bridge; ostree keeps an /etc file that was changed by hand).
+drop_crio_cni
 
 echo "K4All configuration migration complete."

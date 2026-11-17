@@ -48,8 +48,7 @@ LADDER = [
     release("v2.4.0", "minor", "v2.3.0", "1.35.10", "1.35", 43,
             syncManifest=True),
     release("v2.5.0", "minor", "v2.4.0", "1.35.10", "1.35", 45),
-    release("v2.6.0", "minor", "v2.5.0", "1.35.10", "1.35", 45,
-            syncManifest=True),
+    release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
     release("v2.7.0", "minor", "v2.6.0", "1.36.6", "1.36", 45),
     release("v2.8.0", "minor", "v2.7.0", "1.36.6", "1.36", 45,
             syncManifest=True),
@@ -60,6 +59,15 @@ LADDER = [
 @pytest.fixture
 def ladder():
     return ku.load_graph(json.loads(json.dumps(LADDER)))
+
+
+# What kubectl prints for /readyz right after an apiserver restart, while the
+# aggregated APIs (metrics-server, calico-apiserver) come up (seen in the lab).
+READYZ_NOT_READY = (
+    'Error from server (InternalError): an error on the server ("[+]ping ok\\n'
+    '[+]log ok\\n[+]etcd ok\\n[+]poststarthook/start-apiextensions-informers ok\\n'
+    '[-]poststarthook/apiservice-discovery-controller failed: reason withheld\\n'
+    'readyz check failed") has prevented the request from succeeding')
 
 
 class Proc:
@@ -87,6 +95,24 @@ class FakeHost(ku.Host):
         self.node_is_ready = True
         self.healthy_after_boot = True
         self.annotations = {}
+        self.node_rv = 1            # resourceVersion of this Node
+        self.patches = []           # annotation changes, in order
+        self.kubelet_name = None    # Node name when it is not the hostname
+        self.apiserver_up = True
+        self.forbid_patch = False   # NodeRestriction refusing the patch
+        self.readyz_failures = 0    # /readyz answers that fail before "ok"
+        self.readyz_calls = 0
+        self.nodes_not_ready = 0    # `get nodes` answers with this node NotReady
+        self.unschedulable = False  # this Node is cordoned
+        self.extra_nodes = []       # more Node objects for `get nodes`
+        self.kubelet_running = True
+        self.k4all_config = None    # the ClusterConfig CR, None: none listed
+        # admin.conf goes through the API VIP: with this set, the API answers
+        # only once kube-vip.yaml has its settings
+        self.vip_needs_kube_vip = False
+        self.default_route_dev = "ens18"
+        self.pods_stopped = 0       # times every pod was stopped with crictl
+        self.sleeps = []            # seconds of every Host.sleep, in order
         self.cluster_config = {
             "apiVersion": "kubeadm.k8s.io/v1beta4",
             "kind": "ClusterConfiguration",
@@ -96,13 +122,19 @@ class FakeHost(ku.Host):
                  "value": "/opt/libexec/kubernetes/kubelet-plugins/volume/exec/"}]},
         }
         self.release_manifest = None
-        self.applied_manifests = []
+        self.applied_manifests = []  # server-side applies, in order
+        self.rm_patches = []        # kubectl patch of the ReleaseManifest
+        # Server-side apply field ownership of the ReleaseManifest, per
+        # component key: {manager: {component: {key, ...}}}. None until the
+        # first write: the CR was created by a client-side `kubectl apply`.
+        self.rm_owners = None
         self.components_after_sync = "Installed"
         self.images = {}            # version -> {"kubernetes": ...}
         self.reboots = 0
         self.operator_replicas = 1
         self.operator_scale_history = []
         self.operator_adopts = True
+        self.operator_running = "v0.1.5"   # tag of the operator's Deployment
         self.write("/etc/node-type", role + "\n")
         self.write(ku.VERSION_FILE, version + "\n")
         self.write("/etc/kubernetes/admin.conf" if role != "worker"
@@ -117,6 +149,7 @@ class FakeHost(ku.Host):
         return self.clock
 
     def sleep(self, seconds):
+        self.sleeps.append(seconds)
         self.clock += datetime.timedelta(seconds=seconds)
 
     def hostname(self):
@@ -146,6 +179,7 @@ class FakeHost(ku.Host):
     def reboot_now(self):
         """What happens when bootc applies the staged deployment."""
         self.reboots += 1
+        self.kubelet_running = True
         if self.staged:
             self.rollback_target = dict(self.booted)
             self.booted = {"version": self.staged["version"],
@@ -195,8 +229,17 @@ class FakeHost(ku.Host):
             if argv[1] == "reboot":
                 self.reboot_now()
                 return Proc()
+            if argv[1:3] in (["stop", "kubelet"], ["start", "kubelet"]):
+                self.kubelet_running = argv[1] == "start"
+                return Proc()
+        if argv[:5] == ["ip", "-o", "route", "show", "default"]:
+            return Proc("default via 192.168.6.1 dev %s proto dhcp metric 100\n"
+                        % self.default_route_dev)
+        if cmd == "sh" and "crictl" in argv[-1]:
+            self.pods_stopped += 1
+            return Proc()
         if cmd == "kubectl":
-            return self._kubectl(argv[3:], input_text)
+            return self._kubectl(argv[3:], input_text, kubeconfig=argv[2])
         if cmd.endswith("/k4all-backup.sh"):
             return Proc("backup ok\n")
         if os.path.basename(cmd).startswith("kubeadm"):
@@ -250,19 +293,65 @@ class FakeHost(ku.Host):
             return Proc()
         return Proc(returncode=1, stderr="kubeadm %s" % args)
 
+    def node_name(self):
+        return self.kubelet_name or self.hostname()
+
     def _node(self):
-        return {"metadata": {"name": self.hostname(),
+        return {"metadata": {"name": self.node_name(),
+                             "resourceVersion": str(self.node_rv),
                              "annotations": dict(self.annotations)},
+                "spec": {"unschedulable": True} if self.unschedulable else {},
                 "status": {"conditions": [{"type": "Ready", "status":
                                            "True" if self.node_is_ready else "False"}]}}
 
-    def _kubectl(self, args, input_text):
+    def _vip_down(self):
+        if not self.vip_needs_kube_vip:
+            return False
+        manifest = ku.KUBE_VIP_MANIFEST
+        return not self.exists(manifest) or "manager" not in self.read(manifest)
+
+    def _kubectl(self, args, input_text, kubeconfig=""):
+        if not self.apiserver_up or self._vip_down():
+            return Proc(returncode=1, stderr="The connection to the server "
+                        "10.0.0.1:6443 was refused")
+        if kubeconfig.endswith("/kubelet.conf") and args[:2] == ["get", "nodes"]:
+            # Node authorizer: a kubelet reads only its own Node
+            return Proc(returncode=1, stderr='nodes is forbidden: User "system:'
+                        'node:%s" cannot list resource "nodes" in API group "" '
+                        'at the cluster scope: node \'%s\' cannot read all '
+                        'nodes, only its own Node object'
+                        % (self.node_name(), self.node_name()))
+        if args[:2] in (["get", "node"], ["patch", "node"], ["annotate", "node"]) \
+                and args[2] != self.node_name():
+            return Proc(returncode=1, stderr='nodes "%s" not found' % args[2])
+        if args[:2] == ["patch", "node"]:
+            if self.forbid_patch:
+                return Proc(returncode=1, stderr='nodes "%s" is forbidden: '
+                            'node restriction' % args[2])
+            meta = json.loads(args[args.index("-p") + 1])["metadata"]
+            if meta.get("resourceVersion") not in (None, str(self.node_rv)):
+                return Proc(returncode=1, stderr="Operation cannot be "
+                            "fulfilled: the object has been modified")
+            changes = meta.get("annotations") or {}
+            for key, value in changes.items():
+                if value is None:
+                    self.annotations.pop(key, None)
+                else:
+                    self.annotations[key] = value
+            self.patches.append(dict(changes))
+            self.node_rv += 1
+            return Proc()
         if args[:1] == ["-n"] and args[1] == "k4all-operator-system":
             rest = args[2:]
             if rest[:2] == ["get", "deployment"]:
                 if self.operator_replicas is None:
                     return Proc(returncode=1, stderr="not found")
-                return Proc(json.dumps({"spec": {"replicas": self.operator_replicas}}))
+                return Proc(json.dumps({"spec": {
+                    "replicas": self.operator_replicas,
+                    "template": {"spec": {"containers": [{
+                        "name": "manager",
+                        "image": "ghcr.io/gpillon/k4all-operator:%s"
+                                 % self.operator_running}]}}}}))
             if rest[:1] == ["scale"]:
                 self.operator_replicas = int(rest[-1].split("=")[1])
                 self.operator_scale_history.append(self.operator_replicas)
@@ -271,14 +360,22 @@ class FakeHost(ku.Host):
                 return Proc("successfully rolled out\n")
         if args[:2] == ["get", "nodes"]:
             items = [self._node()]
+            if self.nodes_not_ready > 0:
+                self.nodes_not_ready -= 1
+                items[0]["status"]["conditions"][0]["status"] = "False"
             for i in range(1, self.node_count):
                 other = self._node()
                 other["metadata"]["name"] = "k4all-node-%d" % (i + 1)
                 items.append(other)
+            items += json.loads(json.dumps(self.extra_nodes))
             return Proc(json.dumps({"items": items}))
         if args[:2] == ["get", "node"]:
             return Proc(json.dumps(self._node()))
         if args[:2] == ["get", "--raw"]:
+            self.readyz_calls += 1
+            if self.readyz_failures > 0:
+                self.readyz_failures -= 1
+                return Proc(returncode=1, stderr=READYZ_NOT_READY)
             return Proc("ok" if self.node_is_ready else "")
         if args[:1] == ["version"]:
             return Proc(json.dumps({"serverVersion": {"gitVersion": "v" + self.apiserver}}))
@@ -289,6 +386,7 @@ class FakeHost(ku.Host):
             else:
                 k, v = key.split("=", 1)
                 self.annotations[k] = v
+            self.node_rv += 1
             return Proc()
         if "configmap" in args and "kubeadm-config" in args and "get" in args:
             return Proc(json.dumps({
@@ -301,26 +399,132 @@ class FakeHost(ku.Host):
             import yaml
             self.cluster_config = yaml.safe_load(cm["data"]["ClusterConfiguration"])
             return Proc()
+        if args[:2] == ["get", "clusterconfigs"]:
+            items = [self.k4all_config] if self.k4all_config else []
+            return Proc(json.dumps({"items": items}))
         if args[:2] == ["get", "releasemanifest"]:
             if self.release_manifest is None:
-                return Proc(returncode=1, stderr="not found")
+                if "--ignore-not-found" in args:
+                    return Proc("")
+                return Proc(returncode=1, stderr='Error from server (NotFound): '
+                            'releasemanifests.k4all.magesgate.com "k4all" not found')
             return Proc(json.dumps(self.release_manifest))
         if args[:1] == ["apply"]:
             doc = json.loads(input_text)
             self.applied_manifests.append(doc)
-            comps = doc["spec"]["components"]
-            self.release_manifest = dict(doc)
-            self.release_manifest["status"] = {"components": {
-                name: {"state": self.components_after_sync,
-                       "installedVersion": spec.get("version", "")}
-                for name, spec in comps.items()}}
-            op = self.release_manifest["status"]["components"].get("k4all-operator")
-            if op is not None and self.operator_adopts:
-                op["appliedHash"] = "h1"
+            manager = [a for a in args if a.startswith("--field-manager=")]
+            self._server_side_apply(manager[0].split("=", 1)[1], doc)
+            return Proc()
+        if args[:2] == ["patch", "releasemanifest"]:
+            if self.release_manifest is None:
+                return Proc(returncode=1, stderr="not found")
+            kind = args[args.index("--type") + 1]
+            body = json.loads(args[args.index("-p") + 1])
+            self.rm_patches.append((kind, body))
+            self._update_manifest(kind, body)
             return Proc()
         if args[:1] in (["drain"], ["uncordon"]):
+            self.unschedulable = args[0] == "drain"
             return Proc()
         return Proc(returncode=1, stderr="kubectl %s" % args)
+
+
+# --- the ReleaseManifest, with server-side apply ownership --------------------
+CLIENT_SIDE_APPLY = "kubectl-client-side-apply"
+
+
+def _rm_owners(host):
+    comps = host.release_manifest.setdefault("spec", {}).setdefault("components", {})
+    if host.rm_owners is None:
+        host.rm_owners = {CLIENT_SIDE_APPLY: {n: set(c) for n, c in comps.items()}}
+    return comps, host.rm_owners
+
+
+def _take_ownership(owners, manager, name, key):
+    for other, owned in owners.items():
+        if other != manager:
+            owned.get(name, set()).discard(key)
+    owners.setdefault(manager, {}).setdefault(name, set()).add(key)
+
+
+def _server_side_apply(self, manager, doc):
+    """kubectl apply --server-side --force-conflicts, at component-key level:
+    fields the manager applied before and leaves out are removed unless
+    another manager owns them; kubectl first hands the client-side apply's
+    fields to the manager (csaupgrade)."""
+    if self.release_manifest is None:
+        self.release_manifest = {k: v for k, v in doc.items() if k != "spec"}
+        self.release_manifest["spec"] = {"components": {}}
+        self.rm_owners = {}
+    comps, owners = _rm_owners(self)
+    csa = owners.pop(CLIENT_SIDE_APPLY, None)
+    if csa:
+        mine = owners.setdefault(manager, {})
+        for name, keys in csa.items():
+            mine.setdefault(name, set()).update(keys)
+    new = (doc.get("spec") or {}).get("components") or {}
+    others = [o for m, o in owners.items() if m != manager]
+    for name, keys in (owners.get(manager) or {}).items():
+        for key in keys:
+            if key in (new.get(name) or {}) or any(key in o.get(name, ()) for o in others):
+                continue
+            comps.get(name, {}).pop(key, None)
+        if name in comps and name not in new and not any(o.get(name) for o in others):
+            del comps[name]
+    owners[manager] = {}
+    for name, spec in new.items():
+        cur = comps.setdefault(name, {})
+        for key, value in spec.items():
+            if cur.get(key) != value:
+                _take_ownership(owners, manager, name, key)
+            cur[key] = json.loads(json.dumps(value))
+        owners[manager][name] = set(spec)
+    self._refresh_status()
+
+
+def _update_manifest(self, kind, body):
+    """kubectl patch (an update, manager kubectl-patch): JSON patch "add" of
+    one component, or a merge patch of spec.components."""
+    comps, owners = _rm_owners(self)
+    if kind == "json":
+        for op in body:
+            assert op["op"] == "add" and op["path"].startswith("/spec/components/")
+            name = op["path"].rsplit("/", 1)[1]
+            for key in set(comps.get(name, {})) - set(op["value"]):
+                for owned in owners.values():
+                    owned.get(name, set()).discard(key)
+            comps[name] = json.loads(json.dumps(op["value"]))
+            for key in comps[name]:
+                _take_ownership(owners, "kubectl-patch", name, key)
+    else:
+        for name, change in body["spec"]["components"].items():
+            for key, value in change.items():
+                comps.setdefault(name, {})[key] = value
+                _take_ownership(owners, "kubectl-patch", name, key)
+    self._refresh_status()
+
+
+def _refresh_status(self):
+    comps = self.release_manifest["spec"]["components"]
+    by_management = {"Removed": "Removed", "Unmanaged": "Unmanaged"}
+    self.release_manifest["status"] = {"components": {
+        name: {"state": by_management.get(spec.get("management"),
+                                          self.components_after_sync),
+               "installedVersion": spec.get("version", "")}
+        for name, spec in comps.items()}}
+    op = self.release_manifest["status"]["components"].get("k4all-operator")
+    if op is not None and op["state"] != "Unmanaged":
+        # the operator is installed by step 1 whatever the other components
+        # do; an Unmanaged one is never reported Installed
+        op["state"] = "Installed"
+        self.operator_running = op["installedVersion"] or self.operator_running
+        if self.operator_adopts:
+            op["appliedHash"] = "h1"
+
+
+FakeHost._server_side_apply = _server_side_apply
+FakeHost._update_manifest = _update_manifest
+FakeHost._refresh_status = _refresh_status
 
 
 @pytest.fixture
