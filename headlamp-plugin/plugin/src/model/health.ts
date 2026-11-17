@@ -7,6 +7,9 @@ import { ComponentRow, summarize } from './components';
 import {
   ClusterConfigObject,
   Condition,
+  NODE_RELEASE_ANNOTATION,
+  NODE_TYPE_ANNOTATION,
+  NODE_UPGRADE_PHASE_ANNOTATION,
   NodeConfigObject,
   NodeLike,
   ReleaseManifestObject,
@@ -177,9 +180,17 @@ export interface NodeRow {
   internalIP?: string;
   upgrade?: NodeUpgrade;
   schedulable: boolean;
+  /** The k4all release the node runs (k4all-upgrade's release annotation, v2.4.0+). */
+  release?: string;
+  /** k4all-upgrade's phase of a hop on the node (upgrade-phase annotation). */
+  hostPhase?: string;
 }
 
 function roleOf(node: NodeLike, nc: NodeConfigObject | undefined): string {
+  const annotated = node.metadata.annotations?.[NODE_TYPE_ANNOTATION];
+  if (annotated) {
+    return annotated;
+  }
   if (nc?.status?.nodeType) {
     return nc.status.nodeType;
   }
@@ -205,6 +216,8 @@ export function nodeRows(nodes: NodeLike[], nodeConfigs: NodeConfigObject[]): No
       internalIP: node.status?.addresses?.find(a => a.type === 'InternalIP')?.address,
       upgrade: upgrades.get(node.metadata.name),
       schedulable: !node.spec?.unschedulable,
+      release: node.metadata.annotations?.[NODE_RELEASE_ANNOTATION],
+      hostPhase: node.metadata.annotations?.[NODE_UPGRADE_PHASE_ANNOTATION],
     }))
     .sort((a, b) => (order[a.role] ?? 3) - (order[b.role] ?? 3) || a.name.localeCompare(b.name));
 }

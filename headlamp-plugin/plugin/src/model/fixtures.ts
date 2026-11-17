@@ -6,7 +6,13 @@
  * operator v0.4.0).
  */
 
-import { ClusterConfigObject, NodeLike, ReleaseManifestObject } from './types';
+import {
+  ClusterConfigObject,
+  ClusterUpgradeObject,
+  NodeLike,
+  ReleaseInfo,
+  ReleaseManifestObject,
+} from './types';
 
 export function defaultClusterConfig(): ClusterConfigObject {
   return {
@@ -186,4 +192,81 @@ export function releaseManifestV240(): ReleaseManifestObject {
   status['ingress-nginx'] = { state: 'Installed', installedVersion: '4.15.1' };
   status['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.4.0' };
   return rm;
+}
+
+/** The releases a v2.4.0 cluster can move to, as the operator lists them (oldest first). */
+export function availableReleases(): ReleaseInfo[] {
+  return [
+    { version: 'v2.4.1', kind: 'patch', kubernetes: '1.35.10', fedora: 43, notes: 'Fixes.' },
+    { version: 'v2.5.0', kind: 'minor', kubernetes: '1.35.10', fedora: 45, notes: 'Fedora 45.' },
+    {
+      version: 'v2.6.0',
+      kind: 'minor',
+      kubernetes: '1.35.10',
+      fedora: 45,
+      notes: 'Traefik replaces ingress-nginx.',
+    },
+    {
+      version: 'v2.7.0',
+      kind: 'minor',
+      kubernetes: '1.36.4',
+      fedora: 45,
+      notes: 'Kubernetes 1.36.',
+    },
+  ];
+}
+
+/** The ClusterUpgrade as the operator keeps it on an idle three-node v2.4.0 cluster. */
+export function clusterUpgrade(extra: Partial<ClusterUpgradeObject> = {}): ClusterUpgradeObject {
+  return {
+    apiVersion: 'k4all.magesgate.com/v1alpha1',
+    kind: 'ClusterUpgrade',
+    metadata: { name: 'k4all', generation: 1, resourceVersion: '50' },
+    spec: { drain: { timeoutMinutes: 30 } },
+    status: {
+      phase: 'Idle',
+      currentRelease: 'v2.4.0',
+      availableReleases: availableReleases(),
+      nodes: [
+        { name: 'cp-1', role: 'bootstrap', release: 'v2.4.0', phase: 'Done' },
+        { name: 'cp-2', role: 'control', release: 'v2.4.0', phase: 'Done' },
+        { name: 'w-1', role: 'worker', release: 'v2.4.0', phase: 'Done' },
+      ],
+      observedGeneration: 1,
+    },
+    ...extra,
+  };
+}
+
+/** The same cluster upgrading to v2.6.0: hop v2.5.0 in progress, cp-2 draining. */
+export function clusterUpgradeInProgress(): ClusterUpgradeObject {
+  const cu = clusterUpgrade();
+  cu.metadata.generation = 2;
+  cu.spec = { targetRelease: 'v2.6.0', drain: { timeoutMinutes: 30 } };
+  cu.status = {
+    ...cu.status,
+    phase: 'Progressing',
+    message: 'Draining cp-2',
+    currentHop: 'v2.5.0',
+    path: [
+      { release: 'v2.4.1', kind: 'patch', phase: 'Done' },
+      { release: 'v2.5.0', kind: 'minor', phase: 'InProgress' },
+      { release: 'v2.6.0', kind: 'minor', phase: 'Pending' },
+    ],
+    currentRelease: 'v2.4.1',
+    availableReleases: availableReleases().slice(1),
+    nodes: [
+      { name: 'cp-1', role: 'bootstrap', release: 'v2.5.0', phase: 'Done' },
+      {
+        name: 'cp-2',
+        role: 'control',
+        release: 'v2.4.1',
+        phase: 'Draining',
+        drainStartedAt: '2026-11-17T10:00:00Z',
+      },
+      { name: 'w-1', role: 'worker', release: 'v2.4.1', phase: 'Pending' },
+    ],
+    observedGeneration: 2,
+  };
+  return cu;
 }

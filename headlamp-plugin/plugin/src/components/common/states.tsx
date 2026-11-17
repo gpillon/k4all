@@ -4,7 +4,8 @@ import React from 'react';
 import { K4allData } from '../../api/hooks';
 import { Mono } from './ui';
 
-function Centered(props: { icon: string; title: string; children?: React.ReactNode }) {
+/** A centred empty or error state: big icon, title, explanation. */
+export function Centered(props: { icon: string; title: string; children?: React.ReactNode }) {
   return (
     <Stack alignItems="center" spacing={1.5} sx={{ py: 8, textAlign: 'center' }}>
       <Box sx={{ color: 'text.secondary' }}>

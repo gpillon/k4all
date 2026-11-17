@@ -8,6 +8,9 @@ import {
   ClusterConfigObject,
   ClusterConfigSpec,
   ClusterConfigStatus,
+  ClusterUpgradeObject,
+  ClusterUpgradeSpec,
+  ClusterUpgradeStatus,
   K4ALL_GROUP_VERSION,
   NodeConfigObject,
   ReleaseManifestObject,
@@ -25,6 +28,11 @@ interface ReleaseManifestJson extends KubeObjectInterface {
 
 interface NodeConfigJson extends KubeObjectInterface {
   status?: NodeConfigObject['status'];
+}
+
+interface ClusterUpgradeJson extends KubeObjectInterface {
+  spec?: ClusterUpgradeSpec;
+  status?: ClusterUpgradeStatus;
 }
 
 export class ClusterConfig extends KubeObject<ClusterConfigJson> {
@@ -60,6 +68,20 @@ export class NodeConfig extends KubeObject<NodeConfigJson> {
   }
 }
 
-export function apiPath(resource: 'clusterconfigs' | 'releasemanifests', name: string): string {
+/** The singleton k4all-operator v0.4.0+ keeps, named k4all. */
+export class ClusterUpgrade extends KubeObject<ClusterUpgradeJson> {
+  static kind = 'ClusterUpgrade';
+  static apiName = 'clusterupgrades';
+  static apiVersion = K4ALL_GROUP_VERSION;
+  static isNamespaced = false;
+
+  get object(): ClusterUpgradeObject {
+    return this.jsonData as ClusterUpgradeObject;
+  }
+}
+
+export type K4allResource = 'clusterconfigs' | 'releasemanifests' | 'clusterupgrades';
+
+export function apiPath(resource: K4allResource, name: string): string {
   return `/apis/${K4ALL_GROUP_VERSION}/${resource}/${encodeURIComponent(name)}`;
 }

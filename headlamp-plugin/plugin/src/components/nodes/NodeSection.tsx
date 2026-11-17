@@ -4,7 +4,13 @@ import React from 'react';
 import { useK4allApiPresent } from '../../api/hooks';
 import { NodeConfig } from '../../api/resources';
 import { nodeUpgrades } from '../../model/health';
-import { NodeLike } from '../../model/types';
+import {
+  NODE_RELEASE_ANNOTATION,
+  NODE_UPGRADE_MESSAGE_ANNOTATION,
+  NODE_UPGRADE_PHASE_ANNOTATION,
+  NodeLike,
+} from '../../model/types';
+import { HOST_PHASES, hostPhaseLabel } from '../../model/upgrades';
 import { Mono, TonePill } from '../common/ui';
 
 /** "k4all" section on Headlamp's Node details page; nothing on other clusters. */
@@ -21,6 +27,10 @@ function K4allNodeSection(props: { node: NodeLike }) {
     return null; // loading, not a k4all cluster, or no access: stay out of the way
   }
   const status = nodeConfig?.object.status;
+  const annotations = props.node.metadata.annotations ?? {};
+  const release = annotations[NODE_RELEASE_ANNOTATION];
+  const hostPhase = annotations[NODE_UPGRADE_PHASE_ANNOTATION];
+  const hostMessage = annotations[NODE_UPGRADE_MESSAGE_ANNOTATION];
   return (
     <SectionBox title="k4all">
       <Stack spacing={1.5} sx={{ py: 1 }}>
@@ -33,10 +43,30 @@ function K4allNodeSection(props: { node: NodeLike }) {
             label={status?.nodeType ?? 'unknown'}
             sx={{ textTransform: 'capitalize' }}
           />
+          {release && (
+            <>
+              <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
+                Release
+              </Typography>
+              <Chip
+                size="small"
+                variant="outlined"
+                label={release}
+                sx={{ fontFamily: 'monospace' }}
+              />
+            </>
+          )}
           <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
             Upgrade
           </Typography>
-          {upgrade ? (
+          {hostPhase ? (
+            <TonePill
+              tone={hostPhase === 'HOLD' || hostPhase === 'ABANDONED' ? 'warning' : 'info'}
+              busy={hostPhase !== 'HOLD' && hostPhase !== 'ABANDONED'}
+              label={hostPhaseLabel(hostPhase) ?? hostPhase}
+              title={HOST_PHASES[hostPhase]?.detail}
+            />
+          ) : upgrade ? (
             <TonePill
               tone="info"
               busy
@@ -46,6 +76,11 @@ function K4allNodeSection(props: { node: NodeLike }) {
             <TonePill tone="neutral" label="idle" />
           )}
         </Stack>
+        {hostMessage && (
+          <Typography variant="body2" color="text.secondary">
+            k4all-upgrade: {hostMessage}
+          </Typography>
+        )}
         {upgrade && (
           <Typography variant="body2" color="text.secondary">
             k4all-upgrade is running a hop on this node; k4all-operator pauses component changes

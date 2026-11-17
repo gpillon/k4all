@@ -34,8 +34,10 @@ import {
   IngressController,
 } from '../../model/settings';
 import { ClusterConfigObject } from '../../model/types';
+import { hostPhaseLabel } from '../../model/upgrades';
 import { K4allGate } from '../common/states';
 import { Metric, Mono, PageHeader, Panel, SegmentBar, TonePill } from '../common/ui';
+import { UpgradesCard } from '../upgrades/UpgradesCard';
 
 const LEVEL_TONE: Record<HealthLevel, Tone> = {
   healthy: 'success',
@@ -352,6 +354,9 @@ function OverviewContent({ data, now }: { data: ReturnType<typeof useK4allData>;
       </Stack>
 
       <Grid container spacing={2}>
+        <Grid item xs={12}>
+          <UpgradesCard />
+        </Grid>
         <Grid item xs={12} md={6} lg={3}>
           <ComponentsPanel rows={rows} />
         </Grid>
@@ -383,6 +388,7 @@ function OverviewContent({ data, now }: { data: ReturnType<typeof useK4allData>;
                     <TableCell>OS image</TableCell>
                     <TableCell>Runtime</TableCell>
                     <TableCell>Address</TableCell>
+                    <TableCell>k4all release</TableCell>
                     <TableCell>k4all upgrade</TableCell>
                   </TableRow>
                 </TableHead>
@@ -407,8 +413,19 @@ function OverviewContent({ data, now }: { data: ReturnType<typeof useK4allData>;
                       <TableCell>{n.osImage}</TableCell>
                       <TableCell>{n.runtime}</TableCell>
                       <TableCell sx={{ fontFamily: 'monospace' }}>{n.internalIP}</TableCell>
+                      <TableCell sx={{ fontFamily: 'monospace' }}>{n.release ?? '—'}</TableCell>
                       <TableCell>
-                        {n.upgrade ? (
+                        {n.hostPhase && !n.upgrade ? (
+                          <TonePill
+                            tone={
+                              n.hostPhase === 'HOLD' || n.hostPhase === 'ABANDONED'
+                                ? 'warning'
+                                : 'info'
+                            }
+                            busy={n.hostPhase !== 'HOLD' && n.hostPhase !== 'ABANDONED'}
+                            label={hostPhaseLabel(n.hostPhase) ?? n.hostPhase}
+                          />
+                        ) : n.upgrade ? (
                           <TonePill
                             tone="info"
                             busy
@@ -430,8 +447,9 @@ function OverviewContent({ data, now }: { data: ReturnType<typeof useK4allData>;
               </Table>
             </Box>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-              Node upgrades run on the nodes with <Mono>sudo k4all-upgrade status|plan|run</Mono>;
-              k4all-operator pauses while a node carries the upgrade annotation.
+              Upgrade the nodes from the Upgrades page (k4all v2.4.0+), or on each node with{' '}
+              <Mono>sudo k4all-upgrade status|plan|run</Mono>; k4all-operator pauses component
+              changes while a node is mid-hop.
             </Typography>
           </Panel>
         </Grid>

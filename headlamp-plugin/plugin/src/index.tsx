@@ -1,6 +1,6 @@
 /*
  * k4all Headlamp plugin: manage a k4all cluster (ClusterConfig, ReleaseManifest,
- * node upgrade state) from the Headlamp UI.
+ * ClusterUpgrade) from the Headlamp UI.
  */
 
 import {
@@ -15,6 +15,7 @@ import { ComponentsPage } from './components/components/ComponentsPage';
 import { NodeSection } from './components/nodes/NodeSection';
 import { OverviewPage } from './components/overview/OverviewPage';
 import { SettingsPage } from './components/settings/SettingsPage';
+import { UpgradesPage } from './components/upgrades/UpgradesPage';
 import { registerIcons } from './icons';
 import { NodeLike } from './model/types';
 
@@ -29,6 +30,12 @@ registerSidebarEntry({
 });
 
 registerSidebarEntry({ parent: 'k4all', name: 'k4all-overview', label: 'Overview', url: '/k4all' });
+registerSidebarEntry({
+  parent: 'k4all',
+  name: 'k4all-upgrades',
+  label: 'Upgrades',
+  url: '/k4all/upgrades',
+});
 registerSidebarEntry({
   parent: 'k4all',
   name: 'k4all-settings',
@@ -48,6 +55,14 @@ registerRoute({
   name: 'k4all-overview',
   sidebar: 'k4all-overview',
   component: () => <OverviewPage />,
+});
+
+registerRoute({
+  path: '/k4all/upgrades',
+  exact: true,
+  name: 'k4all-upgrades',
+  sidebar: 'k4all-upgrades',
+  component: () => <UpgradesPage />,
 });
 
 registerRoute({
