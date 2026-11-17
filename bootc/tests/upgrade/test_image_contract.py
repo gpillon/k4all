@@ -100,6 +100,21 @@ def test_operator_version_is_a_release_tag():
     assert "k4all-operator.version =" not in workflow
 
 
+def test_release_manifest_pins_every_component():
+    # A floating version moves clusters outside any k4all release, and
+    # upgradePath steps only make sense between fixed versions.
+    with open(os.path.join(BOOTC, "overlay", "usr", "local", "share",
+                           "k4all-release.yaml"), encoding="utf-8") as fh:
+        components = yaml.safe_load(fh)["spec"]["components"]
+    floating = [name for name, comp in components.items()
+                if str(comp.get("version", "")).strip() in ("", "latest")]
+    assert floating == []
+    for name, comp in components.items():
+        steps = [step["version"] for step in comp.get("upgradePath", [])]
+        assert comp["version"] not in steps, name
+        assert len(set(steps)) == len(steps), name
+
+
 def test_image_records_its_release():
     _, text = containerfile_args()
     assert '"${K4ALL_VERSION}" > /usr/local/share/k4all-upgrade/version' in text
@@ -205,6 +220,17 @@ def test_short_image_names_resolve_on_docker_io_only():
     assert "/etc/containers/registries.conf.d/50-k4all-short-names.conf" in text
 
 
+def test_topolvm_controller_rolls_out_on_a_single_node():
+    # One replica plus the chart's required anti-affinity: a surge rollout
+    # never completes on a single node (seen in the lab after the v2.4.0 sync).
+    manifest = yaml.safe_load(read(BOOTC, "overlay", "usr", "local", "share",
+                                   "k4all-release.yaml"))
+    controller = manifest["spec"]["components"]["topolvm"]["values"]["controller"]
+    assert controller["replicaCount"] == 1
+    rolling = controller["updateStrategy"]["rollingUpdate"]
+    assert rolling["maxSurge"] == 0 and rolling["maxUnavailable"] == 1
+
+
 def test_lvm_setup_keeps_thick_volumes():
     script = read(BIN, "setup-lvm.sh")
     assert "lvs --noheadings -o lv_name vg_data" in script
@@ -223,3 +249,27 @@ def test_deploy_operator_fallback_paths_exist_in_the_image():
     assert "/usr/local/share/k4all-operator-install.yaml" in script
     assert "/usr/local/share/k4all-operator-install.yaml" in text
     assert "prerelease == false" in script
+
+
+def test_headlamp_carries_the_pinned_k4all_plugin():
+    # The k4all Headlamp plugin is an image that an initContainer copies into
+    # Headlamp's plugins dir. Pinned per release like every component: a
+    # floating tag would change the UI outside any k4all upgrade, and
+    # IfNotPresent would keep whichever build a node pulled first.
+    with open(os.path.join(BOOTC, "overlay", "usr", "local", "share",
+                           "k4all-release.yaml"), encoding="utf-8") as fh:
+        values = yaml.safe_load(fh)["spec"]["components"]["headlamp"]["values"]
+    plugin = [c for c in values.get("initContainers") or []
+              if c.get("name") == "k4all-plugin"]
+    assert len(plugin) == 1, "headlamp has no k4all-plugin initContainer"
+    image = plugin[0]["image"]
+    repo, _, tag = image.split("@")[0].rpartition(":")
+    assert repo == "ghcr.io/gpillon/k4all-headlamp-plugin", image
+    assert re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?", tag), \
+        "the plugin image needs a release tag, not %r" % tag
+    assert any(v.get("name") == "k4all-plugin" and "emptyDir" in v
+               for v in values.get("volumes") or [])
+    mount = "%s/k4all-headlamp-plugin" % values["config"]["pluginsDir"].rstrip("/")
+    assert any(m.get("name") == "k4all-plugin" and m.get("mountPath") == mount
+               and m.get("readOnly") is True
+               for m in values.get("volumeMounts") or []), mount

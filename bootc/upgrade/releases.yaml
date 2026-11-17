@@ -53,3 +53,19 @@ releases:
       minor. The control plane goes to the latest 1.35 patch. Image names
       without a registry resolve on docker.io only: CRI-O 1.35 rejects them
       as ambiguous with Fedora's three search registries.
+
+  - version: v2.4.0
+    kind: minor
+    minFrom: v2.3.0
+    kubernetes: "1.35.10"
+    crio: "1.35"
+    fedora: 43
+    syncManifest: true
+    notes: >-
+      First ReleaseManifest sync: operator v0.4.1 (upgrade pause gate,
+      upgradePath, ClusterUpgrade) and the k4all Headlamp plugin, from which
+      every later upgrade can run; then every component pinned to a release
+      tested on Kubernetes 1.35-1.37, walking intermediate versions where upstream needs
+      them (Calico, Cilium, cert-manager, KubeVirt, CDI). Cilium options become
+      typed ClusterConfig fields. A minor because CRD upgrades cannot be undone
+      with bootc rollback.

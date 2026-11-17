@@ -44,7 +44,7 @@ The 2.x upgrade path:
 |---|---|
 | v2.2.4 | bridge: `k4all-upgrade`, bootc timer masked, script fixes (Kubernetes 1.35, CRI-O 1.32, Fedora 43 unchanged) |
 | v2.3.0 | CRI-O 1.35, matching Kubernetes 1.35, plus the latest 1.35 patch; image names without a registry (`nginx:latest`) resolve on docker.io only |
-| v2.4.0 | cluster components updated and pinned; first ReleaseManifest sync; operator-driven upgrades (ClusterUpgrade) |
+| v2.4.0 | first ReleaseManifest sync: k4all-operator v0.4.1 (ClusterUpgrade: from here every upgrade can run from the Headlamp plugin), the k4all Headlamp plugin, then every cluster component pinned and updated (intermediate versions where upstream needs them) |
 | v2.5.0 | Fedora 45 |
 | v2.6.0 | Traefik replaces ingress-nginx |
 | v2.7.0 | Kubernetes 1.36 |
@@ -164,7 +164,7 @@ minute and after boot. The agent reads the node's own Node object, with
 | Annotation (`k4all.magesgate.com/…`) | Written by | Meaning |
 |---|---|---|
 | `upgrade-target` | operator | release of the hop this node must run now |
-| `upgrade-cordoned` | operator | the operator cordoned the node; it uncordons it after the hop |
+| `upgrade-cordoned` | operator | the operator cordoned the node; it uncordons it once the node is past the reboot (SYNC or COMMIT), or after the hop |
 | `release` | node | release the node runs: the last committed hop |
 | `node-type` | node | `bootstrap`, `control` or `worker` (from `/etc/node-type`) |
 | `upgrade-phase` | node | phase of the hop in progress (`PREFLIGHT` … `COMMIT`), `HOLD` or `ABANDONED`; absent when idle |
@@ -204,4 +204,7 @@ sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
 - The ReleaseManifest sync keeps `custom` and `management: Unmanaged` from the
   cluster. Any other change you made to the ReleaseManifest by hand is
   overwritten by the release.
+- Every k4all release pins its k4all-operator version. A cluster gets a new
+  operator only through the ReleaseManifest sync of a k4all release, never
+  because a newer operator was published.
 - `update-node.sh` still exists and now calls `k4all-upgrade`.

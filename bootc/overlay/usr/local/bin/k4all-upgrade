@@ -1393,7 +1393,8 @@ class Upgrader:
         host, hop = self.host, state["hop"]
         if operator_driven(state):
             # The operator cordoned and drained the node (upgrade-cordoned)
-            # and uncordons it after upgrade-done: leave both to it.
+            # and uncordons it once the hop is past the reboot (SYNC or COMMIT):
+            # leave both to it.
             host.log("the k4all-operator drained this node: no drain")
             return
         nodes = self._cluster_nodes()
