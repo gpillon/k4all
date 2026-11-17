@@ -18,3 +18,7 @@ k4all-anaconda-addon/tests/__pycache__/
 k4all-anaconda-addon/com_k4all_installer/__pycache__/
 k4all-anaconda-addon/com_k4all_installer/service/__pycache__/
 k4all-anaconda-addon/test-results.xml
+
+ai/
+.claude/settings.local.json
+__pycache__/
