@@ -131,10 +131,12 @@ RUN systemctl enable fck8s-first-boot.service && \
 
 # Upgrades: k4all-upgrade walks release hops (kubeadm first, then reboot).
 # bootc's own timer runs `bootc upgrade --apply`, which would reboot into a
-# new Kubernetes minor without kubeadm: it stays masked.
+# new Kubernetes minor without kubeadm: it stays masked. The agent timer
+# follows the k4all-operator's ClusterUpgrade through Node annotations.
 RUN systemctl mask bootc-fetch-apply-updates.timer && \
     systemctl enable k4all-upgrade.timer && \
-    systemctl enable k4all-upgrade-resume.service
+    systemctl enable k4all-upgrade-resume.service && \
+    systemctl enable k4all-upgrade-agent.timer
 
 # Component-install services (cni, ingress, dashboard, etc.) are now managed
 # by the k4all-operator and are NOT enabled as systemd units.

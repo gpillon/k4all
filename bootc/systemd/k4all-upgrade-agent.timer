@@ -1,0 +1,12 @@
+[Unit]
+Description=K4All - Check the Node's upgrade annotations every minute
+
+[Timer]
+OnBootSec=1min
+OnCalendar=minutely
+AccuracySec=5s
+RandomizedDelaySec=15
+Persistent=false
+
+[Install]
+WantedBy=timers.target

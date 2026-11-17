@@ -127,6 +127,25 @@ def test_k4all_upgrade_units_are_installed_and_enabled():
     assert "ExecStart=/usr/local/bin/k4all-upgrade resume" in resume
 
 
+def test_upgrade_agent_timer_is_installed_and_enabled():
+    # The ClusterUpgrade protocol: the agent reads upgrade-target every
+    # minute and right after boot, behind the resume of a hop.
+    _, text = containerfile_args()
+    assert "systemctl enable k4all-upgrade-agent.timer" in text
+    for unit in ("k4all-upgrade-agent.timer", "k4all-upgrade-agent.service"):
+        assert os.path.exists(os.path.join(BOOTC, "systemd", unit)), unit
+    service = read(BOOTC, "systemd", "k4all-upgrade-agent.service")
+    assert "ExecStart=/usr/local/bin/k4all-upgrade agent" in service
+    assert "Type=oneshot" in service, "a hop must not run twice"
+    assert re.search(r"^After=.*\bk4all-upgrade-resume\.service\b", service, re.M)
+    assert "[Install]" not in service, "started by the timer only"
+    timer = read(BOOTC, "systemd", "k4all-upgrade-agent.timer")
+    assert re.search(r"^OnCalendar=minutely$", timer, re.M)
+    assert re.search(r"^OnBootSec=\S+$", timer, re.M)
+    assert "WantedBy=timers.target" in timer
+    assert ku.build_parser().parse_args(["agent"]).command == "agent"
+
+
 def test_upgrade_tool_is_executable():
     assert os.access(os.path.join(BIN, "k4all-upgrade"), os.X_OK)
 
