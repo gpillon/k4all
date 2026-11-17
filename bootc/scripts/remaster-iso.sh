@@ -64,6 +64,9 @@ if [ -n "$UPDATES_IMG" ]; then
     cp "$UPDATES_IMG" "${WORK_DIR}/iso/images/k4all_updates.img"
 fi
 
+# Seconds the boot menu waits before starting the default entry (60 upstream).
+BOOT_TIMEOUT="${K4ALL_ISO_BOOT_TIMEOUT:-20}"
+
 UPDATES_PARAM=""
 if [ -n "$UPDATES_IMG" ]; then
     UPDATES_PARAM="inst.updates=hd:LABEL=${VOLID}:/images/k4all_updates.img"
@@ -76,6 +79,7 @@ for grub_cfg in "${WORK_DIR}/iso/EFI/BOOT/grub.cfg" "${WORK_DIR}/iso/boot/grub2/
         if [ -n "$UPDATES_PARAM" ]; then
             sed -i "/^[[:space:]]*linux\(efi\)\{0,1\} /{/inst.updates/!s|$| ${UPDATES_PARAM}|}" "$grub_cfg"
         fi
+        sed -i "s/^\([[:space:]]*set timeout=\)[0-9]*/\1${BOOT_TIMEOUT}/" "$grub_cfg"
         # Rebrand menu entries: "Install Fedora ..." → "Install K4All ..."
         sed -i "s/Install Fedora[^'\"']*/Install K4All/g" "$grub_cfg"
         sed -i "s/Test this media & install Fedora[^'\"']*/Test this media \& install K4All/g" "$grub_cfg"
@@ -91,6 +95,8 @@ if [ -f "$ISOLINUX_CFG" ]; then
         echo "Modifying isolinux config..."
         sed -i "/^[[:space:]]*append /{/inst.updates/!s|$| ${UPDATES_PARAM}|}" "$ISOLINUX_CFG"
     fi
+    # isolinux counts in tenths of a second
+    sed -i "s/^\([[:space:]]*timeout \)[0-9]*/\1$((BOOT_TIMEOUT * 10))/" "$ISOLINUX_CFG"
     sed -i 's/Install Fedora[^[:cntrl:]]*/Install K4All/g' "$ISOLINUX_CFG"
     sed -i 's/Test this media & install Fedora[^[:cntrl:]]*/Test this media \& install K4All/g' "$ISOLINUX_CFG"
 fi
