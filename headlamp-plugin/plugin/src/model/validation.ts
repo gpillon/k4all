@@ -6,7 +6,7 @@
 import yaml from 'js-yaml';
 import { cidrContains, parseCIDR, parseIP, sameIP } from './net';
 import { isPlainObject, JsonObject } from './objects';
-import { effectiveTraefik, isCilium } from './settings';
+import { effectiveIngress, INGRESS_LABEL, IngressController, isCilium } from './settings';
 import { ClusterConfigSpec } from './types';
 
 export type Severity = 'error' | 'warning' | 'info';
@@ -21,6 +21,8 @@ export interface Issue {
 export interface ValidationContext {
   /** InternalIP addresses of the nodes. */
   nodeIPs?: string[];
+  /** The release's ingress controller (default Traefik). */
+  ingress?: IngressController;
 }
 
 export function hasErrors(issues: Issue[]): boolean {
@@ -99,8 +101,10 @@ export function validateDeviceName(name: string): string | null {
 
 export function validateSettings(spec: ClusterConfigSpec, ctx: ValidationContext = {}): Issue[] {
   const issues: Issue[] = [];
-  const traefik = effectiveTraefik(spec);
-  issues.push(...validateLoadBalancerIP('traefikIP', 'Traefik IP', traefik.dedicatedIP, spec, ctx));
+  const controller = ctx.ingress ?? 'traefik';
+  const name = INGRESS_LABEL[controller];
+  const traefik = effectiveIngress(spec, controller);
+  issues.push(...validateLoadBalancerIP('traefikIP', `${name} IP`, traefik.dedicatedIP, spec, ctx));
 
   const ciliumIP = spec.ingress?.cilium?.dedicatedIP ?? '';
   issues.push(
@@ -110,7 +114,7 @@ export function validateSettings(spec: ClusterConfigSpec, ctx: ValidationContext
     issues.push({
       field: 'ciliumIngressIP',
       severity: 'error',
-      message: 'Traefik and the Cilium ingress cannot share the same dedicated IP.',
+      message: `${name} and the Cilium ingress cannot share the same dedicated IP.`,
     });
   }
   if (ciliumIP && !isCilium(spec)) {

@@ -39,7 +39,7 @@ describe('componentActivation (port of the operator shouldInstall)', () => {
     ).toBe(true);
   });
 
-  it('skips MetalLB on Cilium without dedicated IPs (nginx or cilium keys)', () => {
+  it('skips MetalLB on Cilium without dedicated IPs (traefik, nginx or cilium keys)', () => {
     expect(componentActivation('metallb', spec(), calico()).active).toBe(true);
     expect(componentActivation('metallb', spec(), cilium()).active).toBe(false);
     expect(
@@ -49,14 +49,14 @@ describe('componentActivation (port of the operator shouldInstall)', () => {
         setIn(cilium(), ['ingress', 'nginx', 'dedicatedIP'], '10.0.0.1')
       ).active
     ).toBe(true);
-    // operator v0.3.0 ignores spec.ingress.traefik here (DESIGN.md O-1)
+    // operator v0.4.0 counts the Traefik IP too (k4all-operator#7)
     expect(
       componentActivation(
         'metallb',
         spec(),
         setIn(cilium(), ['ingress', 'traefik', 'dedicatedIP'], '10.0.0.1')
       ).active
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('follows feature gates, then the name-based fallbacks', () => {

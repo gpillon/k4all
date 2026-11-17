@@ -18,6 +18,7 @@ import {
   useTheme,
 } from '@mui/material';
 import React from 'react';
+import { CAPABILITY_SINCE, CapabilityId, capabilityNote } from '../../model/capabilities';
 import { Tone } from '../../model/components';
 
 export function toneColor(theme: Theme, tone: Tone): string {
@@ -343,6 +344,27 @@ export function SettingRow(props: {
       </Stack>
       {props.messages && <Box sx={{ mt: 1 }}>{props.messages}</Box>}
     </Box>
+  );
+}
+
+/** "Coming with k4all-operator v0.5.0": a control the installed operator cannot apply yet. */
+export function CapabilityChip(props: { id: CapabilityId }) {
+  const note = capabilityNote(props.id);
+  return (
+    <Tooltip
+      title={`Read-only for now: editable here once the cluster runs k4all-operator ${
+        CAPABILITY_SINCE[props.id]
+      } or newer.`}
+    >
+      <Chip
+        size="small"
+        variant="outlined"
+        color="secondary"
+        icon={<Icon icon="mdi:timer-sand" width={14} height={14} />}
+        label={note.charAt(0).toUpperCase() + note.slice(1)}
+        sx={{ height: 22, fontSize: '0.72rem', '& .MuiChip-icon': { ml: 0.75 } }}
+      />
+    </Tooltip>
   );
 }
 

@@ -1,7 +1,7 @@
 /*
  * ReleaseManifest components as the UI shows them. componentActivation is a
  * port of shouldInstall/FilterActiveComponents (k4all-operator
- * internal/engine/deps.go, v0.3.0): keep the two in sync.
+ * internal/engine/deps.go, v0.4.0): keep the two in sync.
  */
 
 import { compareSemver, parseSemver, sameVersion } from './semver';
@@ -64,6 +64,25 @@ export function componentFeature(
   return undefined;
 }
 
+/**
+ * The LoadBalancer IPs the ingress controllers ask for, each once: Traefik's,
+ * NGINX's, then Cilium's (IngressConfig.DedicatedIPs, operator v0.4.0).
+ */
+export function dedicatedIPs(config: ClusterConfigSpec): string[] {
+  const ingress = config.ingress ?? {};
+  const ips: string[] = [];
+  for (const ip of [
+    ingress.traefik?.dedicatedIP,
+    ingress.nginx?.dedicatedIP,
+    ingress.cilium?.dedicatedIP,
+  ]) {
+    if (ip && !ips.includes(ip)) {
+      ips.push(ip);
+    }
+  }
+  return ips;
+}
+
 export function componentActivation(
   name: string,
   spec: ComponentSpec,
@@ -94,8 +113,7 @@ export function componentActivation(
             reason: `Not used: control plane HA is ${config.cluster?.ha?.type || 'none'}.`,
           };
     case 'metallb': {
-      const hasIPs = !!(config.ingress?.nginx?.dedicatedIP || config.ingress?.cilium?.dedicatedIP);
-      if (cni === 'cilium' && !hasIPs) {
+      if (cni === 'cilium' && dedicatedIPs(config).length === 0) {
         return {
           active: false,
           reason: 'Not used: Cilium handles LoadBalancer addresses and no dedicated IP is set.',

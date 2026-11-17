@@ -1,11 +1,12 @@
 import { Icon } from '@iconify/react';
 import { Box, Grid, Stack, Tooltip, Typography } from '@mui/material';
 import React from 'react';
+import { Capabilities } from '../../model/capabilities';
 import { formatValue } from '../../model/changes';
-import { FieldId, FIELDS } from '../../model/fields';
+import { applyModeOf, FieldId, FieldInfo, FIELDS } from '../../model/fields';
 import { getIn } from '../../model/objects';
 import { ClusterConfigSpec } from '../../model/types';
-import { ApplyBadge, Panel } from '../common/ui';
+import { ApplyBadge, CapabilityChip, Panel } from '../common/ui';
 
 const GROUPS: { title: string; icon: string; fields: FieldId[] }[] = [
   {
@@ -26,10 +27,11 @@ const GROUPS: { title: string; icon: string; fields: FieldId[] }[] = [
   },
 ];
 
-function LockedRow(props: { id: FieldId; spec: ClusterConfigSpec }) {
-  const info = FIELDS[props.id];
+function LockedRow(props: { id: FieldId; spec: ClusterConfigSpec; caps: Capabilities }) {
+  const info: FieldInfo = FIELDS[props.id];
+  const live = applyModeOf(info, props.caps) === 'live';
   const value = getIn(props.spec, info.path);
-  const fallback = 'fallback' in info ? info.fallback : undefined;
+  const fallback = info.fallback;
   return (
     <Stack
       direction="row"
@@ -43,7 +45,7 @@ function LockedRow(props: { id: FieldId; spec: ClusterConfigSpec }) {
           <Typography variant="body2" sx={{ fontWeight: 600 }}>
             {info.label}
           </Typography>
-          <Tooltip title={`${info.help} ${'why' in info ? info.why ?? '' : ''}`}>
+          <Tooltip title={`${info.help} ${info.why ?? ''}`}>
             <Box
               component="span"
               sx={{ display: 'inline-flex', color: 'text.secondary', cursor: 'help' }}
@@ -54,6 +56,16 @@ function LockedRow(props: { id: FieldId; spec: ClusterConfigSpec }) {
             </Box>
           </Tooltip>
         </Stack>
+        {info.liveWith && !live && (
+          <Box sx={{ mt: 0.5 }}>
+            <CapabilityChip id={info.liveWith} />
+          </Box>
+        )}
+        {live && (
+          <Typography variant="caption" color="text.secondary">
+            Editable in the {info.group === 'features' ? 'Features' : 'Networking'} tab.
+          </Typography>
+        )}
       </Box>
       <Typography
         variant="body2"
@@ -70,7 +82,7 @@ function LockedRow(props: { id: FieldId; spec: ClusterConfigSpec }) {
   );
 }
 
-export function InstallTimeSection(props: { spec: ClusterConfigSpec }) {
+export function InstallTimeSection(props: { spec: ClusterConfigSpec; caps: Capabilities }) {
   return (
     <Stack spacing={2}>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ color: 'text.secondary' }}>
@@ -91,7 +103,7 @@ export function InstallTimeSection(props: { spec: ClusterConfigSpec }) {
               dense
             >
               {group.fields.map(id => (
-                <LockedRow key={id} id={id} spec={props.spec} />
+                <LockedRow key={id} id={id} spec={props.spec} caps={props.caps} />
               ))}
             </Panel>
           </Grid>

@@ -17,11 +17,11 @@ import {
 } from '@mui/material';
 import React from 'react';
 import { componentActivation } from '../../model/components';
-import { FIELDS } from '../../model/fields';
+import { applyModeOf, FIELDS } from '../../model/fields';
 import { setIn } from '../../model/objects';
 import { emulationMode } from '../../model/settings';
 import { ComponentSpec } from '../../model/types';
-import { ApplyBadge, TonePill } from '../common/ui';
+import { ApplyBadge, CapabilityChip, TonePill } from '../common/ui';
 import { isChanged, SectionProps } from './common';
 
 type FeatureKey = 'virt' | 'argocd' | 'ovsCni';
@@ -169,10 +169,73 @@ function FeatureCard(
   );
 }
 
+/**
+ * The OVS bridge: set at installation until k4all-operator can move node
+ * addresses onto the bridge and back (capability ovsBridgeToggle).
+ */
+function OvsBridgeCard(props: SectionProps) {
+  const { draft, base, update, disabled, caps } = props;
+  const info = FIELDS.ovsBridgeEnabled;
+  const enabled = draft.features?.ovsBridge?.enabled === true;
+  const live = applyModeOf(info, caps) === 'live';
+  const changed = isChanged(props, info.path);
+  const wasEnabled = base.features?.ovsBridge?.enabled === true;
+  return (
+    <Card
+      variant="outlined"
+      sx={{
+        height: '100%',
+        borderRadius: 2,
+        borderStyle: live ? 'solid' : 'dashed',
+        borderColor: changed ? 'primary.main' : undefined,
+      }}
+    >
+      <CardContent>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+          <Stack direction="row" spacing={1.5} alignItems="center">
+            <Icon icon="mdi:bridge" width={24} height={24} />
+            <Typography
+              component={live ? 'label' : 'span'}
+              htmlFor={live ? 'k4all-feature-ovsBridge' : undefined}
+              sx={{ fontWeight: 600 }}
+            >
+              {info.label}
+            </Typography>
+          </Stack>
+          {live ? (
+            <Switch
+              id="k4all-feature-ovsBridge"
+              checked={enabled}
+              disabled={disabled}
+              onChange={(_, checked) => update(d => setIn(d, info.path, checked))}
+              inputProps={{ 'aria-label': info.label }}
+            />
+          ) : (
+            <ApplyBadge mode="install" />
+          )}
+        </Stack>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+          {enabled !== wasEnabled ? (
+            <TonePill tone="info" label={enabled ? 'Will be turned on' : 'Will be turned off'} />
+          ) : (
+            <TonePill tone={enabled ? 'success' : 'neutral'} label={enabled ? 'On' : 'Off'} />
+          )}
+          {!live && <CapabilityChip id="ovsBridgeToggle" />}
+        </Stack>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+          {info.help}{' '}
+          {live
+            ? 'Changing it moves every node address between its interface and the bridge, one node at a time.'
+            : info.why}
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function FeaturesSection(
   props: SectionProps & { components: Record<string, ComponentSpec> }
 ) {
-  const ovsBridge = props.draft.features?.ovsBridge?.enabled === true;
   return (
     <Grid container spacing={2}>
       {FEATURES.map(def => (
@@ -181,23 +244,7 @@ export function FeaturesSection(
         </Grid>
       ))}
       <Grid item xs={12} md={6} xl={4}>
-        <Card variant="outlined" sx={{ height: '100%', borderRadius: 2, borderStyle: 'dashed' }}>
-          <CardContent>
-            <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Stack direction="row" spacing={1.5} alignItems="center">
-                <Icon icon="mdi:bridge" width={24} height={24} />
-                <Typography sx={{ fontWeight: 600 }}>{FIELDS.ovsBridgeEnabled.label}</Typography>
-              </Stack>
-              <ApplyBadge mode="install" />
-            </Stack>
-            <Box sx={{ mt: 1 }}>
-              <TonePill tone={ovsBridge ? 'success' : 'neutral'} label={ovsBridge ? 'On' : 'Off'} />
-            </Box>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
-              {FIELDS.ovsBridgeEnabled.help} {FIELDS.ovsBridgeEnabled.why}
-            </Typography>
-          </CardContent>
-        </Card>
+        <OvsBridgeCard {...props} />
       </Grid>
     </Grid>
   );

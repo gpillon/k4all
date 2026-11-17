@@ -5,7 +5,12 @@
  */
 
 import { clone, getIn, isPlainObject, JsonObject, Path, setIn } from './objects';
-import { ClusterConfigSpec, ComponentOverride, IngressControllerConfig } from './types';
+import {
+  ClusterConfigSpec,
+  ComponentOverride,
+  ComponentSpec,
+  IngressControllerConfig,
+} from './types';
 
 export type Draft = ClusterConfigSpec;
 
@@ -24,14 +29,46 @@ export function setField(draft: Draft, path: Path, value: unknown): Draft {
 // ------------------------------------------------------------------ Ingress
 
 /**
- * k4all-operator v0.3.0 builds the MetalLB address pool from
- * spec.ingress.nginx.dedicatedIP and spec.ingress.cilium.dedicatedIP only, not
- * from spec.ingress.traefik. Until that is fixed (DESIGN.md, operator change
- * O-1), the Traefik IP is also written to the legacy nginx key so MetalLB
- * announces it. ingress-nginx itself is Removed from v2.6.0, so the nginx key
- * has no other effect while spec.ingress.traefik exists.
+ * The ingress controller of the release: ingress-nginx up to k4all v2.5.x,
+ * Traefik from v2.6.0 (ingress-nginx is then Removed). The operator's
+ * ingress-nginx hook reads spec.ingress.nginx only; the Traefik hook reads
+ * spec.ingress.traefik, or spec.ingress.nginx while the traefik key is absent.
  */
-export const MIRROR_TRAEFIK_IP_TO_NGINX = true;
+export type IngressController = 'traefik' | 'nginx';
+
+export const INGRESS_LABEL: Record<IngressController, string> = {
+  traefik: 'Traefik',
+  nginx: 'ingress-nginx',
+};
+
+/** The active ingress controller, from the ReleaseManifest components (or the config). */
+export function activeIngress(
+  components: Record<string, ComponentSpec> | undefined,
+  spec: ClusterConfigSpec = {}
+): IngressController {
+  const active = (name: string) => {
+    const c = components?.[name];
+    return !!c && c.management !== 'Removed';
+  };
+  if (active('traefik')) {
+    return 'traefik';
+  }
+  if (active('ingress-nginx')) {
+    return 'nginx';
+  }
+  return spec.ingress?.traefik || !spec.ingress?.nginx ? 'traefik' : 'nginx';
+}
+
+/**
+ * Before k4all-operator v0.4.0 (k4all-operator#7), MetalLB built its address
+ * pool from spec.ingress.nginx.dedicatedIP and spec.ingress.cilium.dedicatedIP
+ * only. With such an operator the Traefik IP is also written to the legacy
+ * nginx key so MetalLB announces it (DESIGN.md, O-1). Callers pass
+ * `mirrorToNginx: !capabilities.metallbReadsTraefikIP`.
+ */
+export interface TraefikWriteOptions {
+  mirrorToNginx?: boolean;
+}
 
 export type TraefikSource = 'traefik' | 'nginx' | 'none';
 
@@ -42,18 +79,18 @@ export interface EffectiveTraefik {
   source: TraefikSource;
 }
 
+function pick(cfg: IngressControllerConfig | undefined, source: TraefikSource): EffectiveTraefik {
+  return { dedicatedIP: cfg?.dedicatedIP ?? '', isDefault: cfg?.isDefault === true, source };
+}
+
 /**
  * The Traefik settings the operator uses: spec.ingress.traefik, or
  * spec.ingress.nginx on clusters whose ClusterConfig predates v2.6.0. A
- * missing isDefault reads as false, as the operator's Go types do.
+ * missing isDefault reads as false, as the operator's Go types did before
+ * v0.4.0 (from v0.4.0 the CRD defaults it to true, so it is never missing).
  */
 export function effectiveTraefik(spec: ClusterConfigSpec): EffectiveTraefik {
   const ingress = spec.ingress ?? {};
-  const pick = (cfg: IngressControllerConfig | undefined, source: TraefikSource) => ({
-    dedicatedIP: cfg?.dedicatedIP ?? '',
-    isDefault: cfg?.isDefault === true,
-    source,
-  });
   if (ingress.traefik !== undefined && ingress.traefik !== null) {
     return pick(ingress.traefik, 'traefik');
   }
@@ -63,14 +100,27 @@ export function effectiveTraefik(spec: ClusterConfigSpec): EffectiveTraefik {
   return pick(undefined, 'none');
 }
 
+/** The settings the active controller's hook reads. */
+export function effectiveIngress(
+  spec: ClusterConfigSpec,
+  controller: IngressController
+): EffectiveTraefik {
+  if (controller === 'nginx') {
+    const nginx = spec.ingress?.nginx;
+    return pick(nginx ?? undefined, nginx ? 'nginx' : 'none');
+  }
+  return effectiveTraefik(spec);
+}
+
 /**
  * Writes Traefik settings. spec.ingress.traefik is materialized with both
- * fields explicit: an omitted isDefault means false to k4all-operator v0.3.0
- * and true to later versions (CRD default), so it is never left out.
+ * fields explicit: an omitted isDefault meant false to k4all-operator v0.3.0
+ * and means true from v0.4.0 (CRD default), so it is never left out.
  */
 export function setTraefik(
   draft: Draft,
-  change: Partial<Pick<EffectiveTraefik, 'dedicatedIP' | 'isDefault'>>
+  change: Partial<Pick<EffectiveTraefik, 'dedicatedIP' | 'isDefault'>>,
+  opts: TraefikWriteOptions = {}
 ): Draft {
   const current = effectiveTraefik(draft);
   const next = {
@@ -79,10 +129,34 @@ export function setTraefik(
     isDefault: change.isDefault ?? current.isDefault,
   };
   let out = setIn(draft, ['ingress', 'traefik'], next);
-  if (MIRROR_TRAEFIK_IP_TO_NGINX && change.dedicatedIP !== undefined) {
+  if ((opts.mirrorToNginx ?? true) && change.dedicatedIP !== undefined) {
     out = mirrorToNginx(out, current.dedicatedIP, change.dedicatedIP);
   }
   return out;
+}
+
+/** Writes ingress-nginx settings (spec.ingress.nginx), both fields explicit. */
+export function setNginx(
+  draft: Draft,
+  change: Partial<Pick<EffectiveTraefik, 'dedicatedIP' | 'isDefault'>>
+): Draft {
+  const current = effectiveIngress(draft, 'nginx');
+  const next = {
+    ...(isPlainObject(draft.ingress?.nginx) ? draft.ingress?.nginx : {}),
+    dedicatedIP: change.dedicatedIP ?? current.dedicatedIP,
+    isDefault: change.isDefault ?? current.isDefault,
+  };
+  return setIn(draft, ['ingress', 'nginx'], next);
+}
+
+/** Writes the settings of the active controller. */
+export function setIngress(
+  draft: Draft,
+  controller: IngressController,
+  change: Partial<Pick<EffectiveTraefik, 'dedicatedIP' | 'isDefault'>>,
+  opts: TraefikWriteOptions = {}
+): Draft {
+  return controller === 'nginx' ? setNginx(draft, change) : setTraefik(draft, change, opts);
 }
 
 /** True when the nginx key only exists to carry the mirrored Traefik IP, or is free for it. */
@@ -103,11 +177,11 @@ function mirrorToNginx(draft: Draft, previousIP: string, nextIP: string): Draft 
 }
 
 /** Moves a pre-v2.6.0 config to spec.ingress.traefik, keeping behaviour identical. */
-export function adoptTraefikKey(draft: Draft): Draft {
+export function adoptTraefikKey(draft: Draft, opts: TraefikWriteOptions = {}): Draft {
   if (effectiveTraefik(draft).source === 'traefik') {
     return draft;
   }
-  return setTraefik(draft, {});
+  return setTraefik(draft, {}, opts);
 }
 
 // -------------------------------------------------------------- Overrides
@@ -165,9 +239,16 @@ export interface Exposure {
   summary: string;
 }
 
-/** How the operator's Traefik hook publishes Traefik for these settings (traefik_hook.go). */
-export function traefikExposure(spec: ClusterConfigSpec): Exposure {
-  const t = effectiveTraefik(spec);
+/**
+ * How the operator publishes the ingress controller for these settings. The
+ * Traefik hook (traefik_hook.go) and the ingress-nginx hook
+ * (ingress_nginx_hook.go) follow the same rules.
+ */
+export function ingressExposure(
+  spec: ClusterConfigSpec,
+  controller: IngressController = 'traefik'
+): Exposure {
+  const t = effectiveIngress(spec, controller);
   if (t.dedicatedIP) {
     return {
       kind: 'dedicated',
@@ -184,4 +265,9 @@ export function traefikExposure(spec: ClusterConfigSpec): Exposure {
     return { kind: 'loadbalancer-node', summary: 'LoadBalancer Service on the node address.' };
   }
   return { kind: 'host-ports', summary: 'Host ports 80 and 443 on the control-plane nodes.' };
+}
+
+/** How the operator's Traefik hook publishes Traefik for these settings. */
+export function traefikExposure(spec: ClusterConfigSpec): Exposure {
+  return ingressExposure(spec, 'traefik');
 }

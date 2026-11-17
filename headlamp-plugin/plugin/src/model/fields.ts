@@ -9,6 +9,7 @@
  *             cluster resource: an edit here does not reach the nodes.
  */
 
+import { Capabilities, CapabilityId } from './capabilities';
 import { Path } from './objects';
 
 export type ApplyMode = 'live' | 'install' | 'node';
@@ -25,6 +26,11 @@ export interface FieldInfo {
   why?: string;
   /** How the value is shown when it is missing from the resource. */
   fallback?: string;
+  /**
+   * For install fields that a newer k4all-operator can change on a running
+   * cluster: the capability (capabilities.ts) that makes the field live.
+   */
+  liveWith?: CapabilityId;
 }
 
 const INSTALL_WHY = 'Set at installation by kubeadm. Changing it means reinstalling the cluster.';
@@ -72,6 +78,7 @@ export const FIELDS = {
       'It moves the node address to a new bridge. k4all-operator creates the bridge on new ' +
       'nodes but never removes it, so turning it off has no effect and turning it on moves ' +
       'live node addresses.',
+    liveWith: 'ovsBridgeToggle',
   },
   cniType: {
     path: ['networking', 'cni', 'type'],
@@ -82,6 +89,7 @@ export const FIELDS = {
     why:
       'Switching the CNI re-creates the pod network: every pod loses connectivity until it ' +
       'is restarted. Not supported on a running cluster.',
+    liveWith: 'cniSwitch',
   },
   ciliumL2: {
     path: ['networking', 'cni', 'cilium', 'l2announcements'],
@@ -128,9 +136,7 @@ export const FIELDS = {
     label: 'Dedicated IP',
     group: 'ingress',
     mode: 'live',
-    help:
-      'A LoadBalancer address for Traefik. Leave empty to serve on the node address ' +
-      '(host ports 80/443).',
+    help: 'Leave empty to serve on the node address (host ports 80/443).',
     fallback: 'node address',
   },
   traefikDefault: {
@@ -138,7 +144,7 @@ export const FIELDS = {
     label: 'Default IngressClass',
     group: 'ingress',
     mode: 'live',
-    help: 'Ingresses without an ingressClassName are served by Traefik.',
+    help: 'Ingresses without an ingressClassName are served by the ingress controller.',
   },
   ciliumIngressIP: {
     path: ['ingress', 'cilium', 'dedicatedIP'],
@@ -265,6 +271,11 @@ export function fieldForPath(path: Path): FieldInfo | undefined {
     }
   }
   return best;
+}
+
+/** The apply mode with the installed operator: liveWith fields turn live with their capability. */
+export function applyModeOf(info: FieldInfo, caps: Capabilities): ApplyMode {
+  return info.liveWith && caps[info.liveWith] ? 'live' : info.mode;
 }
 
 export const READ_ONLY_FIELDS: FieldId[] = (Object.keys(FIELDS) as FieldId[]).filter(

@@ -27,7 +27,12 @@ import {
   kubeletVersions,
   nodeRows,
 } from '../../model/health';
-import { effectiveTraefik } from '../../model/settings';
+import {
+  activeIngress,
+  effectiveIngress,
+  INGRESS_LABEL,
+  IngressController,
+} from '../../model/settings';
 import { ClusterConfigObject } from '../../model/types';
 import { K4allGate } from '../common/states';
 import { Metric, Mono, PageHeader, Panel, SegmentBar, TonePill } from '../common/ui';
@@ -120,10 +125,10 @@ function FeaturesPanel(props: { cc: ClusterConfigObject }) {
   );
 }
 
-function IngressPanel(props: { cc: ClusterConfigObject }) {
+function IngressPanel(props: { cc: ClusterConfigObject; controller: IngressController }) {
   const history = useHistory();
   const spec = props.cc.spec ?? {};
-  const traefik = effectiveTraefik(spec);
+  const traefik = effectiveIngress(spec, props.controller);
   const ciliumIP = spec.ingress?.cilium?.dedicatedIP;
   return (
     <Panel
@@ -138,7 +143,7 @@ function IngressPanel(props: { cc: ClusterConfigObject }) {
       <Stack spacing={1.25}>
         <Box>
           <Typography variant="caption" color="text.secondary">
-            Traefik address
+            {INGRESS_LABEL[props.controller]} address
           </Typography>
           <Typography sx={{ fontFamily: 'monospace', fontSize: '1.05rem' }}>
             {traefik.dedicatedIP || 'node address'}
@@ -155,7 +160,7 @@ function IngressPanel(props: { cc: ClusterConfigObject }) {
             label={`CNI: ${spec.networking?.cni?.type ?? 'unknown'}`}
           />
         </Stack>
-        {traefik.source === 'nginx' && (
+        {props.controller === 'traefik' && traefik.source === 'nginx' && (
           <Typography variant="caption" color="text.secondary">
             Read from <Mono>spec.ingress.nginx</Mono> (cluster installed before v2.6.0).
           </Typography>
@@ -354,7 +359,7 @@ function OverviewContent({ data, now }: { data: ReturnType<typeof useK4allData>;
           <FeaturesPanel cc={cc} />
         </Grid>
         <Grid item xs={12} md={6} lg={3}>
-          <IngressPanel cc={cc} />
+          <IngressPanel cc={cc} controller={activeIngress(rm.spec?.components, cc.spec)} />
         </Grid>
         <Grid item xs={12} md={6} lg={3}>
           <ReleasePanel

@@ -1,6 +1,6 @@
 /*
  * TypeScript mirror of the k4all-operator API (group k4all.magesgate.com,
- * version v1alpha1), as of k4all-operator v0.3.0 (api/v1alpha1/*.go).
+ * version v1alpha1), as of k4all-operator v0.4.0 (api/v1alpha1/*.go).
  *
  * Every field is optional: the operator's Go types use omitempty, so a field
  * the user never set is simply missing from the object the API server returns.

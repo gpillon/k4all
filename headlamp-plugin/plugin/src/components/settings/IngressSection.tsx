@@ -5,12 +5,14 @@ import { FIELDS } from '../../model/fields';
 import { setIn } from '../../model/objects';
 import {
   adoptTraefikKey,
+  effectiveIngress,
   effectiveTraefik,
+  INGRESS_LABEL,
+  IngressController,
+  ingressExposure,
   isCilium,
-  MIRROR_TRAEFIK_IP_TO_NGINX,
   nginxFollowsTraefik,
-  setTraefik,
-  traefikExposure,
+  setIngress,
 } from '../../model/settings';
 import { ApplyBadge, Mono, Panel, SettingRow } from '../common/ui';
 import { FieldMessages, firstError, isChanged, SectionProps } from './common';
@@ -46,18 +48,22 @@ function IPField(props: {
   );
 }
 
-export function IngressSection(props: SectionProps) {
-  const { draft, base, update, disabled, issues } = props;
-  const traefik = effectiveTraefik(draft);
-  const legacy = effectiveTraefik(base).source !== 'traefik' && traefik.source !== 'traefik';
-  const exposure = traefikExposure(draft);
-  const traefikIPChanged = effectiveTraefik(base).dedicatedIP !== traefik.dedicatedIP;
-  const traefikDefaultChanged = effectiveTraefik(base).isDefault !== traefik.isDefault;
+export function IngressSection(props: SectionProps & { controller?: IngressController }) {
+  const { draft, base, update, disabled, issues, caps } = props;
+  const controller = props.controller ?? 'traefik';
+  const name = INGRESS_LABEL[controller];
+  const isTraefik = controller === 'traefik';
+  const mirrorToNginx = isTraefik && !caps.metallbReadsTraefikIP;
+  const current = effectiveIngress(draft, controller);
+  const before = effectiveIngress(base, controller);
+  const legacy =
+    isTraefik && effectiveTraefik(base).source !== 'traefik' && current.source !== 'traefik';
+  const exposure = ingressExposure(draft, controller);
   const ciliumIP = draft.ingress?.cilium?.dedicatedIP ?? '';
   const mirrored =
-    MIRROR_TRAEFIK_IP_TO_NGINX &&
-    traefik.dedicatedIP !== '' &&
-    nginxFollowsTraefik(draft, traefik.dedicatedIP);
+    mirrorToNginx && current.dedicatedIP !== '' && nginxFollowsTraefik(draft, current.dedicatedIP);
+  const set = (change: { dedicatedIP?: string; isDefault?: boolean }) =>
+    update(d => setIngress(d, controller, change, { mirrorToNginx }));
 
   return (
     <Stack spacing={2}>
@@ -66,7 +72,11 @@ export function IngressSection(props: SectionProps) {
           severity="info"
           action={
             !disabled && (
-              <Button color="inherit" size="small" onClick={() => update(adoptTraefikKey)}>
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => update(d => adoptTraefikKey(d, { mirrorToNginx }))}
+              >
                 Move to spec.ingress.traefik
               </Button>
             )
@@ -77,22 +87,33 @@ export function IngressSection(props: SectionProps) {
           <Mono>spec.ingress.traefik</Mono> with the same values.
         </Alert>
       )}
+      {!isTraefik && (
+        <Alert severity="info">
+          This release runs ingress-nginx, configured by <Mono>spec.ingress.nginx</Mono>. k4all
+          v2.6.0 replaces it with Traefik, which takes over these settings and keeps serving the
+          Ingresses of class <Mono>nginx</Mono>.
+        </Alert>
+      )}
 
-      <Panel title="Traefik" icon="mdi:traffic-light-outline">
+      <Panel
+        title={name}
+        icon={isTraefik ? 'mdi:traffic-light-outline' : 'mdi:routes'}
+        action={<Mono>{isTraefik ? 'spec.ingress.traefik' : 'spec.ingress.nginx'}</Mono>}
+      >
         <SettingRow
           label={FIELDS.traefikIP.label}
-          htmlFor="k4all-traefik-ip"
-          help={FIELDS.traefikIP.help}
+          htmlFor="k4all-ingress-ip"
+          help={`A LoadBalancer address for ${name}. ${FIELDS.traefikIP.help}`}
           badge={<ApplyBadge mode="live" />}
-          changed={traefikIPChanged}
+          changed={before.dedicatedIP !== current.dedicatedIP}
           control={
             <IPField
-              id="k4all-traefik-ip"
-              label="Traefik dedicated IP"
-              value={traefik.dedicatedIP}
+              id="k4all-ingress-ip"
+              label={`${name} dedicated IP`}
+              value={current.dedicatedIP}
               disabled={disabled}
               error={firstError(issues, 'traefikIP')}
-              onChange={ip => update(d => setTraefik(d, { dedicatedIP: ip }))}
+              onChange={ip => set({ dedicatedIP: ip })}
             />
           }
           messages={
@@ -100,8 +121,9 @@ export function IngressSection(props: SectionProps) {
               <FieldMessages issues={issues} field="traefikIP" />
               {mirrored && (
                 <Typography variant="caption" color="text.secondary">
-                  Also written to <Mono>spec.ingress.nginx.dedicatedIP</Mono>: k4all-operator v0.3.0
-                  builds the MetalLB address pool from that key.
+                  Also written to <Mono>spec.ingress.nginx.dedicatedIP</Mono>: k4all-operator{' '}
+                  {caps.operatorVersion ?? 'before v0.4.0'} builds the MetalLB address pool from
+                  that key.
                 </Typography>
               )}
             </Stack>
@@ -109,18 +131,18 @@ export function IngressSection(props: SectionProps) {
         />
         <SettingRow
           label={FIELDS.traefikDefault.label}
-          htmlFor="k4all-traefik-default"
-          help={FIELDS.traefikDefault.help}
+          htmlFor="k4all-ingress-default"
+          help={`Ingresses without an ingressClassName are served by ${name}.`}
           badge={<ApplyBadge mode="live" />}
-          changed={traefikDefaultChanged}
+          changed={before.isDefault !== current.isDefault}
           last
           control={
             <Switch
-              id="k4all-traefik-default"
-              checked={traefik.isDefault}
+              id="k4all-ingress-default"
+              checked={current.isDefault}
               disabled={disabled}
-              onChange={(_, checked) => update(d => setTraefik(d, { isDefault: checked }))}
-              inputProps={{ 'aria-label': 'Traefik is the default IngressClass' }}
+              onChange={(_, checked) => set({ isDefault: checked })}
+              inputProps={{ 'aria-label': `${name} is the default IngressClass` }}
             />
           }
         />
@@ -132,8 +154,9 @@ export function IngressSection(props: SectionProps) {
         >
           <Icon icon="mdi:information-outline" width={18} height={18} />
           <Typography variant="body2">
-            Result: {exposure.summary} Ingresses of class <Mono>nginx</Mono> keep working through
-            Traefik's ingress-nginx provider.
+            Result: {exposure.summary}
+            {isTraefik &&
+              " Ingresses of class nginx keep working through Traefik's ingress-nginx provider."}
           </Typography>
         </Stack>
       </Panel>

@@ -15,8 +15,10 @@ import {
 import React from 'react';
 import { useHistory, useLocation } from 'react-router-dom';
 import { K4allData, useK4allData, usePermissions } from '../../api/hooks';
+import { capabilities } from '../../model/capabilities';
 import { ChangeItem, describeChanges } from '../../model/changes';
 import { editorReducer, initialEditorState, isBaseStale, isDirty } from '../../model/editor';
+import { activeIngress } from '../../model/settings';
 import { hasErrors, Issue, validateSettings } from '../../model/validation';
 import { K4allGate, ReadOnlyNotice } from '../common/states';
 import { Mono, PageHeader } from '../common/ui';
@@ -82,7 +84,9 @@ function SettingsEditor({ data }: { data: K4allData }) {
   const nodeIPs = data.nodes
     .map(n => n.status?.addresses?.find(a => a.type === 'InternalIP')?.address)
     .filter((ip): ip is string => !!ip);
-  const issues: Issue[] = validateSettings(draft, { nodeIPs });
+  const caps = capabilities(data.rm);
+  const ingress = activeIngress(data.rm?.spec?.components, base);
+  const issues: Issue[] = validateSettings(draft, { nodeIPs, ingress });
   const blocking = hasErrors(issues);
   const dirty = isDirty(state);
   const items = dirty ? describeChanges(base, draft, components) : [];
@@ -94,6 +98,7 @@ function SettingsEditor({ data }: { data: K4allData }) {
     disabled: readOnly || perms.checking,
     issues,
     status: state.latest?.status ?? state.base.status,
+    caps,
   };
 
   return (
@@ -168,11 +173,11 @@ function SettingsEditor({ data }: { data: K4allData }) {
       </Box>
 
       {tab === 'features' && <FeaturesSection {...sectionProps} components={components} />}
-      {tab === 'ingress' && <IngressSection {...sectionProps} />}
+      {tab === 'ingress' && <IngressSection {...sectionProps} controller={ingress} />}
       {tab === 'networking' && (
         <NetworkingSection {...sectionProps} nodeConfigs={data.nodeConfigs} />
       )}
-      {tab === 'install' && <InstallTimeSection spec={base} />}
+      {tab === 'install' && <InstallTimeSection spec={base} caps={caps} />}
 
       <Slide direction="up" in={dirty} mountOnEnter unmountOnExit>
         <Paper
