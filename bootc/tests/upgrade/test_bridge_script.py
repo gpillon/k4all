@@ -37,6 +37,10 @@ def node(tmp_path):
         _fake(bin_dir, "bootc", 'if [ "$1" = status ]; then cat %s; else echo "bootc $*" >> %s; fi\n'
               % (tmp_path / "status.json", log))
         _fake(bin_dir, "systemctl", 'echo "systemctl $*" >> %s\n' % log)
+        # systemd-run: record the wrapper, then run the command after "--"
+        _fake(bin_dir, "systemd-run",
+              'echo "$*" >> %s\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n'
+              % (tmp_path / "systemd-run.log"))
         _fake(bin_dir, "kubectl", "cat <<'EOF'\n%sEOF\n" % nodes)
         _fake(bin_dir, "df", 'echo Avail; echo %d\n' % free_kib)
         _fake(bin_dir, "id", 'echo 0\n')
@@ -70,6 +74,19 @@ def test_masks_the_timer_before_staging_the_bridge(node):
     assert "Reboot when convenient" in proc.stdout
 
 
+def test_bootc_runs_as_a_transient_unit(node, tmp_path):
+    # As a systemd unit, /usr/bin/bootc enters install_t, which may set file
+    # labels the running SELinux policy does not know yet.
+    setup, run = node
+    setup()
+    proc, calls = run()
+    assert proc.returncode == 0, proc.stderr
+    wrapper = (tmp_path / "systemd-run.log").read_text().splitlines()
+    assert len(wrapper) == 1
+    assert "--wait" in wrapper[0] and "--collect" in wrapper[0]
+    assert wrapper[0].endswith("-- bootc switch ghcr.io/gpillon/k4all-bootc:v2.2.4")
+
+
 def test_now_reboots_into_the_bridge(node):
     setup, run = node
     setup()
@@ -84,7 +101,8 @@ def test_dry_run_changes_nothing(node):
     proc, calls = run("--dry-run")
     assert proc.returncode == 0, proc.stderr
     assert calls == []
-    assert "would run: bootc switch" in proc.stdout
+    assert "would run: systemd-run" in proc.stdout
+    assert "-- bootc switch ghcr.io/gpillon/k4all-bootc:v2.2.4" in proc.stdout
 
 
 def test_bridge_or_newer_exits_without_changes(node):

@@ -462,3 +462,48 @@ def test_status_reports_hold(make_host, capsys):
     assert run_cli(host, "status") == 0
     out = capsys.readouterr().out
     assert "Release:   v2.3.0" in out and "HOLD:" in out
+
+
+# --- bootc under systemd ------------------------------------------------------
+def test_deployment_changes_run_bootc_as_a_transient_unit():
+    # Started from this tool bootc would stay in unconfined_service_t, which
+    # cannot set labels a newer SELinux policy brings (F43 -> F45 failed so).
+    argv = ku.via_systemd(["bootc", "switch", "--download-only", "img:v1"], 3600)
+    assert argv[0] == "systemd-run"
+    assert {"--wait", "--collect"} <= set(argv)
+    assert "--pipe" not in argv     # refused by systemd from a service
+    assert "RuntimeMaxSec=3600" in argv
+    assert argv[argv.index("--"):] == ["--", "/usr/bin/bootc", "switch",
+                                       "--download-only", "img:v1"]
+    for sub in (["upgrade", "--from-downloaded", "--apply"], ["rollback"]):
+        wrapped = ku.via_systemd(["bootc"] + sub)
+        assert wrapped[0] == "systemd-run"
+        assert wrapped[-len(sub):] == sub
+        assert not any(a.startswith("RuntimeMaxSec") for a in wrapped)
+
+
+def test_read_only_and_other_commands_run_directly():
+    for argv in (["bootc", "status", "--json"], ["kubectl", "get", "nodes"],
+                 ["bootc"], []):
+        assert ku.via_systemd(argv) == argv
+
+
+def test_a_failed_bootc_unit_reports_its_journal(monkeypatch):
+    calls = []
+
+    class Proc:
+        def __init__(self, rc, out=""):
+            self.returncode, self.stdout, self.stderr = rc, out, ""
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == "journalctl":
+            return Proc(0, "error: Switching: fsetxattr: Invalid argument\n")
+        return Proc(1)
+
+    monkeypatch.setattr(ku.subprocess, "run", fake_run)
+    with pytest.raises(ku.UpgradeError, match="fsetxattr: Invalid argument"):
+        ku.Host().run(["bootc", "switch", "--download-only", "img:v1"])
+    unit = calls[0][calls[0].index("--unit") + 1]
+    assert calls[1][:3] == ["journalctl", "-u", unit]
+

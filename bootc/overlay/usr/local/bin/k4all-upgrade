@@ -495,6 +495,32 @@ def components_settled(cr):
 # =========================================================================
 # Host access
 # =========================================================================
+# bootc commands that change deployments. They run as a transient systemd unit
+# so that /usr/bin/bootc (install_exec_t) enters the install_t SELinux domain,
+# as it does under bootc's own services. Started from this tool, which runs as
+# unconfined_service_t, bootc stays in that domain, which lacks mac_admin: the
+# kernel then refuses file labels the running policy does not know yet, and a
+# new Fedora's policy brings new ones. Seen on F43 -> F45:
+# "fsetxattr(security.selinux): Invalid argument".
+# No --pipe: from a service, with this tool's stdout and stderr as pipes,
+# systemd refuses them ("Failed to start transient service unit: Connection
+# reset by peer"). bootc's output goes to the unit's journal instead, which
+# Host.run reads back when the command fails.
+BOOTC_VIA_SYSTEMD = ("switch", "upgrade", "rollback")
+
+
+def via_systemd(argv, timeout=None):
+    """Wrap deployment-changing bootc commands in systemd-run."""
+    if len(argv) < 2 or argv[0] != "bootc" or argv[1] not in BOOTC_VIA_SYSTEMD:
+        return argv
+    wrapped = ["systemd-run", "--wait", "--collect", "--quiet",
+               "--unit", "k4all-bootc-%s-%d" % (argv[1], os.getpid())]
+    if timeout:
+        # Stop the unit too if this tool gives up waiting for it.
+        wrapped += ["--property", "RuntimeMaxSec=%d" % int(timeout)]
+    return wrapped + ["--", "/usr/bin/bootc"] + list(argv[1:])
+
+
 class Host:
     """Everything that touches the machine goes through this class, so the
     tests can replace it."""
@@ -538,12 +564,20 @@ class Host:
 
     # --- processes -------------------------------------------------------
     def run(self, argv, check=True, input_text=None, timeout=None):
+        argv = via_systemd(argv, timeout)
         proc = subprocess.run(argv, input=input_text, capture_output=True,
                               text=True, timeout=timeout)
         if check and proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip()
+            if argv[0] == "systemd-run" and "--unit" in argv:
+                # bootc wrote to its transient unit's journal
+                unit = argv[argv.index("--unit") + 1]
+                journal = subprocess.run(
+                    ["journalctl", "-u", unit, "-o", "cat", "--no-pager",
+                     "-n", "40"], capture_output=True, text=True, check=False)
+                detail = (detail + "\n" + journal.stdout).strip()
             raise UpgradeError("%s failed (rc=%d): %s"
-                               % (" ".join(argv), proc.returncode,
-                                  (proc.stderr or proc.stdout).strip()[-800:]))
+                               % (" ".join(argv), proc.returncode, detail[-800:]))
         return proc
 
     def run_bytes(self, argv, timeout=None):

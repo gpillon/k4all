@@ -130,11 +130,25 @@ fi
 log "masking bootc-fetch-apply-updates.timer (k4all-upgrade replaces it)"
 run systemctl mask --now bootc-fetch-apply-updates.timer
 
+# bootc runs as a transient unit, as under its own services, so it enters the
+# install_t SELinux domain whatever this script was started from (a service or
+# a confined shell would keep it in a domain that cannot set file labels the
+# running policy does not know yet).
+# No --pipe: started from a service, systemd refuses the caller's pipes. bootc
+# writes to the unit's journal, shown here when it fails.
+bootc_unit() {
+    local unit="k4all-bridge-bootc-$$"
+    if ! run systemd-run --wait --collect --quiet --unit "$unit" -- bootc "$@"; then
+        journalctl -u "$unit" -o cat --no-pager -n 40 >&2 || true
+        die "bootc $* failed"
+    fi
+}
+
 if [ "$NOW" = true ]; then
     log "switching to $BRIDGE_IMAGE and rebooting"
-    run bootc switch --apply "$BRIDGE_IMAGE"
+    bootc_unit switch --apply "$BRIDGE_IMAGE"
 else
     log "staging $BRIDGE_IMAGE for the next reboot"
-    run bootc switch "$BRIDGE_IMAGE"
+    bootc_unit switch "$BRIDGE_IMAGE"
     log "done. Reboot when convenient: systemctl reboot"
 fi
