@@ -37,6 +37,7 @@ import {
   hostPhaseLabel,
   NODE_PHASE,
   nodeGuidance,
+  nodeHostPhases,
   upgradeOrder,
   UpgradeView,
 } from '../../model/upgrades';
@@ -70,6 +71,7 @@ export function UpgradeNodesTable(props: {
   const byName = new Map(statusNodes.map(n => [n.name, n]));
   const k8s = new Map(props.nodes.map(n => [n.metadata.name, n]));
   const order = upgradeOrder(statusNodes, props.nodes);
+  const hostPhases = nodeHostPhases(props.nodes);
   const drain = props.cu.spec?.drain;
   return (
     <Box sx={{ overflowX: 'auto' }}>
@@ -89,6 +91,9 @@ export function UpgradeNodesTable(props: {
         <TableBody>
           {order.map((o, i) => {
             const st: NodeUpgradeStatus | undefined = byName.get(o.name);
+            // The operator copies the host phase only while the node has a hop
+            // request; the Node annotation says it otherwise (e.g. ABANDONED).
+            const hostPhase = st?.hostPhase || hostPhases.get(o.name);
             const phase = st ? NODE_PHASE[st.phase] ?? { label: st.phase, tone: 'neutral' } : null;
             const timer = st?.phase === 'Draining' && st ? drainTimer(st, drain, props.now) : null;
             const health = nodeHealth(k8s.get(o.name));
@@ -114,19 +119,19 @@ export function UpgradeNodesTable(props: {
                   )}
                 </TableCell>
                 <TableCell>
-                  {st?.hostPhase ? (
-                    <Tooltip title={HOST_PHASES[st.hostPhase]?.detail ?? st.hostPhase}>
+                  {hostPhase ? (
+                    <Tooltip title={HOST_PHASES[hostPhase]?.detail ?? hostPhase}>
                       <Chip
                         size="small"
                         variant="outlined"
                         color={
-                          st.hostPhase === 'HOLD' || st.hostPhase === 'ROLLBACK_REBOOT'
+                          hostPhase === 'HOLD' || hostPhase === 'ROLLBACK_REBOOT'
                             ? 'warning'
-                            : st.hostPhase === 'ABANDONED'
+                            : hostPhase === 'ABANDONED'
                             ? 'error'
                             : 'default'
                         }
-                        label={hostPhaseLabel(st.hostPhase)}
+                        label={hostPhaseLabel(hostPhase)}
                       />
                     </Tooltip>
                   ) : (
@@ -239,8 +244,9 @@ export function UpgradeProgressPanel(props: {
   const [stopOpen, setStopOpen] = React.useState(false);
   const spec = cu.spec ?? {};
   const statusNodes = cu.status?.nodes ?? [];
+  const hostPhases = nodeHostPhases(props.nodes);
   const guidance = statusNodes
-    .map(n => nodeGuidance(n, spec))
+    .map(n => nodeGuidance(n, spec, hostPhases.get(n.name)))
     .filter((g): g is Guidance => g !== null);
   const retryable = canRetry(cu);
   const paused = view.stage === 'paused' || view.stage === 'pausing';

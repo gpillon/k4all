@@ -49,7 +49,7 @@ export type UpgradeFlowPhase =
   | { kind: 'dryRun'; intent: ReviewIntent }
   | { kind: 'review'; data: UpgradeReviewData }
   | { kind: 'applying'; data: UpgradeReviewData }
-  | { kind: 'error'; error: ClassifiedError; retry: () => void };
+  | { kind: 'error'; intent: ReviewIntent; error: ClassifiedError; retry: () => void };
 
 export interface UpgradeFlow {
   phase: UpgradeFlowPhase;
@@ -65,6 +65,9 @@ export interface UpgradeFlow {
   busy: ActionIntent['kind'] | 'retry' | null;
 }
 
+/** How many times a conflict is rebuilt on a newer object before giving up. */
+const MAX_CONFLICT_REBUILDS = 2;
+
 const ACTION_DONE: Record<ActionIntent['kind'], string> = {
   pause: 'Upgrade paused: no new node starts its hop.',
   resume: 'Upgrade resumed.',
@@ -77,6 +80,9 @@ export function useUpgradeFlow(cu: ClusterUpgradeObject | null): UpgradeFlow {
   const { enqueueSnackbar } = useSnackbar();
   // Like the settings flow: close() moves the session on, so late results are dropped.
   const session = React.useRef(0);
+  // The newest watched object, for a "Try again" started from an older render.
+  const latestCu = React.useRef(cu);
+  latestCu.current = cu;
   const setPhase = (id: number, next: UpgradeFlowPhase) => {
     if (id === session.current) {
       setPhaseState(next);
@@ -87,7 +93,7 @@ export function useUpgradeFlow(cu: ClusterUpgradeObject | null): UpgradeFlow {
     id: number,
     base: ClusterUpgradeObject,
     intent: ReviewIntent,
-    changedMeanwhile?: boolean
+    conflicts = 0
   ): Promise<void> => {
     setPhase(id, { kind: 'dryRun', intent });
     const ops = intentOps(base, intent);
@@ -108,34 +114,42 @@ export function useUpgradeFlow(cu: ClusterUpgradeObject | null): UpgradeFlow {
           ops,
           result,
           items: describeUpgradeChanges(base.spec ?? {}, desired),
-          changedMeanwhile,
+          changedMeanwhile: conflicts > 0,
         },
       });
     } catch (err) {
-      await onError(id, err, intent);
+      await onError(id, err, intent, conflicts);
     }
   };
 
-  const onError = async (id: number, err: unknown, intent: ReviewIntent): Promise<void> => {
+  const onError = async (
+    id: number,
+    err: unknown,
+    intent: ReviewIntent,
+    conflicts = 0
+  ): Promise<void> => {
     const classified = classifyError(err);
     const restart = () => start(intent);
-    if (classified.kind !== 'conflict') {
-      setPhase(id, { kind: 'error', error: classified, retry: restart });
+    // A conflict is rebuilt on the newest object; one that keeps coming back
+    // (someone writing in a loop) ends as an error instead of a loop.
+    if (classified.kind !== 'conflict' || conflicts >= MAX_CONFLICT_REBUILDS) {
+      setPhase(id, { kind: 'error', intent, error: classified, retry: restart });
       return;
     }
     let latest: ClusterUpgradeObject;
     try {
       latest = await getClusterUpgrade();
     } catch (fetchErr) {
-      setPhase(id, { kind: 'error', error: classifyError(fetchErr), retry: restart });
+      setPhase(id, { kind: 'error', intent, error: classifyError(fetchErr), retry: restart });
       return;
     }
     if (id === session.current) {
-      await dryRun(id, latest, intent, true);
+      await dryRun(id, latest, intent, conflicts + 1);
     }
   };
 
-  const start = (intent: ReviewIntent, base: ClusterUpgradeObject | null = cu) => {
+  const start = (intent: ReviewIntent) => {
+    const base = latestCu.current;
     if (!base) {
       return;
     }
@@ -172,12 +186,12 @@ export function useUpgradeFlow(cu: ClusterUpgradeObject | null): UpgradeFlow {
   };
 
   const act = async (intent: ActionIntent): Promise<boolean> => {
-    if (!cu) {
+    if (!latestCu.current) {
       return false;
     }
     setBusy(intent.kind);
     try {
-      let base = cu;
+      let base = latestCu.current;
       for (let attempt = 0; ; attempt++) {
         const ops = intentOps(base, intent);
         if (ops.length === 0) {

@@ -18,11 +18,13 @@ import { compareSemver, parseSemver, SemVer } from './semver';
 import {
   ClusterUpgradeObject,
   ClusterUpgradeSpec,
+  Condition,
   DEFAULT_UPGRADE_GRAPH_URL,
   DrainSpec,
   Hop,
   NODE_RELEASE_ANNOTATION,
   NODE_TYPE_ANNOTATION,
+  NODE_UPGRADE_PHASE_ANNOTATION,
   NodeConfigObject,
   NodeLike,
   NodeUpgradeStatus,
@@ -560,9 +562,14 @@ export function upgradeView(cu: ClusterUpgradeObject): UpgradeView {
   });
   switch (status.phase) {
     case 'Progressing':
-      return spec.paused
+      if (!spec.paused) {
+        return make('progressing', 'info', 'Upgrading', true);
+      }
+      // Paused with a node still mid-hop: it finishes first. Without one
+      // (e.g. the graph cannot be read), nothing moves: paused.
+      return nodes.some(n => n.phase === 'Draining' || n.phase === 'Upgrading')
         ? make('pausing', 'warning', 'Pausing', true)
-        : make('progressing', 'info', 'Upgrading', true);
+        : make('paused', 'warning', 'Paused');
     case 'Paused':
       return make('paused', 'warning', 'Paused');
     case 'Failed':
@@ -575,6 +582,21 @@ export function upgradeView(cu: ClusterUpgradeObject): UpgradeView {
         : make('upToDate', 'success', 'Up to date');
   }
   return make('waiting', 'neutral', 'Waiting for k4all-operator', true);
+}
+
+/**
+ * Conditions worth a warning: a negative one (Degraded, Failed, Stalled…)
+ * that is True, or another one that is False, except the ones the stage
+ * already explains (Ready, Progressing, Paused, Succeeded, Available).
+ */
+export function problemConditions(conditions: Condition[] | undefined): Condition[] {
+  const negative = /degraded|fail|stall|error|blocked/i;
+  const explained = ['Ready', 'Progressing', 'Paused', 'Succeeded', 'Available', 'Complete'];
+  return (conditions ?? []).filter(c =>
+    negative.test(c.type)
+      ? c.status === 'True'
+      : c.status === 'False' && !explained.includes(c.type) && !!c.message
+  );
 }
 
 // --------------------------------------------------------------- Guidance
@@ -595,18 +617,32 @@ export interface Guidance {
   retry: boolean;
 }
 
-/** What the user can do about a node that is stuck, in words and commands. */
-export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec): Guidance | null {
+/**
+ * What the user can do about a node that is stuck, in words and commands.
+ *
+ * k4all-operator v0.4.0 reports a HOLD as hostPhase HOLD (phase Failed).
+ * Everything else that fails happens while the node has no upgrade-target
+ * (the drain path), with hostPhase left empty and one of three messages: the
+ * hop was abandoned on the node, upgrade-target was removed before the hop
+ * was done, drain timed out. nodePhase is the Node's own upgrade-phase
+ * annotation, which still says ABANDONED in that case.
+ */
+export function nodeGuidance(
+  node: NodeUpgradeStatus,
+  spec: ClusterUpgradeSpec,
+  nodePhase?: string
+): Guidance | null {
   const onNode = `on ${node.name}`;
-  const message = node.message ? ` k4all-upgrade says: "${node.message}"` : '';
+  const msg = node.message ?? '';
+  const quoted = msg ? ` k4all-upgrade says: "${msg}"` : '';
   if (node.hostPhase === 'HOLD') {
-    if (/^upgrade-target/.test(node.message ?? '')) {
+    if (/^upgrade-target/.test(msg)) {
       return {
         node: node.name,
         severity: 'warning',
         title: `${node.name} refused the hop`,
         text:
-          `k4all-upgrade on the node cannot plan this hop from its upgrade graph.${message} ` +
+          `k4all-upgrade on the node cannot plan this hop from its upgrade graph.${quoted} ` +
           'The ClusterUpgrade graph and the graph in /etc/k4all-upgrade.yaml on the node must be the same; the node tries again every minute.',
         commands: [{ command: 'sudo k4all-upgrade plan', where: onNode }],
         retry: false,
@@ -617,7 +653,7 @@ export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec):
       severity: 'warning',
       title: `${node.name} is on hold`,
       text:
-        `The hop stopped on the node and waits for you.${message} ` +
+        `The hop stopped on the node and waits for you.${quoted} ` +
         'Log in to the node, find the cause with the first command, fix it, then clear the hold: the node resumes the hop and the upgrade goes on by itself. ' +
         'To give up the hop instead and keep the node on its release, run the last command, then Retry or Stop here.',
       commands: [
@@ -628,7 +664,24 @@ export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec):
       retry: false,
     };
   }
-  if (node.hostPhase === 'ABANDONED') {
+  if (node.hostPhase === 'ROLLBACK_REBOOT') {
+    return {
+      node: node.name,
+      severity: 'warning',
+      title: `${node.name} is rolling back`,
+      text: `The new image did not come up, so the node reboots into its previous image. It then holds the hop for you to look at.${quoted}`,
+      commands: [{ command: 'sudo k4all-upgrade status', where: onNode }],
+      retry: false,
+    };
+  }
+  if (node.phase !== 'Failed') {
+    return null;
+  }
+  if (
+    node.hostPhase === 'ABANDONED' ||
+    nodePhase === 'ABANDONED' ||
+    /abandoned on the node/.test(msg)
+  ) {
     return {
       node: node.name,
       severity: 'error',
@@ -636,68 +689,76 @@ export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec):
       text:
         `Someone ran clear-hold --abandon on the node; it stays on ${
           node.release ?? 'its release'
-        }.${message} ` +
-        'Retry asks the node to run the hop again. Stop ends the upgrade with the nodes on different releases.',
+        }.${quoted} ` +
+        'Retry drains the node again and asks it for the hop. Stop ends the upgrade with the nodes on different releases.',
       commands: [],
       retry: true,
     };
   }
-  if (node.hostPhase === 'ROLLBACK_REBOOT') {
-    return {
-      node: node.name,
-      severity: 'warning',
-      title: `${node.name} is rolling back`,
-      text: `The new image did not come up, so the node reboots into its previous image. It then holds the hop for you to look at.${message}`,
-      commands: [{ command: 'sudo k4all-upgrade status', where: onNode }],
-      retry: false,
-    };
-  }
-  if (node.phase === 'Failed') {
-    if (node.drainStartedAt) {
-      const minutes = spec.drain?.timeoutMinutes || DEFAULT_DRAIN_TIMEOUT_MINUTES;
-      return {
-        node: node.name,
-        severity: 'error',
-        title: `Draining ${node.name} did not finish`,
-        text:
-          `The pods were not evicted within ${minutes} minutes: a PodDisruptionBudget, or a pod that cannot be evicted, holds the drain back.${
-            node.message ? ` ${node.message}` : ''
-          } ` +
-          'Find the pods left on the node, move or delete them (or relax their PodDisruptionBudget), then Retry. ' +
-          'Or turn on "continue when the drain times out" in the upgrade settings.',
-        commands: [
-          {
-            command: `kubectl get pods -A -o wide --field-selector spec.nodeName=${node.name}`,
-            where: 'with kubectl',
-          },
-          { command: 'kubectl get pdb -A', where: 'with kubectl' },
-        ],
-        retry: true,
-      };
-    }
+  if (/^upgrade-target was removed/.test(msg)) {
     return {
       node: node.name,
       severity: 'error',
-      title: `${node.name} failed`,
-      text: `${node.message || 'The hop failed on this node.'} Check the node, then Retry.`,
+      title: `${node.name} dropped the hop`,
+      text:
+        `The hop request was removed from the node before the hop was done, so the node stays on ${
+          node.release ?? 'its release'
+        }. ` +
+        'Retry drains the node again and asks it for the hop. Stop ends the upgrade with the nodes on different releases.',
       commands: [{ command: 'sudo k4all-upgrade status', where: onNode }],
       retry: true,
     };
   }
-  return null;
+  if (/^drain timed out/.test(msg)) {
+    const minutes = spec.drain?.timeoutMinutes || DEFAULT_DRAIN_TIMEOUT_MINUTES;
+    return {
+      node: node.name,
+      severity: 'error',
+      title: `Draining ${node.name} did not finish`,
+      text:
+        `${msg}: a PodDisruptionBudget, or a pod that cannot be evicted, holds the drain back. ` +
+        'Find the pods left on the node, move or delete them (or relax their PodDisruptionBudget), then Retry. ' +
+        `Or turn on "continue when the drain times out" in the upgrade settings, then Retry. Retry drains again, for up to ${minutes} minutes.`,
+      commands: [
+        {
+          command: `kubectl get pods -A -o wide --field-selector spec.nodeName=${node.name}`,
+          where: 'with kubectl',
+        },
+        { command: 'kubectl get pdb -A', where: 'with kubectl' },
+      ],
+      retry: true,
+    };
+  }
+  return {
+    node: node.name,
+    severity: 'error',
+    title: `${node.name} failed`,
+    text: `${msg || 'The hop failed on this node.'} Check the node, then Retry.`,
+    commands: [{ command: 'sudo k4all-upgrade status', where: onNode }],
+    retry: true,
+  };
+}
+
+/** The Node's own upgrade-phase annotation, by node name. */
+export function nodeHostPhases(nodes: NodeLike[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const n of nodes) {
+    const phase = n.metadata.annotations?.[NODE_UPGRADE_PHASE_ANNOTATION];
+    if (phase) {
+      out.set(n.metadata.name, phase);
+    }
+  }
+  return out;
 }
 
 /**
- * Whether Retry applies: a node a retry can restart (failed drain, abandoned
- * hop), or a failed upgrade with no node on hold (a hold resumes by itself).
+ * Whether Retry does something: the operator reads the retry annotation only
+ * for a failed node that has no hop request (failed drain, abandoned or
+ * dropped hop). A HOLD resumes by itself; a failed plan (unknown or older
+ * target, missing node annotations) needs another target or Stop.
  */
 export function canRetry(cu: ClusterUpgradeObject): boolean {
-  const spec = cu.spec ?? {};
-  const nodes = cu.status?.nodes ?? [];
-  if (nodes.some(n => nodeGuidance(n, spec)?.retry === true)) {
-    return true;
-  }
-  return cu.status?.phase === 'Failed' && !nodes.some(n => n.hostPhase === 'HOLD');
+  return (cu.status?.nodes ?? []).some(n => n.phase === 'Failed' && n.hostPhase !== 'HOLD');
 }
 
 // ------------------------------------------------------------- Spec writes
