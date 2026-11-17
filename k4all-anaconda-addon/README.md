@@ -80,6 +80,7 @@ This copies the updates.img to `../bootc/iso/images/k4all_updates.img` for ISO r
 com_k4all_installer/
 ├── __init__.py
 ├── constants.py          # D-Bus identifiers, defaults
+├── storage_layout.py     # K4All disk layout (spokes and unattended %pre)
 ├── service/
 │   ├── __init__.py
 │   ├── __main__.py       # D-Bus service entry point
@@ -94,13 +95,20 @@ com_k4all_installer/
 │   ├── __init__.py
 │   └── spokes/
 │       ├── __init__.py
-│       ├── k4all.py      # GUI spoke
-│       └── k4all.glade   # GTK UI definition
+│       ├── k4all.py          # GUI spoke (node settings)
+│       ├── k4all.glade
+│       ├── k4all_storage.py  # GUI spoke (disk layout)
+│       └── k4all_storage.glade
 └── tui/
     ├── __init__.py
     └── spokes/
         ├── __init__.py
-        └── k4all.py      # TUI spoke
+        ├── k4all.py          # TUI spoke (node settings)
+        └── k4all_storage.py  # TUI spoke (disk layout)
+data/
+├── org.fedoraproject.Anaconda.Addons.K4All.{conf,service}  # D-Bus activation
+└── 95-k4all-addon.conf   # Anaconda drop-in: bootc-image-builder ISOs list
+                          # their modules explicitly; this adds K4All
 ```
 
 ### Testing
@@ -109,7 +117,10 @@ com_k4all_installer/
 make test
 ```
 
-This runs basic Python syntax checks on all modules.
+This runs the pytest suite in `tests/` (constants, kickstart parsing, the
+D-Bus service, the storage layout, packaging and the bootc contracts), then
+compiles every module. `tests/Containerfile.test` runs the same tests against
+a real Anaconda on Fedora.
 
 ## License
 

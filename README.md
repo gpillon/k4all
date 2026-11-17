@@ -1,120 +1,172 @@
-# k4all ISO
+# k4all
 
-The `k4all` ISO provides a pre-configured Fedora CoreOS environment tailored for Kubernetes home servers and virtual machines. This ISO includes also essential tools and services for k8s, Calico networking, the metrics server, Logical Volume Manager (LVM), and NGINX as an Ingress controller. There is also a small [Wiki](https://github.com/gpillon/k4all/wiki) with some common useful stuff.
+k4all installs a ready-to-use Kubernetes node on home servers and virtual
+machines. It is a [bootc](https://bootc-dev.github.io/bootc/) image based on
+Fedora, installed through Anaconda with a small K4All addon. After the
+reboot, systemd units and the
+[k4all-operator](https://github.com/gpillon/k4all-operator) bring up the
+cluster. There is also a small [Wiki](https://github.com/gpillon/k4all/wiki)
+with some common useful stuff.
 
-## Overview
+**Warning: the unattended ISOs are fully automatic and erase the installation
+disk (the first fixed disk of at least 10 GiB). Back up your data first.**
 
-**Warning: The installation process is fully unattended and will format the entire `/dev/sda|vda|mmcblk device`. Ensure that your data is backed up before proceeding.**
+## What you get
 
-Key features include:
-- **Kubernetes Dashboard**: Easily manage your kubernetes cluster.
-- **Metrics Server**: Enables resource usage metrics collection for Kubernetes.
-- **Calico / Cilium + Multus**: Provides a robust networking solution.
-- **TopoLVM Volume Manager**: Facilitates Persistent Volume Claims (PVCs) using logical volume management.
-- **NGINX Ingress Controller**: Manages external access to services in the cluster.
-- **Kubevirt**: run VM inside Kubernetes managed by [kubevirt-manager](https://kubevirt-manager.io/). (Optional)
-- **ARGOCD**: CI/CD for your installation. (Optional)
+- Kubernetes (kubeadm) with CRI-O
+- Calico or Cilium as CNI, plus Multus and the OVS CNI (optional)
+- TopoLVM for persistent volumes on the `vg_data` volume group
+- ingress-nginx as ingress controller (Traefik replaces it in v2.6.0), MetalLB,
+  cert-manager
+- Headlamp dashboard and metrics-server
+- HA control plane with kube-vip or keepalived (optional)
+- KubeVirt with [kubevirt-manager](https://kubevirt-manager.io/) (optional)
+- ArgoCD (optional)
+- Image-based upgrades with `k4all-upgrade`
 
 ## Why k4all?
+
 - 1st time, it's ok.
 - 2nd time, you did it better.
 - 3rd time, automate it.
 
-## Requirements:
-- 2 CPU Cores.
-- 4GB Ram (2G used by K8all).
-- 20 Minutes.
-- Coffee, Sugar, Milk (not required).
+## Requirements
 
-## Creating a Bootable USB
-**TL;DR** use the `k4all-bootstrap` image
+- 2 CPU cores.
+- 4 GB RAM (2 GB used by k4all).
+- 20 minutes.
+- Coffee, sugar, milk (not required).
 
-To create a bootable USB device with the `k4all` ISO:
+## Which ISO
 
-1. **Download and Verify**: Ensure the downloaded ISO is correct and not corrupted.
-2. **Use `dd` on Linux**:
-   - Identify your USB device (`/dev/sdX`), replacing `X` with the correct letter.
-   - Run the following command as `root`:
+Each [release](https://github.com/gpillon/k4all/releases) ships four ISOs for
+x86_64 and aarch64:
 
-   ```bash
-   sudo dd if=k4all.iso of=/dev/sdX bs=4M status=progress oflag=sync
-   ```
-3. Use Rufus on Windows:
-   - Download [Rufus](https://rufus.ie/)
-   - Select the `k4all` ISO, choose your USB device, and click `Start`.
+| ISO | Use it for |
+|---|---|
+| `k4all-bootstrap` | **start here**: the first node, a single-node cluster with a schedulable control plane (unattended) |
+| `k4all-control` | an additional control-plane node (unattended) |
+| `k4all-worker` | a worker node (unattended) |
+| `k4all-attended` | an interactive install: Anaconda asks for disk, network and the K4All settings (role, CNI, HA, features) |
+
+The ISOs are compressed with zstd, and the larger ones are split into parts:
+
+```bash
+cat k4all-bootstrap-<version>-x86_64.iso.zst.part-* > k4all-bootstrap.iso.zst   # if split
+unzstd k4all-bootstrap.iso.zst
+```
+
+On Windows, join the parts with `copy /b` and extract with WinRAR 6.10 or newer.
 
 ## Installation
-**First version you want to install is the boostrap image**: it's a single node, with schedulable master. Later, you can add other control nodes or worker nodes. 
 
-### Using the ISO
+### Bootable USB
 
-0. Prepare a good Coffee (Espresso or American, depending on the hardware).
-1. Boot the ISO on the target system.
-2. If you want to customize the installation, just press 1 or 2 doring installation to modify the JSON. Discovered disk and ethernet cards will be shown in the config. 
-3. The installation is fully automated and will format the entire `dev/sda|vda|mmcblk` disk.
-4. Once completed, the system will reboot into the new environment.
-5. Take the Coffee (for about 5 to 15 minutes, depending on the hardware, 13 mins on a dual core Intel NUC DN2820FYK - 2013's Hardware).
-6. Follow next steps
+Linux, as `root` (replace `X` with your USB device):
 
-### Using prebuilt images
-1. Mount image on your favourite virtualization software
-2. Start the VM
-3. If you want to customize the installation, just press 1 or 2 doring installation to modify the JSON. Discovered disk and ethernet cards will be shown in the config. 
-4. Follow next steps
+```bash
+sudo dd if=k4all-bootstrap.iso of=/dev/sdX bs=4M status=progress oflag=sync
+```
 
-While Waiting you could listen a nice kubernetes song:
+Windows: use [Rufus](https://rufus.ie/).
+
+### Install
+
+0. Prepare a good coffee (espresso or American, depending on the hardware).
+1. Boot the ISO on the target machine or VM.
+2. The unattended ISOs install with no questions. The attended ISO shows the
+   standard Anaconda screens plus a K4All screen for the node settings.
+3. The disk layout puts 80% in the OS volume group (no swap) and the rest in
+   `vg_data`, which TopoLVM uses for persistent volumes.
+4. The machine reboots, and the first-boot services set up Kubernetes.
+5. Drink the coffee: 5 to 15 minutes, depending on the hardware.
+
+While waiting you could listen to a nice Kubernetes song:
 
 [![NCS - Kubernetes - Virtual Realms](https://img.youtube.com/vi/UMqWNKWYwd8/0.jpg)](https://www.youtube.com/watch?v=UMqWNKWYwd8)
 
-## Post-Install
-- **Access Headlamp and Token**:
-  - `ssh` in your newly installed machine with `ssh core@<MACHINE IP>` (default password: core)
-  - Access the system with `sudo -i` (if credentials are not shown, wait for the end of the installation process).
-  - if credentials are not show, you can connect to Headlamp at https://\<your-ip\>:32323/ using the token retrived by `kubectl get secret admin-user -n headlamp -o jsonpath={".data.token"} | base64 -d)` (remember to `sudo -i`)
+## Post-install
 
-- **Default Password**: The default password is `core`. **Change it immediately upon login.**
-  - After login, use `passwd` to set a new password for the `core` user.
-## Post-Installation Notes
+- `ssh core@<MACHINE IP>` (default password: `core`) and `sudo -i`.
+- **Change the default password right away** with `passwd`.
+- Headlamp listens on NodePort 32323 (`https://<your-ip>:32323/`). Get the
+  token with
+  `kubectl get secret admin-user -n headlamp -o jsonpath='{.data.token}' | base64 -d`
+  (as root).
+- A sample pod is created in the `default` namespace when the LVM setup works.
+  You can delete it.
 
-- **Sample Pod**: A sample pod will be created in the `default` namespace if the LVM setup is successful. You can safely delete this pod.
-- **Headlamp**: Access the Headlamp web UI via the URL and token you obtain from the system.
-   
-## Debugging Failed Setup
+## Upgrades
 
-Sometimes, the installation, could give you errors. When you login you may see some failed units. Run the command `journalctl -xu <failed_unit>` to see error details. _Feel free to comtibute, opening an issue_ :)
+Nodes upgrade one release at a time with `k4all-upgrade`. Patch releases
+install automatically in the Saturday 02:30 window. Minor releases (a new
+Kubernetes minor, a new Fedora) wait for `sudo k4all-upgrade run`. Nodes on
+v2.0 – v2.2.3 first move to the v2.2.4 bridge with `k4all-bridge.sh`.
 
-During installation you can run `install-status.sh` to monitor the installation status. When the installation is completed, all the services should be in `loaded     active     exited` state. take a look to the pods also with `kubectl get pods -A`
+The rules, the policy file and what to do when an upgrade stops are in
+[docs/upgrades.md](docs/upgrades.md). Don't run `bootc upgrade` by hand: it
+skips the kubeadm step.
 
-Be Aware: during the installation phase, some failing logs are normal! 
+## Debugging a failed setup
 
-## Building the ISO
+Some failing logs during the installation are normal. When the installation
+is complete, all `fck8s-*` services should be `loaded active exited`, and
+`kubectl get pods -A` should show running pods.
 
-1. Ensure all dependencies (Podman or Docker) are installed.
-2. Run the `build.sh` script or the GitHub workflow to generate the `k4all` ISO.
-3. The process will embed the required configurations and scripts into the Fedora CoreOS image.
+- `install-status.sh` shows the progress during installation.
+- `journalctl -xu <failed_unit>` shows why a unit failed.
+- `k4all-upgrade status` shows the upgrade state and any HOLD.
+
+_Feel free to contribute by opening an issue_ :)
+
+## Multi-node
+
+Install the bootstrap node first. Then install control-plane or worker nodes
+from their ISOs. To join by hand, run `generate_join.sh` on the bootstrap
+node; it prints a base64 code to use with `join_cluster.sh`. Multi-node is
+less tested than single-node.
+
+## Building
+
+You need Podman and, for ISOs, xorriso.
+
+```bash
+make -C bootc image                      # bootc OCI image
+make -C bootc iso-unattended-bootstrap   # one ISO (also: iso-attended, iso-unattended-control, iso-unattended-worker)
+make -C bootc iso                        # all four ISOs
+make -C bootc test-upgrade               # upgrade tool, graph and contract tests
+make -C bootc test-iso-install ISO=...   # full install test in QEMU/KVM
+```
+
+The GitHub workflow builds the images on every push, and builds the ISOs and
+the release on tags. See [bootc/README.md](bootc/README.md) for the image
+layout and [k4all-anaconda-addon/README.md](k4all-anaconda-addon/README.md) for
+the installer addon.
 
 ## Development
+
 Next features:
 
-- [ ] k8s & services [Updates](https://github.com/gpillon/k4all/wiki/Kubernetes-updates)
+- [x] Kubernetes and OS upgrades ([docs/upgrades.md](docs/upgrades.md))
+- [ ] Traefik as ingress controller (v2.6.0)
+- [ ] Multi-node upgrades driven by the k4all-operator
 - [ ] Fancy UI to manage your k4all installation
 - [ ] Applications catalog
-- [ ] Argocd Based installation ([?](https://github.com/gpillon/k4all/issues/12))
-- [ ] Multi node (WIP)
-- [x] ARM platform (Under Test, ATM the test container in manifest "example pod" is not working... need to change image)
+- [ ] ArgoCD-based installation ([?](https://github.com/gpillon/k4all/issues/12))
+- [x] ARM platform
 
-## Further Information
+## Thanks!
 
-**Multi-Node Cluster:** ATM, the installtion is tested for a single node cluster. _Feel free to contribute!_
-I added the script to add more nodes, (on the boostrap node you can run `generate_join.sh` script, to get a base64 code, to use in combination with `join_cluster.sh` script. It was not heavily tested, but ATM it looks working... 
-
-## Thanks! 
 Many thanks to:
- - [Manustar](https://github.com/manustars) For all the betatesting!
+ - [Manustar](https://github.com/manustars) for all the beta testing!
 
-## Looking for an enterprise solution? 
-Let's take a look to [Openshift Single Node](https://docs.openshift.com/container-platform/latest/installing/installing_sno/install-sno-installing-sno.html)
+## Looking for an enterprise solution?
+
+Take a look at
+[OpenShift Single Node](https://docs.openshift.com/container-platform/latest/installing/installing_sno/install-sno-installing-sno.html).
 
 ## References
+
  - [kubevirt-manager.io](https://kubevirt-manager.io/)
  - [kube-vip](https://kube-vip.io)
+ - [bootc](https://bootc-dev.github.io/bootc/)
