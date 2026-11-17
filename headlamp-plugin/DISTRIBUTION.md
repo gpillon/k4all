@@ -8,7 +8,7 @@ the `headlamp` component of `bootc/overlay/usr/local/share/k4all-release.yaml`.
 An initContainer copies it into an `emptyDir` that Headlamp sees as
 `/headlamp/plugins/k4all-headlamp-plugin`. A k4all release that bumps the tag
 upgrades the plugin through the normal ReleaseManifest sync. **No operator
-change is needed.** First release: plugin 0.1.0 in k4all v2.4.0.
+change is needed.** k4all v2.4.0 pins plugin 0.1.1 (changelog below).
 
 | File | What |
 |---|---|
@@ -48,8 +48,8 @@ change is needed.** First release: plugin 0.1.0 in k4all v2.4.0.
 
 ```bash
 # from headlamp-plugin/
-podman build -f Containerfile --build-arg PLUGIN_VERSION=0.1.0 \
-  -t ghcr.io/gpillon/k4all-headlamp-plugin:0.1.0 .
+podman build -f Containerfile --build-arg PLUGIN_VERSION=0.1.1 \
+  -t ghcr.io/gpillon/k4all-headlamp-plugin:0.1.1 .
 ```
 
 - Stage 1 (`node:22-alpine`, on the build platform): `npm ci` from the
@@ -70,14 +70,14 @@ podman build -f Containerfile --build-arg PLUGIN_VERSION=0.1.0 \
 
 1. Bump `plugin/package.json` `version` (semver of its own, 0.1.0 first) in
    the change that needs it.
-2. Tag `headlamp-plugin-v<version>` (e.g. `headlamp-plugin-v0.1.0`) on that
+2. Tag `headlamp-plugin-v<version>` (e.g. `headlamp-plugin-v0.1.1`) on that
    commit and push the tag. `.github/workflows/headlamp-plugin.yaml` runs the
    checks, then builds and pushes
    `ghcr.io/gpillon/k4all-headlamp-plugin:<version>` for amd64 and arm64 and
    prints the reference and digest in the run summary. The tag must match
    `package.json`, or the job fails. A manual run (`workflow_dispatch` with a
    `version` input) does the same from any branch, e.g. for a lab build:
-   `gh workflow run headlamp-plugin.yaml --ref <branch> -f version=0.1.0`.
+   `gh workflow run headlamp-plugin.yaml --ref <branch> -f version=0.1.1`.
 3. The k4all release commit pins that tag in `k4all-release.yaml`. **The
    image must exist before the release reaches a cluster**: otherwise the
    Headlamp pod stays in `Init:ImagePullBackOff` after the sync.
@@ -96,13 +96,42 @@ against the release file with the new chart version.
 
 | k4all | operator | Kubernetes | Headlamp chart / app | headlamp-plugin API | plugin |
 |---|---|---|---|---|---|
-| v2.4.0 | v0.4.0 | 1.35 | 0.46.0 / v0.46.0 | 0.14.0 | 0.1.0 |
+| v2.4.0 | v0.4.0 | 1.35 | 0.46.0 / v0.46.0 | 0.14.0 | 0.1.1 |
+
+## Changelog
+
+### 0.1.1
+
+- Pages stay live through API server and Headlamp restarts: the lists are
+  watched and polled (10 s while an upgrade is active or the cluster does
+  not answer, 60 s otherwise), the newer resourceVersion wins, and the
+  watches are remounted after an error, when they fall behind, or when the
+  cluster answers again. "Updated N s ago", Refresh, and a "the cluster is
+  not answering, retrying" notice on Upgrades and Overview. Fixes the
+  Upgrades page freezing during a single-node upgrade until F5.
+- Traefik releases (v2.6.0+): Settings > Ingress shows and writes
+  `spec.ingress.traefik` only (inherited values shown until the operator's
+  migration; no mirror to the nginx key, no "move" button).
+- "Ingresses still on the nginx class" with "Switch to traefik":
+  `ingressClassName: traefik`, the SSL redirect annotations converted to
+  the k4all redirect middleware, backend-protocol HTTPS moved to the
+  Services, other nginx annotations kept with a warning, Helm and Argo CD
+  detected. Counted on the Overview.
+- Components: `management: Removed` hidden unless "Show removed".
+- RBAC: `k4all-viewer` lists Ingresses; `k4all-editor` patches Ingresses
+  and Services for the switch.
+
+### 0.1.0
+
+First version: Overview, Upgrades (ClusterUpgrade), Settings, Components,
+Node section.
 
 ## Wiring in k4all-release.yaml (k4all v2.4.0)
 
-`distribution/v2.4.0-headlamp-values.patch` is made on the v2.4.0 release
-commit (9fc29b6) and also applies on the later release commits, so rebasing
-them after the rewritten v2.4.0 stays clean:
+The v2.4.0 release commit carries this wiring (it was prepared as
+`distribution/v2.4.0-headlamp-values.patch`, made on 9fc29b6, kept for
+reference with the 0.1.0 tag it had then). A plugin bump changes only the
+image tag. To apply the patch to a tree that does not have it yet:
 
 ```bash
 git apply headlamp-plugin/distribution/v2.4.0-headlamp-values.patch
@@ -212,7 +241,7 @@ the digest (`${img%@*}`).
 ## Lab test checklist
 
 1. Build the image: `gh workflow run headlamp-plugin.yaml --ref <branch> -f
-   version=0.1.0` (or tag `headlamp-plugin-v0.1.0`), or locally
+   version=0.1.1` (or tag `headlamp-plugin-v0.1.1`), or locally
    `podman build … && podman save … | ssh <node> sudo podman load` (CRI-O
    reads the same containers-storage).
 2. Wire it: either the patched v2.4.0 release through the normal sync, or,
