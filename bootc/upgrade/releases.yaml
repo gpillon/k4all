@@ -110,4 +110,5 @@ releases:
       from the kubeadm-config ConfigMap and from /etc/k8s-config.yaml on every
       node (kubeadm 1.36 no longer mounts the flex-volume directory into the
       controller manager). The components of v2.4.0, Traefik included,
-      already support 1.36.
+      already support 1.36. ingress-nginx, which v2.4.0 removed from every
+      cluster, leaves the release manifest.

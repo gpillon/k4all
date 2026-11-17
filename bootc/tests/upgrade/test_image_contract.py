@@ -168,8 +168,6 @@ def test_k4all_routes_use_the_traefik_class():
     # IngressClass stays, for users' Ingresses.
     components = release_components()
     for name, comp in components.items():
-        if name == "ingress-nginx":
-            continue
         values = dict(comp.get("values") or {})
         if name == "traefik":
             values["extraObjects"] = [o for o in values["extraObjects"]
@@ -204,14 +202,20 @@ def test_traefik_ships_the_redirect_middleware():
         "ingressclass.kubernetes.io/is-default-class": "false"}
 
 
-def test_ingress_nginx_is_removed_by_this_release():
-    # Every cluster passes v2.4.0 (a minor): its sync uninstalls ingress-nginx
-    # on clusters that come from v2.3.x. It is removed at the version those
-    # clusters run, never upgraded first (4.15.1 would be one more helm
-    # upgrade right before the uninstall).
-    nginx = release_components()["ingress-nginx"]
-    assert nginx["management"] == "Removed"
-    assert nginx["version"] == "4.14.3"
+def test_ingress_nginx_is_gone_from_the_release():
+    # Every cluster passes v2.4.0 (a minor), whose sync uninstalled
+    # ingress-nginx (management: Removed); from v2.6.0 the manifest no longer
+    # lists it, and nothing may depend on it.
+    components = release_components()
+    assert "ingress-nginx" not in components
+    for name, comp in components.items():
+        assert "ingress-nginx" not in comp.get("dependsOn", []), name
+    graph = ku.load_graph(yaml.safe_load(read(BOOTC, "upgrade", "releases.yaml")))
+    removed_in = [r for r in graph if r.version == "v2.4.0"]
+    assert removed_in and removed_in[0].kind == "minor", \
+        "the release that uninstalls ingress-nginx must be a mandatory stop"
+    assert removed_in[0].sync_manifest, \
+        "and it must sync its ReleaseManifest, or the uninstall never happens"
 
 
 def test_update_routes_timer_needs_only_shipped_units():

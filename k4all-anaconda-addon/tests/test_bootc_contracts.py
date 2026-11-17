@@ -14,11 +14,12 @@ def test_traefik_serves_the_routes_written_for_ingress_nginx():
     # Traefik's Ingress-NGINX provider serves them, but only through an
     # IngressClass "nginx" whose controller is the ingress-nginx one. That
     # class is never the default; k4all's own routes use the traefik class.
+    # ingress-nginx itself left the manifest in v2.6.0 (v2.4.0 removed it).
     yaml = pytest.importorskip("yaml")
     release_path = PROJECT_ROOT / "bootc/overlay/usr/local/share/k4all-release.yaml"
     components = yaml.safe_load(release_path.read_text())["spec"]["components"]
 
-    assert components["ingress-nginx"]["management"] == "Removed"
+    assert "ingress-nginx" not in components
     traefik = components["traefik"]["values"]
     assert traefik["providers"]["kubernetesIngressNGINX"]["enabled"] is True
     classes = [obj for obj in traefik["extraObjects"] if obj["kind"] == "IngressClass"]

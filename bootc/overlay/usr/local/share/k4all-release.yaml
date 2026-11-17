@@ -133,34 +133,9 @@ spec:
       custom: {}
 
     # --- Ingress ---
-    ingress-nginx:
-      type: helm
-      # Replaced by Traefik in v2.4.0: the operator uninstalls it before it
-      # installs traefik (Removed components go first), which frees the
-      # LoadBalancer IP and the host ports. Never upgraded: it stays at the
-      # version clusters ran before v2.4.0 (the repo is archived, and its
-      # last release, 4.15.1, is tested only up to Kubernetes 1.35).
-      management: Removed
-      version: "4.14.3"
-      repo: "https://kubernetes.github.io/ingress-nginx"
-      chart: ingress-nginx
-      namespace: ingress-nginx
-      values:
-        controller:
-          extraArgs:
-            enable-ssl-passthrough: ""
-          allowSnippetAnnotations: true
-          ingressClassResource:
-            enabled: true
-          kind: DaemonSet
-          nodeSelector:
-            kubernetes.io/os: linux
-            node-role.kubernetes.io/control-plane: ""
-      dependsOn:
-        - cert-manager
-        - metallb
-      custom: {}
-
+    # No ingress-nginx entry from v2.6.0: v2.4.0, a mandatory stop, set it
+    # to management: Removed and uninstalled it on every cluster. The
+    # ReleaseManifest sync keeps that entry on clusters that have it.
     traefik:
       type: helm
       # Traefik v3.7.18. k4all's own routes (Headlamp, Argo CD) use the
