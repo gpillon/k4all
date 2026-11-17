@@ -15,8 +15,8 @@ if [ $# -lt 1 ]; then
     exit 1
 fi
 
-INPUT_ISO="$1"
-OUTPUT_ISO="${2:-${INPUT_ISO}}"
+INPUT_ISO="$(readlink -f "$1")"
+OUTPUT_ISO="$(readlink -m "${2:-${INPUT_ISO}}")"
 
 if ! command -v xorriso &>/dev/null; then
     echo "ERROR: xorriso is required. Install it with: dnf install xorriso"

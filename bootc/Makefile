@@ -11,10 +11,11 @@ K8S_PORT ?= 16443
 WEB_HTTPS_PORT ?= 10443
 WEB_HTTP_PORT ?= 18080
 SKIP_DEPLOY_OPERATOR ?= false
+VNC_DISPLAY ?= :1
 
 .PHONY: all image iso iso-attended iso-unattended-bootstrap iso-unattended-control iso-unattended-worker \
         addon remaster clean help test test-addon run run-start build-run stop test-runtime \
-        bootstrap kubeconfig token dashboard shell
+        bootstrap kubeconfig token dashboard shell test-iso-install test-iso-install-attended
 
 all: image
 
@@ -202,6 +203,32 @@ test-addon:
 	@echo "=== Running K4All Anaconda addon tests ==="
 	$(MAKE) -C ../k4all-anaconda-addon test
 
+# Test a full ISO install in QEMU/KVM: boots the unattended bootstrap ISO,
+# drives the real Anaconda/kickstart install, reboots, and verifies the
+# cluster comes up. Requires: qemu-kvm, xorriso, sshpass.
+test-iso-install:
+	@echo "=== Running K4All ISO install test (QEMU) ==="
+	VNC_DISPLAY= KEEP_VM_RUNNING=false NO_AUTO_REBOOT=false KS_FILE= \
+		./tests/test-iso-install.sh $(if $(ISO),$(ISO),$(OUTPUT_DIR)/k4all-bootstrap.iso)
+
+# Run the same automatic install and verification with a live VNC console.
+# The ISO's embedded kickstart is used unchanged; no HTTP kickstart is injected.
+# After the checks, the installed VM remains running until Ctrl-C (or shutdown
+# from inside the guest), so it can be inspected and used interactively.
+# Connect any VNC client to 127.0.0.1:<5900+display> (WSL2 forwards localhost
+# automatically, so this also works from a VNC client on Windows).
+# ISO=/root/fcos-k8s/bootc/output/k4all-bootstrap.iso
+test-iso-install-attended:
+	@echo "=== Running K4All ISO install test with attended VNC console ==="
+	@echo ""
+	@echo "  VNC:  127.0.0.1:$$((5900 + $(subst :,,$(VNC_DISPLAY))))  (display $(VNC_DISPLAY))"
+	@echo "  Connect with any VNC client (e.g. TightVNC/RealVNC on Windows,"
+	@echo "  or: vncdo -s 127.0.0.1::$$((5900 + $(subst :,,$(VNC_DISPLAY)))) capture screen.png)"
+	@echo "  The installed VM remains running after the checks; Ctrl-C stops it."
+	@echo ""
+	VNC_DISPLAY=$(VNC_DISPLAY) KEEP_VM_RUNNING=true NO_AUTO_REBOOT=false KS_FILE= \
+		./tests/test-iso-install.sh $(if $(ISO),$(ISO),$(OUTPUT_DIR)/k4all-bootstrap.iso)
+
 # Test everything
 test-all: test test-addon
 	@echo ""
@@ -253,6 +280,9 @@ help:
 	@echo "Testing:"
 	@echo "  test                     - Build + validate bootc image (static)"
 	@echo "  test-runtime             - Run + validate running container (dynamic)"
+	@echo "  test-iso-install         - Automated, headless full ISO install test"
+	@echo "  test-iso-install-attended - Same test with live VNC; keep installed VM running"
+	@echo "                              (VNC_DISPLAY=:1 -> 127.0.0.1:5901)"
 	@echo "  test-addon               - Run Anaconda addon unit tests"
 	@echo "  test-all                 - Run all tests"
 	@echo ""

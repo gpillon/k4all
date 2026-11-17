@@ -145,4 +145,3 @@ The main configuration file is `/etc/k4all-config.json`. It can be:
 - Manually created before first boot
 
 See `overlay/etc/k4all-config.json.default` for the full schema.
-
