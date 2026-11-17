@@ -63,9 +63,13 @@ ANNOTATION_RELEASE = "k4all.magesgate.com/release"
 ANNOTATION_NODE_TYPE = "k4all.magesgate.com/node-type"
 ANNOTATION_PHASE = "k4all.magesgate.com/upgrade-phase"
 ANNOTATION_MESSAGE = "k4all.magesgate.com/upgrade-message"
+ANNOTATION_REASON = "k4all.magesgate.com/upgrade-reason"
 ANNOTATION_DONE = "k4all.magesgate.com/upgrade-done"
 PHASE_HOLD = "HOLD"
 PHASE_ABANDONED = "ABANDONED"
+# upgrade-reason next to HOLD; without it the operator sees a HostHold.
+REASON_TARGET_REJECTED = "TargetRejected"
+REASON_ROLLBACK_REBOOTED = "RollbackRebooted"
 MESSAGE_MAX = 1000
 # kubectl calls of the agent and of the phase reports must not hang on an
 # unreachable apiserver.
@@ -907,9 +911,11 @@ def start_next_hop(state):
     state["rollbacks"] = 0
 
 
-def put_on_hold(host, state, reason):
+def put_on_hold(host, state, reason, code=None):
     state["hold"] = {"reason": reason, "phase": state.get("phase"),
                      "at": host.now().isoformat(timespec="seconds")}
+    if code:
+        state["hold"]["code"] = code
     save_state(host, state)
     host.log("HOLD: %s" % reason)
     host.log("Fix the cause, then run: k4all-upgrade clear-hold && "
@@ -945,16 +951,16 @@ def abandoned_message(abandoned):
     return short_message(text)
 
 
-def node_report(state, role=None, release=None, problem=None, done=None):
+def node_report(state, role=None, release=None, problem=None, target=None):
     """The annotations k4all-upgrade owns on its Node for ``state``.
 
     None removes an annotation. ``release`` defaults to the last committed
-    release; ``problem`` is an upgrade-target the agent refused; ``done`` is
-    a target the node already runs. upgrade-done is never removed: it is the
-    record of the last hop the operator asked for and the node finished.
+    release; ``problem`` is an upgrade-target the agent refused; ``target``
+    is the upgrade-target on the Node now (None when absent).
     """
     state = state or {}
-    want = {ANNOTATION_PHASE: None, ANNOTATION_MESSAGE: None}
+    want = {ANNOTATION_PHASE: None, ANNOTATION_MESSAGE: None,
+            ANNOTATION_REASON: None}
     release = release or state.get("current")
     if release:
         want[ANNOTATION_RELEASE] = release
@@ -963,21 +969,23 @@ def node_report(state, role=None, release=None, problem=None, done=None):
     if _active(state) and state.get("hold"):
         want[ANNOTATION_PHASE] = PHASE_HOLD
         want[ANNOTATION_MESSAGE] = short_message(state["hold"].get("reason"))
+        want[ANNOTATION_REASON] = state["hold"].get("code")
     elif state.get("hop"):
         want[ANNOTATION_PHASE] = state["phase"]
     elif problem:
         want[ANNOTATION_PHASE] = PHASE_HOLD
         want[ANNOTATION_MESSAGE] = short_message(problem)
+        want[ANNOTATION_REASON] = REASON_TARGET_REJECTED
     elif state.get("abandoned"):
         want[ANNOTATION_PHASE] = PHASE_ABANDONED
         want[ANNOTATION_MESSAGE] = abandoned_message(state["abandoned"])
-    if done:
-        want[ANNOTATION_DONE] = done
-    elif operator_driven(state) and not _active(state) \
-            and not state.get("abandoned") and state.get("current") \
-            and state.get("current") == state.get("target"):
-        # Only once the hop is committed, in the same patch as release.
-        want[ANNOTATION_DONE] = state["current"]
+    # upgrade-done answers the upgrade-target on the Node: it names the
+    # target once the node has committed it (in the same patch as release),
+    # and goes away with the target. A different target leaves it alone.
+    if target is None or not str(target).strip():
+        want[ANNOTATION_DONE] = None
+    elif release and not state.get("hop") and same_target(target, release):
+        want[ANNOTATION_DONE] = release
     return want
 
 
@@ -1111,14 +1119,25 @@ class Upgrader:
             return False
         return True
 
-    def report(self, state, **extra):
+    def report(self, state, node=None, release=None, problem=None):
         """Publish the hop's phase (and release, node type, done) on the
-        Node. Never fails the hop: the agent catches up later."""
+        Node: read it, then patch what differs. Never fails the hop: the
+        agent catches up later."""
+        if node is None:
+            node, why = self.read_node()
+            if node is None:
+                if self._kubeconfig():
+                    self.host.log("cannot read Node %s: %s"
+                                  % (self._node_name(), why))
+                return False
         try:
             role = self._role()
         except UpgradeError:
             role = None
-        return self.patch_annotations(node_report(state, role, **extra))
+        observed = (node.get("metadata") or {}).get("annotations") or {}
+        want = node_report(state, role, release, problem,
+                           observed.get(ANNOTATION_TARGET))
+        return self.patch_annotations(annotation_changes(observed, want))
 
     def _save(self, state):
         save_state(self.host, state)
@@ -1272,13 +1291,13 @@ class Upgrader:
                 check=False)
         self.host.log("k4all-operator resumed")
 
-    def hold(self, state, reason):
+    def hold(self, state, reason, code=None):
         """HOLD keeps the node paused, except when nothing was rebooted yet:
         then the cluster is unchanged and the operator may run again."""
         if state.get("phase") in ("PREFLIGHT", "BACKUP", "STAGE", "PRE_REBOOT",
                                   "DRAIN") and state.get("hop"):
             self.resume_operator(state["hop"])
-        put_on_hold(self.host, state, reason)
+        put_on_hold(self.host, state, reason, code)
         self.report(state)
 
     # --- PRE_REBOOT ------------------------------------------------------
@@ -1639,7 +1658,8 @@ class Upgrader:
                 if phase == "ROLLBACK_REBOOT":
                     self.hold(state, "rolled back to %s after a failed reboot: "
                               "%s" % (state["hop"]["from"],
-                                      state.get("rollbackReason", "")))
+                                      state.get("rollbackReason", "")),
+                              REASON_ROLLBACK_REBOOTED)
                     return state
                 if phase == "COMMIT":
                     self.commit(state)
@@ -2114,7 +2134,7 @@ def cmd_agent(host, cfg, args, upgrader):
             state.pop("abandoned")
             save_state(host, state)
     want = node_report(state, role, _release_now(host, state), problem=problem,
-                       done=done)
+                       target=raw)
     changes = annotation_changes(observed, want)
     if changes:
         if problem and observed.get(ANNOTATION_MESSAGE) != want[ANNOTATION_MESSAGE]:

@@ -166,7 +166,8 @@ minute and after boot. The agent reads the node's own Node object, with
 | `node-type` | node | `bootstrap`, `control` or `worker` (from `/etc/node-type`) |
 | `upgrade-phase` | node | phase of the hop in progress (`PREFLIGHT` … `COMMIT`), `HOLD` or `ABANDONED`; absent when idle |
 | `upgrade-message` | node | the reason for `HOLD` or `ABANDONED` |
-| `upgrade-done` | node | the target, once its hop is committed |
+| `upgrade-reason` | node | next to `HOLD`: `TargetRejected` (the target is not a legal hop) or `RollbackRebooted` (the node rolled back); absent for any other HOLD |
+| `upgrade-done` | node | the target, once its hop is committed; removed when the operator removes `upgrade-target` |
 | `upgrade-in-progress` | node | the pause gate, as before |
 
 When `upgrade-target` names a newer release, the agent runs that hop in any
@@ -180,8 +181,8 @@ component sync and its wait happen before the commit, so before
 The agent accepts only one legal hop: the release that `k4all-upgrade plan`
 would visit next. A target that is older, skips a minor or the latest patch of
 the stream, is blocked, or is not in the graph puts the node in `HOLD` with the
-reason in `upgrade-message`, and nothing starts. A corrected target is picked
-up at the next minute.
+reason in `upgrade-message` and `upgrade-reason: TargetRejected`, and nothing
+starts. A corrected target is picked up at the next minute.
 
 A HOLD during the hop works as described above: after `clear-hold` and
 `resume`, the operator goes on by itself. `clear-hold --abandon` also removes

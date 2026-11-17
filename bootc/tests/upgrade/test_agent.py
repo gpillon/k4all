@@ -33,6 +33,7 @@ GRAPH = [
 TUESDAY = datetime.datetime(2026, 11, 17, 10, 0)    # outside the window
 
 PHASE, MESSAGE = ku.ANNOTATION_PHASE, ku.ANNOTATION_MESSAGE
+REASON = ku.ANNOTATION_REASON
 RELEASE, DONE = ku.ANNOTATION_RELEASE, ku.ANNOTATION_DONE
 TARGET, NODE_TYPE = ku.ANNOTATION_TARGET, ku.ANNOTATION_NODE_TYPE
 
@@ -96,8 +97,8 @@ def test_parse_target_refuses_anything_else(value):
 
 def test_node_report_when_idle():
     want = ku.node_report(None, "worker", "v2.4.0")
-    assert want == {RELEASE: "v2.4.0", NODE_TYPE: "worker",
-                    PHASE: None, MESSAGE: None}
+    assert want == {RELEASE: "v2.4.0", NODE_TYPE: "worker", PHASE: None,
+                    MESSAGE: None, REASON: None, DONE: None}
 
 
 def test_node_report_during_a_hop_and_in_hold():
@@ -106,22 +107,42 @@ def test_node_report_during_a_hop_and_in_hold():
     want = ku.node_report(st, "bootstrap")
     assert want[PHASE] == "STAGE" and want[MESSAGE] is None
     assert want[RELEASE] == "v2.4.0", "release is the last committed one"
+    assert want[REASON] is None
     st["hold"] = {"reason": "kubeadm\nfailed:   etcd unhealthy"}
-    want = ku.node_report(st, "bootstrap")
+    want = ku.node_report(st, "bootstrap", target="v2.5.0")
     assert want[PHASE] == "HOLD"
     assert want[MESSAGE] == "kubeadm failed: etcd unhealthy"
+    assert want[REASON] is None, "an ordinary HOLD is a HostHold"
     assert DONE not in want
+    st["hold"]["code"] = "RollbackRebooted"
+    assert ku.node_report(st)[REASON] == "RollbackRebooted"
 
 
-def test_node_report_writes_done_only_for_a_committed_operator_hop():
-    st = {"mode": "operator", "current": "v2.5.0", "target": "v2.5.0",
-          "phase": "DONE", "pending": [], "hop": None, "hold": None}
-    want = ku.node_report(st, "worker")
+def test_node_report_marks_a_refused_target():
+    want = ku.node_report(None, "worker", "v2.4.0", problem="upgrade-target "
+                          "v2.6.0: not one hop", target="v2.6.0")
+    assert want[PHASE] == "HOLD" and want[REASON] == "TargetRejected"
+    assert DONE not in want, "a different target leaves upgrade-done alone"
+
+
+COMMITTED = {"mode": "operator", "current": "v2.5.0", "target": "v2.5.0",
+             "phase": "DONE", "pending": [], "hop": None, "hold": None}
+
+
+def test_done_is_written_while_the_target_names_the_committed_release():
+    want = ku.node_report(COMMITTED, "worker", target="v2.5.0")
     assert want[DONE] == "v2.5.0" and want[RELEASE] == "v2.5.0"
-    assert ku.node_report(dict(st, mode="auto"), "worker").get(DONE) is None
-    running = dict(st, current="v2.4.0", phase="SYNC",
+    # whoever ran the hop: the target is what counts
+    assert ku.node_report(dict(COMMITTED, mode="auto"), "worker",
+                          target="v2.5.0")[DONE] == "v2.5.0"
+    running = dict(COMMITTED, current="v2.4.0", phase="SYNC",
                    hop={"from": "v2.4.0", "to": "v2.5.0"})
-    assert DONE not in ku.node_report(running, "worker")
+    assert DONE not in ku.node_report(running, "worker", target="v2.5.0")
+
+
+def test_done_goes_away_without_a_target():
+    assert ku.node_report(COMMITTED, "worker")[DONE] is None
+    assert ku.node_report(COMMITTED, "worker", target=" ")[DONE] is None
 
 
 def test_node_report_bounds_the_message():
@@ -354,9 +375,34 @@ def test_illegal_target_holds_without_doing_anything(node, value, why):
     assert host.annotations[PHASE] == "HOLD"
     assert why in host.annotations[MESSAGE]
     assert host.annotations[MESSAGE].startswith("upgrade-target")
+    assert host.annotations[REASON] == "TargetRejected"
     assert state(host) is None
     assert not commands(host, ["bootc", "switch"])
     assert DONE not in host.annotations
+
+
+def test_upgrade_done_goes_away_with_the_target(node):
+    host = node(mode="managed")
+    host.annotations[TARGET] = "v2.5.0"
+    agent(host)
+    finish(host)
+    assert host.annotations[DONE] == "v2.5.0"
+    agent(host)
+    assert host.annotations[DONE] == "v2.5.0", "kept while the target is there"
+    del host.annotations[TARGET]             # the operator moves on
+    assert agent(host) == 0
+    assert DONE not in host.annotations
+    assert host.annotations[RELEASE] == "v2.5.0"
+
+
+def test_no_done_when_the_target_goes_away_during_the_hop(node):
+    host = node(mode="managed")
+    host.annotations[TARGET] = "v2.5.0"
+    agent(host)
+    del host.annotations[TARGET]             # e.g. the ClusterUpgrade is gone
+    assert finish(host)["current"] == "v2.5.0"
+    assert DONE not in host.annotations
+    assert host.annotations[RELEASE] == "v2.5.0"
 
 
 def test_corrected_target_lifts_the_refusal(node):
@@ -368,7 +414,7 @@ def test_corrected_target_lifts_the_refusal(node):
     assert agent(host) == 0
     assert state(host)["phase"] == "REBOOT"
     assert host.annotations[PHASE] == "REBOOT"
-    assert MESSAGE not in host.annotations
+    assert MESSAGE not in host.annotations and REASON not in host.annotations
 
 
 @pytest.mark.parametrize("mode", ["managed", "auto", "manual"])
@@ -399,8 +445,7 @@ def test_every_phase_is_published_and_done_comes_with_release(node):
                                       "PRE_REBOOT", "DRAIN", "REBOOT", "SYNC",
                                       "COMMIT"]
     done = [p for p in host.patches if p.get(DONE)]
-    assert done[0] == {DONE: "v2.5.0", RELEASE: "v2.5.0", NODE_TYPE: "bootstrap",
-                       PHASE: None, MESSAGE: None}
+    assert done[0] == {DONE: "v2.5.0", RELEASE: "v2.5.0", PHASE: None}
     assert host.patches.index(done[0]) > max(
         i for i, p in enumerate(host.patches) if p.get(PHASE) == "COMMIT")
 
@@ -482,6 +527,7 @@ def test_hold_publishes_phase_and_message(node):
     assert agent(host) == 1
     assert host.annotations[PHASE] == "HOLD"
     assert "already staged" in host.annotations[MESSAGE]
+    assert REASON not in host.annotations, "the operator calls it HostHold"
     before = len(host.patches)
     assert agent(host) == 0
     assert len(host.patches) == before, "HOLD stays as it is"
@@ -500,6 +546,23 @@ def test_hold_resumed_by_hand_goes_on_and_clears_the_message(node):
     run_cli(host, "resume")
     assert finish(host)["current"] == "v2.5.0"
     assert host.annotations[DONE] == "v2.5.0"
+
+
+def test_hold_after_a_rollback_says_rollback_rebooted(node):
+    host = node(mode="managed")
+    host.healthy_after_boot = False
+    host.annotations[TARGET] = "v2.5.0"
+    agent(host)
+    run_cli(host, "resume")                  # unhealthy: rollback and reboot
+    assert host.annotations[PHASE] == "ROLLBACK_REBOOT"
+    host.healthy_after_boot = True
+    run_cli(host, "resume")
+    assert host.annotations[PHASE] == "HOLD"
+    assert host.annotations[REASON] == "RollbackRebooted"
+    assert "rolled back to v2.4.0" in host.annotations[MESSAGE]
+    run_cli(host, "clear-hold", "--abandon")
+    assert host.annotations[PHASE] == "ABANDONED"
+    assert REASON not in host.annotations
 
 
 def test_agent_publishes_a_hold_it_missed(node):
