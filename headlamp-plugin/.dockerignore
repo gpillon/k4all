@@ -1,0 +1,6 @@
+# Build context of Containerfile: only plugin/ sources are copied.
+plugin/node_modules
+plugin/dist
+plugin/.eslintcache
+plugin/*.tar.gz
+.helm
