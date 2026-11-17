@@ -1,0 +1,17 @@
+# ALTERNATIVE to the initContainer (not used by k4all yet): the same plugin
+# image mounted as a Kubernetes image volume. ImageVolume is beta and on by
+# default in Kubernetes 1.35, GA in 1.36. Needs a lab test of subPath image
+# volumes on k4all's CRI-O before it replaces the initContainer
+# (DISTRIBUTION.md). Merge these keys into the headlamp component values
+# instead of its initContainers/volumes/volumeMounts; test-helm-template.sh
+# renders it with the image the release pins.
+volumes:
+  - name: k4all-plugin
+    image:
+      reference: ghcr.io/gpillon/k4all-headlamp-plugin:0.1.0
+      pullPolicy: IfNotPresent
+volumeMounts:
+  - name: k4all-plugin
+    mountPath: /headlamp/plugins/k4all-headlamp-plugin
+    subPath: plugins/k4all-headlamp-plugin
+    readOnly: true
