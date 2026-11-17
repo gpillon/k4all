@@ -11,6 +11,7 @@ BASEDIR = $(TMPDIR)/usr/share/anaconda
 ADDONDIR = $(BASEDIR)/addons
 SERVICESDIR = $(BASEDIR)/dbus/services
 CONFDIR = $(BASEDIR)/dbus/confs
+ANACONFACONFDIR = $(TMPDIR)/etc/anaconda/conf.d
 
 .PHONY: all updates clean test help quick-remaster serve
 
@@ -30,6 +31,8 @@ updates:
 	@cp -pa data/org.fedoraproject.Anaconda.Addons.K4All.service $(SERVICESDIR)/
 	@mkdir -p $(CONFDIR)
 	@cp -pa data/org.fedoraproject.Anaconda.Addons.K4All.conf $(CONFDIR)/
+	@mkdir -p $(ANACONFACONFDIR)
+	@cp -pa data/95-k4all-addon.conf $(ANACONFACONFDIR)/
 	@cd $(TMPDIR) ; find . | cpio -c -o --quiet | gzip -9 > $(OUTDIR)/k4all_addon_updates.img
 	@rm -rf $(TMPDIR)
 	@echo " done."
