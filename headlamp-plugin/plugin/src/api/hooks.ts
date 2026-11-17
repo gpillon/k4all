@@ -135,12 +135,13 @@ export function useClusterUpgrade(): ClusterUpgradeData {
   };
 }
 
-/** SelfSubjectAccessReview for patch on clusterupgrades; null while asking. */
+/** SelfSubjectAccessReview for patch on the ClusterUpgrade k4all; null while asking. */
 export function useCanPatchClusterUpgrade(): boolean | null {
   const [allowed, setAllowed] = React.useState<boolean | null>(null);
   React.useEffect(() => {
     let cancelled = false;
-    ClusterUpgrade.getAuthorization('patch')
+    // Named: a role may grant patch on resourceNames [k4all] only.
+    ClusterUpgrade.getAuthorization('patch', { name: CLUSTER_UPGRADE_NAME })
       .then((r: any) => r?.status?.allowed === true)
       .catch(() => false)
       .then((ok: boolean) => {

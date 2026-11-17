@@ -1,0 +1,91 @@
+# RBAC for users of the k4all Headlamp plugin who are not cluster-admin.
+# (k4all's default Headlamp login, the headlamp-admin token, is cluster-admin
+# and needs none of this.)
+#
+# k4all-viewer:   sees every plugin page, cannot change anything.
+# k4all-editor:   also saves settings and overrides, sets the management
+#                 policy, re-applies components.
+# k4all-upgrader: also starts, pauses, resumes, stops and retries cluster
+#                 upgrades (ClusterUpgrade, k4all v2.4.0+). An upgrade reboots
+#                 every node, so it is a role of its own.
+# Bind them with a ClusterRoleBinding: the k4all resources are cluster-scoped.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k4all-viewer
+  labels:
+    app.kubernetes.io/part-of: k4all
+rules:
+  - apiGroups: [k4all.magesgate.com]
+    resources: [clusterconfigs, releasemanifests, nodeconfigs, clusterupgrades]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k4all-editor
+  labels:
+    app.kubernetes.io/part-of: k4all
+rules:
+  - apiGroups: [k4all.magesgate.com]
+    resources: [clusterconfigs, releasemanifests, nodeconfigs, clusterupgrades]
+    verbs: [get, list, watch]
+  # Settings and component overrides (JSON Patch on spec), management policy
+  # and the force-resync annotation. No create/delete/update: the plugin
+  # never replaces or removes these objects.
+  - apiGroups: [k4all.magesgate.com]
+    resources: [clusterconfigs, releasemanifests]
+    verbs: [patch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k4all-upgrader
+  labels:
+    app.kubernetes.io/part-of: k4all
+rules:
+  - apiGroups: [k4all.magesgate.com]
+    resources: [clusterupgrades, releasemanifests, nodeconfigs]
+    verbs: [get, list, watch]
+  # targetRelease, paused, drain, graphUrl (JSON Patch on spec) and the
+  # retry annotation (merge patch), on the one ClusterUpgrade.
+  - apiGroups: [k4all.magesgate.com]
+    resources: [clusterupgrades]
+    resourceNames: [k4all]
+    verbs: [patch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+---
+# Example bindings.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k4all-editor-ops
+subjects:
+  - kind: Group
+    name: k4all-ops
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: k4all-editor
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k4all-upgrader-ops
+subjects:
+  - kind: Group
+    name: k4all-ops
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: k4all-upgrader
+  apiGroup: rbac.authorization.k8s.io
