@@ -8,7 +8,7 @@ the `headlamp` component of `bootc/overlay/usr/local/share/k4all-release.yaml`.
 An initContainer copies it into an `emptyDir` that Headlamp sees as
 `/headlamp/plugins/k4all-headlamp-plugin`. A k4all release that bumps the tag
 upgrades the plugin through the normal ReleaseManifest sync. **No operator
-change is needed.** k4all v2.4.0 pins plugin 0.1.1 (changelog below).
+change is needed.** k4all v2.4.0 pins plugin 0.1.2 (changelog below).
 
 | File | What |
 |---|---|
@@ -48,8 +48,8 @@ change is needed.** k4all v2.4.0 pins plugin 0.1.1 (changelog below).
 
 ```bash
 # from headlamp-plugin/
-podman build -f Containerfile --build-arg PLUGIN_VERSION=0.1.1 \
-  -t ghcr.io/gpillon/k4all-headlamp-plugin:0.1.1 .
+podman build -f Containerfile --build-arg PLUGIN_VERSION=0.1.2 \
+  -t ghcr.io/gpillon/k4all-headlamp-plugin:0.1.2 .
 ```
 
 - Stage 1 (`node:22-alpine`, on the build platform): `npm ci` from the
@@ -70,14 +70,14 @@ podman build -f Containerfile --build-arg PLUGIN_VERSION=0.1.1 \
 
 1. Bump `plugin/package.json` `version` (semver of its own, 0.1.0 first) in
    the change that needs it.
-2. Tag `headlamp-plugin-v<version>` (e.g. `headlamp-plugin-v0.1.1`) on that
+2. Tag `headlamp-plugin-v<version>` (e.g. `headlamp-plugin-v0.1.2`) on that
    commit and push the tag. `.github/workflows/headlamp-plugin.yaml` runs the
    checks, then builds and pushes
    `ghcr.io/gpillon/k4all-headlamp-plugin:<version>` for amd64 and arm64 and
    prints the reference and digest in the run summary. The tag must match
    `package.json`, or the job fails. A manual run (`workflow_dispatch` with a
    `version` input) does the same from any branch, e.g. for a lab build:
-   `gh workflow run headlamp-plugin.yaml --ref <branch> -f version=0.1.1`.
+   `gh workflow run headlamp-plugin.yaml --ref <branch> -f version=0.1.2`.
 3. The k4all release commit pins that tag in `k4all-release.yaml`. **The
    image must exist before the release reaches a cluster**: otherwise the
    Headlamp pod stays in `Init:ImagePullBackOff` after the sync.
@@ -96,9 +96,23 @@ against the release file with the new chart version.
 
 | k4all | operator | Kubernetes | Headlamp chart / app | headlamp-plugin API | plugin |
 |---|---|---|---|---|---|
-| v2.4.0 | v0.4.0 | 1.35 | 0.46.0 / v0.46.0 | 0.14.0 | 0.1.1 |
+| v2.4.0 | v0.5.0 | 1.35 | 0.46.0 / v0.46.0 | 0.14.0 | 0.1.2 |
 
 ## Changelog
+
+### 0.1.2
+
+For the shorter ladder: Traefik replaces ingress-nginx in k4all v2.4.0,
+which pins k4all-operator v0.5.0 and this plugin.
+
+- Traefik, Settings > Ingress on `spec.ingress.traefik` and "Ingresses still
+  on the nginx class" from v2.4.0 (0.1.1 said v2.6.0). The behaviour does
+  not change: the plugin follows the ReleaseManifest, not the version.
+- The CNI switch and the OVS bridge toggle stay read-only until
+  k4all-operator v0.6.0. 0.1.1 unlocked them with v0.5.0, which does not
+  have them.
+- Without ClusterUpgrade: "k4all v2.4.0 brings the ClusterUpgrade API
+  (k4all-operator v0.4.0 or later)", no longer "brings v0.4.0".
 
 ### 0.1.1
 
@@ -213,7 +227,7 @@ plugin's overrides editor warns about exactly this).
 
 ### Pre-pulled image (proposal H-4)
 
-The bootc image pre-loads the operator image (and Traefik from v2.6.0). Adding
+The bootc image pre-loads the operator image (and Traefik from v2.4.0). Adding
 the plugin image keeps the Headlamp rollout offline-safe. In
 `bootc/Containerfile`, where `/tmp/k8s-images.txt` is filled:
 
@@ -241,7 +255,7 @@ the digest (`${img%@*}`).
 ## Lab test checklist
 
 1. Build the image: `gh workflow run headlamp-plugin.yaml --ref <branch> -f
-   version=0.1.1` (or tag `headlamp-plugin-v0.1.1`), or locally
+   version=0.1.2` (or tag `headlamp-plugin-v0.1.2`), or locally
    `podman build … && podman save … | ssh <node> sudo podman load` (CRI-O
    reads the same containers-storage).
 2. Wire it: either the patched v2.4.0 release through the normal sync, or,
@@ -252,7 +266,7 @@ the digest (`${img%@*}`).
    **k4all** sidebar entry in Headlamp.
 4. Settings and components: toggle a feature (dry run, diff, apply); edit
    the ClusterConfig with kubectl while a form is dirty (rebase / conflict
-   table); ingress settings on a v2.4.0 cluster write `spec.ingress.nginx`;
+   table); ingress settings on a v2.4.0 cluster write `spec.ingress.traefik`;
    overrides on a Helm component; Unmanaged and back on a leaf component;
    re-apply; a viewer token with `k4all-viewer` (read-only UI); the plugin
    on a non-k4all cluster (empty state).
