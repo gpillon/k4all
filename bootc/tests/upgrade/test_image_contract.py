@@ -198,6 +198,17 @@ def test_backup_and_restore_keep_the_yaml_config():
     assert "k4all-config.yaml" in read(BIN, "k4all-restore.sh")
 
 
+def test_short_image_names_resolve_on_docker_io_only():
+    # CRI-O 1.35 enforces short-name mode: with Fedora's three search
+    # registries "nginx:latest" is ambiguous and the pod never starts.
+    conf = read(BOOTC, "overlay", "etc", "containers", "registries.conf.d",
+                "50-k4all-short-names.conf")
+    lines = [l for l in conf.splitlines() if l.strip() and not l.startswith("#")]
+    assert lines == ['unqualified-search-registries = ["docker.io"]']
+    text = read(BOOTC, "Containerfile")
+    assert "/etc/containers/registries.conf.d/50-k4all-short-names.conf" in text
+
+
 def test_lvm_setup_keeps_thick_volumes():
     script = read(BIN, "setup-lvm.sh")
     assert "lvs --noheadings -o lv_name vg_data" in script
