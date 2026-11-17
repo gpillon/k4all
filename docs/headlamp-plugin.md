@@ -17,8 +17,8 @@ kubectl get secret admin-user -n headlamp -o jsonpath='{.data.token}' | base64 -
 |---|---|
 | **Overview** | The k4all release, whether an upgrade is available or running, health, components, features, ingress, and each node with its release and upgrade phase. |
 | **Upgrades** | Move every node to a newer k4all release and follow it. |
-| **Settings** | Features (Virtualization, Argo CD, OVS secondary networks), ingress (dedicated IP, default IngressClass), Cilium options. Install-time settings are shown read-only, with the reason. |
-| **Components** | Every component of the release: state, versions, Helm value overrides that survive upgrades, management (Managed, Unmanaged, Removed), re-apply. |
+| **Settings** | Features (Virtualization, Argo CD, OVS secondary networks), ingress (dedicated IP, default IngressClass, Ingresses still on the nginx class), Cilium options. Install-time settings are shown read-only, with the reason. |
+| **Components** | Every component of the release: state, versions, Helm value overrides that survive upgrades, management (Managed, Unmanaged, Removed), re-apply. Components the release removed (such as ingress-nginx from v2.6.0) are hidden unless you turn on "Show removed". |
 
 The Node page of Headlamp also gets a k4all section: role, release, upgrade
 phase, network interfaces.
@@ -28,6 +28,29 @@ the review lists what changes and what that does to the cluster, with the
 YAML diff. Nothing is saved until you apply it. If someone else changed the
 same resource in the meantime, the review says so before anything is
 written.
+
+The Overview and Upgrades pages say when they were last updated, with a
+**Refresh** button. While the cluster does not answer, for example while
+the API server or Headlamp restarts during an upgrade, they keep the last
+known state, say so, and retry by themselves; you do not need to reload.
+
+## Ingresses still on the nginx class
+
+From v2.6.0 Traefik is the ingress controller. It still serves the
+Ingresses of class `nginx`, through its ingress-nginx compatibility, but
+they are best moved to the `traefik` class. **Settings > Ingress** lists
+them, and the Overview counts them. **Switch to traefik** sets the class and
+converts what has a Traefik equivalent:
+
+- `nginx.ingress.kubernetes.io/force-ssl-redirect` or `ssl-redirect: "true"`
+  become the HTTPS redirect middleware k4all provides;
+- `nginx.ingress.kubernetes.io/backend-protocol: HTTPS` moves to the
+  backend Services (`traefik.ingress.kubernetes.io/service.serversscheme`).
+
+Other nginx annotations stay and stop having an effect: the review lists
+them and asks you to confirm. An Ingress that Helm or Argo CD manage must
+be changed where it comes from (chart values, Git), or the next upgrade or
+sync puts the nginx class back; the review says when it sees one.
 
 ## Upgrading the cluster
 
@@ -122,7 +145,7 @@ ClusterRoles in `headlamp-plugin/distribution/rbac.yaml`:
 | Role | Can |
 |---|---|
 | `k4all-viewer` | see every page |
-| `k4all-editor` | also change settings, overrides, management, re-apply |
+| `k4all-editor` | also change settings, overrides, management, re-apply, and switch Ingresses to traefik |
 | `k4all-upgrader` | also start, pause, resume, stop and retry upgrades |
 
 Controls a user may not use are disabled, with the reason.

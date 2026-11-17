@@ -1,6 +1,6 @@
 # k4all Headlamp plugin: design
 
-Status: built and unit-tested (239 tests), not yet run against a live
+Status: built and unit-tested (277 tests), not yet run against a live
 cluster. Ships from k4all v2.4.0 (k4all-operator v0.4.0, Headlamp chart
 0.46.0, Kubernetes 1.35 and later). User guide: `docs/headlamp-plugin.md`.
 Packaging and release: `DISTRIBUTION.md`.
@@ -230,10 +230,20 @@ Every row carries an apply badge: **Live** (the operator applies it),
   LoadBalancer on the node address, through kube-vip, or on the dedicated
   IP; both hooks follow the same rules). ingress-nginx clusters (k4all
   v2.4.0, v2.5.x) edit `spec.ingress.nginx`, with a note that Traefik takes
-  these settings over in v2.6.0. Traefik clusters installed before v2.6.0
-  (only `spec.ingress.nginx`) get a banner and a one-click move to
+  these settings over in v2.6.0. On Traefik releases (v2.6.0+) the page
+  shows and writes `spec.ingress.traefik` only, never the nginx key; while
+  that key is still missing (before the operator's migration in v0.4.2) it
+  shows the values Traefik inherited and the first change saves them to
   `spec.ingress.traefik`. Cilium ingress IP (only shown on Cilium clusters,
   or when set).
+- **Ingresses still on the nginx class** (Ingress tab, Traefik releases): the
+  cluster's Ingresses with `ingressClassName: nginx` or the
+  `kubernetes.io/ingress.class: nginx` annotation, which Traefik serves
+  through its ingress-nginx provider. Each row shows the hosts, how many
+  annotations convert and how many cannot, and whether Helm or Argo CD
+  manage it; "Switch to traefik" opens a review (5.8) and applies at once,
+  outside the settings draft. The Overview's Ingress card counts them, with
+  a link here.
 - **Networking**: a CNI panel (read-only with "Coming with k4all-operator
   v0.5.0", a select with that operator), then on Cilium clusters switches for
   L2 announcements, Hubble, Gateway API and a chip input for devices, with
@@ -244,7 +254,9 @@ Every row carries an apply badge: **Live** (the operator applies it),
 
 ### 3.4 Components
 
-Filter (All / Needs attention / Active / Off) and a sortable, searchable table
+Filter (All / Needs attention / Active / Off), and "Show removed": components
+with `management: Removed` (ingress-nginx from v2.6.0) are hidden unless it
+is on. A sortable, searchable table
 (Headlamp's `Table`): component (with icons for "has overrides" and "re-apply
 requested"), category, state pill (with the operator message as tooltip),
 version (`installed → release` with the upgrade path as tooltip), management
@@ -294,7 +306,7 @@ vocabulary is reused everywhere: tone pills (dot or spinner + label), panels
 with icon titles, setting rows (label and help left, control right, apply
 badge), a segmented bar for component states, gradient icon tiles in page
 headers, kind chips (minor filled, patch outlined), the hop trail, copyable
-command lines. Icons are `mdi:` names; the plugin registers the 63 it uses
+command lines. Icons are `mdi:` names; the plugin registers the 65 it uses
 with Headlamp's Iconify instance (`src/icons.ts`), because Headlamp bundles
 only a handful and fetches the rest from api.iconify.design, which an
 air-gapped cluster cannot reach (a test keeps the list complete). All
@@ -317,9 +329,10 @@ on the field with k4all-operator v0.4.0.
 | CNI | `networking.cni.type` | read-only; edit with operator ≥ v0.5.0 | today: switching would re-create every pod network; kubeadm/firewall set up at install |
 | Ingress dedicated IP (ingress-nginx) | `ingress.nginx.dedicatedIP` | edit (ingress-nginx releases) | ingress-nginx hook: LoadBalancer on that IP; MetalLB pool |
 | Default IngressClass (ingress-nginx) | `ingress.nginx.isDefault` (always written) | edit (ingress-nginx releases) | ingress-nginx hook: `ingressClassResource.default`, host ports vs LoadBalancer |
-| Traefik dedicated IP | `ingress.traefik.dedicatedIP` (+ mirror to `ingress.nginx.dedicatedIP` with operators before v0.4.0, 5.4) | edit (Traefik releases) | Traefik hook: LoadBalancer Service on that IP; MetalLB pool (`DedicatedIPs`, v0.4.0) |
+| Traefik dedicated IP | `ingress.traefik.dedicatedIP` | edit (Traefik releases) | Traefik hook: LoadBalancer Service on that IP; MetalLB pool (`DedicatedIPs`, v0.4.0) |
 | Traefik default class | `ingress.traefik.isDefault` (always written) | edit (Traefik releases) | Traefik hook: `ingressClass.isDefaultClass`, host ports vs LoadBalancer |
-| (legacy) | `ingress.nginx.*` on Traefik releases | adopted | Traefik falls back to it while `ingress.traefik` is absent; "Move" writes `ingress.traefik` with the same values |
+| (inherited) | `ingress.nginx.*` on Traefik releases | read only while `ingress.traefik` is absent | Traefik falls back to it until the operator migrates the key (v0.4.2); a change in the plugin writes `ingress.traefik` |
+| Ingress class | Ingress `spec.ingressClassName`, annotations; Service annotation `traefik.ingress.kubernetes.io/service.serversscheme` | edit (Switch to traefik) | Traefik serves the Ingress as class traefik (5.8) |
 | Cilium ingress IP | `ingress.cilium.dedicatedIP` | edit | MetalLB pool only; Cilium's ingress controller is not enabled by the operator (O-6) |
 | L2 announcements | `networking.cni.cilium.l2announcements` | edit (Cilium) | Cilium hook values |
 | Hubble | `networking.cni.cilium.hubble` | edit (Cilium) | Cilium hook values (relay + UI) |
@@ -348,7 +361,6 @@ release's spec version) in one table, `src/model/capabilities.ts`:
 | Capability | Since | Effect in the plugin |
 |---|---|---|
 | `clusterUpgrade` | v0.4.0 (k4all v2.4.0) | explains a missing ClusterUpgrade API (the API itself is detected by discovery) |
-| `metallbReadsTraefikIP` | v0.4.0 (k4all-operator#7) | no mirror of the Traefik IP into the nginx key |
 | `cniSwitch` | v0.5.0 | CNI select in Networking, change reviewed as dangerous |
 | `ovsBridgeToggle` | v0.5.0 | OVS bridge switch in Features, change reviewed as dangerous |
 
@@ -503,13 +515,9 @@ Apply sends the same patch without `dryRun`.
   v0.3.0 read a missing value as false; from v0.4.0 the CRD defaults it to
   true. Explicit values mean the same to both.
 - Setting the ingress IP materializes the controller's key with both fields.
-- **MetalLB mirror** (operators before v0.4.0 only): they built the MetalLB
-  address pool from `ingress.nginx.dedicatedIP` and `ingress.cilium.dedicatedIP`
-  only, so a Traefik IP set alone would get a Service stuck in Pending. With
-  such an operator the plugin also writes the Traefik IP to
-  `ingress.nginx.dedicatedIP` when that key is empty or held the previous
-  Traefik IP, says so under the field, and leaves it out of the change list.
-  From v0.4.0 (`metallbReadsTraefikIP`) it does not.
+- On Traefik releases nothing is written to `ingress.nginx` (0.1.0 mirrored
+  the Traefik IP there for operators before v0.4.0, which the plugin never
+  meets: it ships from v2.4.0 with v0.4.0).
 - Settings that are only for Cilium clusters are only offered there; a Cilium
   ingress IP on a Calico cluster is a warning.
 
@@ -548,6 +556,60 @@ The UI words the Removed caveat as "a later release can set it back"; the
 server-side-apply detail comes from reading `k4all-upgrade` and should be
 confirmed on the lab cluster.
 
+### 5.7 Keeping the pages live (0.1.1)
+
+During an upgrade the API server restarts several times (kubeadm upgrade,
+the reboot) and, on a single node, Headlamp's own pod is recreated.
+Headlamp's list watches then stop without an error, and its multiplexed
+WebSocket reconnects only when something subscribes again: the page froze
+until F5 (lab, v2.7.0 upgrade of a single node). Every k4all route is
+therefore wrapped in `K4allLive` (`src/api/live.tsx`, logic in
+`src/model/live.ts`):
+
+- ClusterConfig, ReleaseManifest, NodeConfig, ClusterUpgrade and Node lists
+  are watched (each watch is a small component keyed by a counter) and
+  polled with plain list requests: every 10 s while an upgrade is active
+  (Progressing or Paused, or a node outside Done/Pending) or the cluster
+  does not answer, every 60 s otherwise.
+- Per object the copy with the newer resourceVersion wins (numbers; the
+  later copy when not comparable); creations and deletions follow the newer
+  list. A failed watch or poll keeps the last good copy on screen.
+- The watches are remounted, which subscribes them again, after a watch
+  error that a new watch can fix (not 401/403/404, and not while the
+  cluster is down), when the cluster answers again, when the poll found
+  them behind twice in a row, and on Refresh; at most every 10 s.
+- A watch reports its list only when names or resourceVersions change.
+- Upgrades and Overview show "Updated N s ago" with Refresh, and "The
+  cluster is not answering (for N s) … retrying every 10 s" while polls
+  fail with network errors or 5xx. When Headlamp's pod comes back, the next
+  poll succeeds and the watches are remounted: no reload needed, unless
+  Headlamp itself asks to log in again.
+
+### 5.8 Switching an Ingress from nginx to traefik (0.1.1)
+
+`src/model/ingressMigration.ts`, applied by "Switch to traefik":
+
+- `spec.ingressClassName: traefik`; the `kubernetes.io/ingress.class`
+  annotation is removed (the API server refuses both).
+- `nginx.ingress.kubernetes.io/force-ssl-redirect` or `ssl-redirect`
+  `"true"` → `traefik.ingress.kubernetes.io/router.middlewares:
+  traefik-redirect-https@kubernetescrd` (appended to existing middlewares,
+  once; the Middleware is created by k4all); `"false"` is dropped.
+- `backend-protocol: HTTPS` → `traefik.ingress.kubernetes.io/service.serversscheme:
+  https` on every backend Service (merge patch on that key); `HTTP` is
+  dropped.
+- Every other `nginx.ingress.kubernetes.io/*` annotation (including other
+  backend protocols) stays and has no effect any more: listed as a warning.
+- Helm (managed-by label, release annotations, chart label) or Argo CD
+  (tracking annotation, instance label): warning that the change must be
+  made at the source, or the next upgrade or sync reverts it.
+- Kept annotations or a managing tool require ticking "I understand"
+  before applying. A TLS Ingress without a redirect annotation gets a note:
+  ingress-nginx redirected it to HTTPS by default, Traefik does not.
+- The Ingress patch is a JSON Patch guarded by its generation; everything
+  is dry-run first, then the Services and the Ingress are written
+  (fieldManager k4all-headlamp).
+
 ## 6. RBAC
 
 | Action | Verbs |
@@ -556,6 +618,7 @@ confirmed on the lab cluster.
 | Save settings / overrides | `patch` on `clusterconfigs` |
 | Management, re-apply | `patch` on `releasemanifests` |
 | Start, pause, resume, stop, retry upgrades; upgrade settings | `patch` on `clusterupgrades`, name `k4all` |
+| Ingresses on the nginx class | `list,watch` on `ingresses` (`networking.k8s.io`); "Switch to traefik": `patch` on `ingresses`, and on `services` for backend-protocol HTTPS |
 
 The plugin asks the API server (SelfSubjectAccessReview via
 `getAuthorization('patch')`, with the name `k4all` for the ClusterUpgrade)
@@ -586,7 +649,8 @@ reboots every node, so it is a role of its own). k4all's default login
 | Component failed | Overview banner, attention list, full message on the detail page |
 | Dry run rejected (400/422) | message from the API server; unknown fields get "upgrade k4all first" |
 | Conflict | rebase or conflict table (5.3) |
-| API unreachable / 5xx | "could not be reached, try again" with Retry; during a reboot of the node that runs Headlamp the review says this will happen |
+| API unreachable / 5xx | writes: "could not be reached, try again" with Retry; pages: the last known state with "The cluster is not answering … retrying", polls every 10 s, watches remounted when it answers again (5.7) |
+| Watch silently stopped (API server restarted) | the poll shows newer data; after two polls ahead the watches are remounted (5.7) |
 | Session expired (401) | Headlamp's own logout flow; hint in the dialog |
 | Component name in URL not found | warning with a link back to the list |
 
@@ -636,7 +700,9 @@ tagged, if possible).
    the active CNI, feature-gated components (use the switch) and components
    another active one depends on cannot be removed from the plugin; others need
    the name typed.
-7. **MetalLB mirror** of the Traefik IP only with operators before v0.4.0 (5.4).
+7. **No nginx key on Traefik releases** (user decision for 0.1.1): no
+   MetalLB mirror, no "move" button; inherited values are shown and the
+   first change writes `spec.ingress.traefik`.
 8. **Plain text editor for YAML** (monospace TextField) instead of Monaco: no
    dependency on how Headlamp configures the Monaco loader, works offline;
    validation gives line numbers. Monaco is a later nicety.
@@ -660,6 +726,12 @@ tagged, if possible).
     nodes on two releases until the next start.
 18. **`k4all-upgrader` is a role of its own** in `rbac.yaml`, limited to the
     ClusterUpgrade `k4all`.
+19. **Watch plus poll, not poll only** (0.1.1): the watch keeps the page
+    instant in the normal case; the poll is the safety net, every 60 s when
+    nothing runs.
+20. **Switching an Ingress applies at once** after its own review, outside
+    the settings draft; Helm and Argo CD are only detected and warned about,
+    the plugin does not touch their sources.
 
 ## 10. Code layout, build, tests
 
@@ -674,14 +746,17 @@ plugin/
     patch.ts                        diff → JSON Patch, preconditions, applyOps, query
     rebase.ts                       three-way rebase and conflict resolution
     editor.ts                       edit-session reducer (base / latest / draft)
-    settings.ts                     draft setters: ingress controller, Traefik fallback,
-                                    mirror, overrides
+    settings.ts                     draft setters: ingress controller, Traefik
+                                    (inherited values), overrides
     fields.ts                       field catalog: labels, help, live/install/node, why,
                                     liveWith capability
     validation.ts, net.ts           IP/CIDR, devices, helmArgs, YAML values
     changes.ts                      change list, consequences, re-applied components
     components.ts, semver.ts        activation (port of shouldInstall), rows,
                                     upgrade path (port of UpgradeStep), guards
+    live.ts                         watch/poll merge by resourceVersion, poll
+                                    interval, when to remount the watches
+    ingressMigration.ts             nginx-class Ingresses and their move to traefik
     upgrades.ts                     path (operator's), view, conditions, durations,
                                     node order, drain timer, estimate, guidance by
                                     reason, ClusterUpgrade writes
@@ -690,7 +765,8 @@ plugin/
     textDiff.ts                     line diff, folding, YAML dump
     errors.ts                       API error classification
   src/icons.ts                      offline registration of the mdi icons used
-  src/api/                          KubeObject classes, discovery, hooks, writes
+  src/api/                          KubeObject classes, discovery, K4allLive (live
+                                    data for every route), hooks, writes
   src/components/                   pages and widgets (MUI + Headlamp)
     upgrades/                       Upgrades page, review and settings dialogs,
                                     progress, release list, Overview card, write flow
@@ -702,10 +778,13 @@ npm ci
 npm run lint && npm run tsc && npm test && npm run build   # dist/main.js
 ```
 
-Tests: 239 (vitest, jsdom). The model tests cover patch generation and
+Tests: 277 (vitest, jsdom). The model tests cover patch generation and
 application, preconditions, rebase/conflicts, the editor reducer, the
 ingress controller of the release (ingress-nginx and Traefik), Traefik
-fallback/mirror/exposure, capabilities, overrides form round-trips
+inherited values and exposure, capabilities, the live data (watch or poll
+by resourceVersion, membership, poll interval by phase, remounts), the move
+of nginx-class Ingresses (class, redirect, backend protocol, kept
+annotations, Helm/Argo CD, TLS note), Removed components hidden, overrides form round-trips
 (including Helm nulls), validation (IPs, CIDRs, devices, helmArgs, YAML),
 operator parity (`shouldInstall` of v0.4.0, `UpgradeStep`, semver), change
 descriptions and re-applied components, health and node rows, error
@@ -722,7 +801,11 @@ release list (including an unreadable graph and a release without a path),
 the review dialog (path, order, drain, downtime, single node, the
 acknowledgement, re-checking with new drain options), the progress panel
 (order, drain timer, durations, pause, stop, retry, HOLD and ABANDONED
-guidance), the states without ClusterUpgrade and the Overview card. The two save flows run against a fake
+guidance), the states without ClusterUpgrade, the Overview card, the
+freshness bar, and the nginx-class Ingress list and its switch (confirmation,
+dry runs before writes, Services before the Ingress). K4allLive runs against
+fake watches and a fake API: a poll filling a missed update, the intervals,
+remounts after an error, after falling behind, after an outage, refresh. The two save flows run against a fake
 API server applying the patches (dry run then apply, rebase or rebuild on a
 newer version, conflict then "keep mine", late results after closing, API
 errors, pause with a conflict retried once, the retry annotation), and the
