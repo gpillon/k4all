@@ -69,3 +69,15 @@ releases:
       them (Calico, Cilium, cert-manager, KubeVirt, CDI). Cilium options become
       typed ClusterConfig fields. A minor because CRD upgrades cannot be undone
       with bootc rollback.
+
+  - version: v2.5.0
+    kind: minor
+    minFrom: v2.4.0
+    kubernetes: "1.35.10"
+    crio: "1.35"
+    fedora: 45
+    syncManifest: false
+    notes: >-
+      Base image moves from Fedora 43 to Fedora 45 (Fedora 43 reaches end of
+      life on 2026-12-02). Kubernetes and CRI-O are unchanged. The host etcd
+      package is gone: backups run etcdctl from the etcd image.

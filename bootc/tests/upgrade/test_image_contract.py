@@ -231,6 +231,34 @@ def test_topolvm_controller_rolls_out_on_a_single_node():
     assert rolling["maxSurge"] == 0 and rolling["maxUnavailable"] == 1
 
 
+def test_etcd_tools_come_from_the_etcd_image():
+    # The image has no etcd package from Fedora 45 on.
+    install = read(BOOTC, "Containerfile").split("dnf clean all")[0]
+    assert not re.search(r"^\s+etcd\b", install, re.M)
+    assert "--entrypoint /usr/local/bin/etcdctl" in read(BIN, "k4all-backup.sh")
+    restore = read(BIN, "k4all-restore.sh")
+    assert "--entrypoint /usr/local/bin/etcdutl" in restore
+
+
+def test_fedora_repos_are_visible_to_the_iso_build():
+    # bootc-image-builder reads /etc/yum.repos.d only; Fedora 45 ships its
+    # repo files in /usr/share/dnf5/repos.d.
+    text = read(BOOTC, "Containerfile")
+    assert "/usr/share/dnf5/repos.d/*.repo" in text
+    # Relative: the builder mounts the image under another root, so an
+    # absolute link resolves outside it (the ISO build then fails again).
+    assert 'ln -s "../../usr/share/dnf5/repos.d/$b" "/etc/yum.repos.d/$b"' in text
+
+
+def test_crio_finds_the_container_policy_on_fedora_45():
+    # containers-common 0.69 (Fedora 45) ships policy.json and registries.conf
+    # under /usr/share/containers; CRI-O only reads /etc/containers/policy.json
+    # and every pull failed after the F43 -> F45 hop.
+    text = read(BOOTC, "Containerfile")
+    assert "for f in policy.json registries.conf" in text
+    assert 'ln -s "../../usr/share/containers/$f" "/etc/containers/$f"' in text
+
+
 def test_lvm_setup_keeps_thick_volumes():
     script = read(BIN, "setup-lvm.sh")
     assert "lvs --noheadings -o lv_name vg_data" in script
