@@ -41,6 +41,7 @@ import {
   UpgradeView,
   upgradeView,
 } from '../../model/upgrades';
+import { LiveStatusBar } from '../common/live';
 import { Centered, K4allGate } from '../common/states';
 import { Mono, PageHeader, Panel, TonePill } from '../common/ui';
 import { CommandLine, NodeOrder } from './parts';
@@ -374,6 +375,7 @@ function UpgradesContent(props: {
           </>
         }
       />
+      <LiveStatusBar />
       {!props.checking && !canPatch && (
         <Alert severity="info" icon={<Icon icon="mdi:eye-outline" />} sx={{ mb: 2 }}>
           You can follow upgrades but not start or change them: your user lacks <Mono>patch</Mono>{' '}

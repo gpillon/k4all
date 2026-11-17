@@ -10,6 +10,7 @@ import {
   registerSidebarEntry,
 } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
+import { K4allLive } from './api/live';
 import { ComponentDetailPage } from './components/components/ComponentDetailPage';
 import { ComponentsPage } from './components/components/ComponentsPage';
 import { NodeSection } from './components/nodes/NodeSection';
@@ -54,7 +55,11 @@ registerRoute({
   exact: true,
   name: 'k4all-overview',
   sidebar: 'k4all-overview',
-  component: () => <OverviewPage />,
+  component: () => (
+    <K4allLive>
+      <OverviewPage />
+    </K4allLive>
+  ),
 });
 
 registerRoute({
@@ -62,7 +67,11 @@ registerRoute({
   exact: true,
   name: 'k4all-upgrades',
   sidebar: 'k4all-upgrades',
-  component: () => <UpgradesPage />,
+  component: () => (
+    <K4allLive>
+      <UpgradesPage />
+    </K4allLive>
+  ),
 });
 
 registerRoute({
@@ -70,7 +79,11 @@ registerRoute({
   exact: true,
   name: 'k4all-settings',
   sidebar: 'k4all-settings',
-  component: () => <SettingsPage />,
+  component: () => (
+    <K4allLive>
+      <SettingsPage />
+    </K4allLive>
+  ),
 });
 
 registerRoute({
@@ -78,7 +91,11 @@ registerRoute({
   exact: true,
   name: 'k4all-components',
   sidebar: 'k4all-components',
-  component: () => <ComponentsPage />,
+  component: () => (
+    <K4allLive>
+      <ComponentsPage />
+    </K4allLive>
+  ),
 });
 
 registerRoute({
@@ -86,7 +103,11 @@ registerRoute({
   exact: true,
   name: 'k4all-component',
   sidebar: 'k4all-components',
-  component: () => <ComponentDetailPage />,
+  component: () => (
+    <K4allLive>
+      <ComponentDetailPage />
+    </K4allLive>
+  ),
 });
 
 registerDetailsViewSection(({ resource }: DetailsViewSectionProps) => {
