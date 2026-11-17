@@ -220,3 +220,97 @@ export interface NodeLike {
     };
   };
 }
+
+// --------------------------------------------------------------- ClusterUpgrade
+
+/** The only ClusterUpgrade; k4all-operator (v0.4.0+) creates it with an empty spec. */
+export const CLUSTER_UPGRADE_NAME = 'k4all';
+/** On the ClusterUpgrade: retry the nodes whose hop failed. The operator removes it. */
+export const RETRY_ANNOTATION = 'k4all.magesgate.com/retry';
+/** The graph k4all-upgrade reads on the nodes, used when spec.graphUrl is empty. */
+export const DEFAULT_UPGRADE_GRAPH_URL =
+  'https://github.com/gpillon/k4all/releases/latest/download/upgrade-graph.json';
+
+/** Node annotations of the protocol between k4all-operator and k4all-upgrade. */
+export const NODE_RELEASE_ANNOTATION = 'k4all.magesgate.com/release';
+export const NODE_TYPE_ANNOTATION = 'k4all.magesgate.com/node-type';
+export const NODE_UPGRADE_PHASE_ANNOTATION = 'k4all.magesgate.com/upgrade-phase';
+export const NODE_UPGRADE_MESSAGE_ANNOTATION = 'k4all.magesgate.com/upgrade-message';
+export const NODE_UPGRADE_TARGET_ANNOTATION = 'k4all.magesgate.com/upgrade-target';
+
+export type ClusterUpgradePhase = 'Idle' | 'Paused' | 'Progressing' | 'Succeeded' | 'Failed';
+export type HopPhase = 'Done' | 'InProgress' | 'Pending';
+export type NodeUpgradePhase = 'Pending' | 'Draining' | 'Upgrading' | 'Done' | 'Failed';
+
+export interface DrainSpec {
+  /** Minutes to wait for the evictions (default 30). */
+  timeoutMinutes?: number;
+  /** Run the hop anyway when the drain times out. */
+  continueOnTimeout?: boolean;
+}
+
+export interface ClusterUpgradeSpec {
+  /** Release to bring every node to; empty means none. Lowering or clearing stops after the current node. */
+  targetRelease?: string;
+  /** Upgrade graph; empty means the k4all release graph on GitHub. */
+  graphUrl?: string;
+  /** Stops the upgrade before the next node. */
+  paused?: boolean;
+  drain?: DrainSpec;
+}
+
+export interface Hop {
+  release: string;
+  kind?: 'minor' | 'patch' | string;
+  phase: HopPhase | string;
+}
+
+export interface ReleaseInfo {
+  version: string;
+  kind?: 'minor' | 'patch' | string;
+  /** kubelet version in the image, e.g. "1.36.4". */
+  kubernetes?: string;
+  fedora?: number;
+  notes?: string;
+  /** Not in the v0.4.0 API (proposed): the oldest release that may hop to this one. */
+  minFrom?: string;
+  /** Not in the v0.4.0 API (proposed): CRI-O minor of the image. */
+  crio?: string;
+}
+
+export interface NodeUpgradeStatus {
+  name: string;
+  /** bootstrap, control or worker: the upgrade order. */
+  role?: string;
+  /** Release the node runs (its last committed release). */
+  release?: string;
+  phase: NodeUpgradePhase | string;
+  /** k4all-upgrade's phase on the node: PREFLIGHT ... COMMIT, HOLD, ABANDONED. */
+  hostPhase?: string;
+  message?: string;
+  drainStartedAt?: string;
+}
+
+export interface ClusterUpgradeStatus {
+  phase?: ClusterUpgradePhase | string;
+  message?: string;
+  /** The oldest release among the nodes. */
+  currentRelease?: string;
+  /** Release of the hop in progress. */
+  currentHop?: string;
+  path?: Hop[];
+  /** Releases newer than currentRelease that targetRelease can name, oldest first. */
+  availableReleases?: ReleaseInfo[];
+  nodes?: NodeUpgradeStatus[];
+  graphUrl?: string;
+  observedGeneration?: number;
+  conditions?: Condition[];
+}
+
+export interface ClusterUpgradeObject {
+  apiVersion?: string;
+  kind?: string;
+  metadata: ObjectMeta;
+  spec?: ClusterUpgradeSpec;
+  status?: ClusterUpgradeStatus;
+}

@@ -8,14 +8,17 @@ import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 import { escapePointerToken } from '../model/objects';
 import { annotationMergePatch, JsonPatchOp, precondition, writeQuery } from '../model/patch';
 import {
+  CLUSTER_UPGRADE_NAME,
   ClusterConfigObject,
+  ClusterUpgradeObject,
   ComponentManagement,
   FORCE_RESYNC_ANNOTATION,
   ReleaseManifestObject,
+  RETRY_ANNOTATION,
 } from '../model/types';
-import { apiPath } from './resources';
+import { apiPath, K4allResource } from './resources';
 
-type Resource = 'clusterconfigs' | 'releasemanifests';
+type Resource = K4allResource;
 
 async function jsonPatch<T>(
   resource: Resource,
@@ -72,4 +75,34 @@ export function setManagement(
   const pointer = `/spec/components/${escapePointerToken(component)}/management`;
   const ops: JsonPatchOp[] = [precondition(rm), { op: 'add', path: pointer, value: management }];
   return jsonPatch('releasemanifests', rm.metadata.name, ops, false);
+}
+
+/** JSON Patch on the ClusterUpgrade "k4all" (spec writes, guarded by its generation). */
+export function patchClusterUpgrade(
+  ops: JsonPatchOp[],
+  dryRun: boolean
+): Promise<ClusterUpgradeObject> {
+  return jsonPatch<ClusterUpgradeObject>('clusterupgrades', CLUSTER_UPGRADE_NAME, ops, dryRun);
+}
+
+export function getClusterUpgrade(): Promise<ClusterUpgradeObject> {
+  return ApiProxy.request(
+    apiPath('clusterupgrades', CLUSTER_UPGRADE_NAME)
+  ) as Promise<ClusterUpgradeObject>;
+}
+
+/**
+ * Asks the operator to retry the nodes whose hop failed: sets the retry
+ * annotation (any value; a timestamp here), which the operator consumes. A
+ * merge patch on that key only, like force-resync.
+ */
+export function retryClusterUpgrade(at: Date = new Date()): Promise<ClusterUpgradeObject> {
+  return ApiProxy.request(
+    `${apiPath('clusterupgrades', CLUSTER_UPGRADE_NAME)}?${writeQuery({ dryRun: false })}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(annotationMergePatch(RETRY_ANNOTATION, at.toISOString())),
+      headers: { 'Content-Type': 'application/merge-patch+json', Accept: 'application/json' },
+    }
+  ) as Promise<ClusterUpgradeObject>;
 }
