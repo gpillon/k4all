@@ -47,7 +47,7 @@ The 2.x upgrade path:
 | v2.4.0 | first ReleaseManifest sync: k4all-operator v0.4.1 (ClusterUpgrade: from here every upgrade can run from the Headlamp plugin), the k4all Headlamp plugin, then every cluster component pinned and updated (intermediate versions where upstream needs them) |
 | v2.5.0 | Fedora 45 |
 | v2.6.0 | Traefik replaces ingress-nginx; k4all's routes and `spec.ingress` move to Traefik |
-| v2.7.0 | Kubernetes 1.36 |
+| v2.7.0 | Kubernetes 1.36; ingress-nginx leaves the release manifest (v2.6.0 removed it from every cluster) |
 | v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
 | v2.9.0 | Kubernetes 1.37 |
 
@@ -247,3 +247,6 @@ seconds; the Traefik image ships with the node image.
 - Kickstart: `--ingress-traefik-ip`, `--no-ingress-traefik` and
   `--ingress-default=traefik|cilium`. The old `--ingress-nginx*` options are
   still accepted.
+- From v2.7.0 the release manifest no longer lists `ingress-nginx`. Every
+  cluster has passed v2.6.0, a mandatory stop, which uninstalled it; the
+  cluster's ReleaseManifest keeps its `management: Removed` entry.
