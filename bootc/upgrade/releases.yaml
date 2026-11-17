@@ -98,3 +98,17 @@ releases:
       Traefik's Ingress-NGINX provider until they move. Routes are down for
       a few seconds during the sync. A minor because it replaces a platform
       component.
+
+  - version: v2.7.0
+    kind: minor
+    minFrom: v2.6.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    syncManifest: false
+    notes: >-
+      Kubernetes 1.35 to 1.36 (kubeadm upgrade before the reboot) and CRI-O
+      1.36. Before kubeadm 1.36, k4all-upgrade removes the flex-volume flag
+      from the kubeadm-config ConfigMap (kubeadm 1.36 no longer mounts the
+      flex-volume directory into the controller manager). The components of
+      v2.4.0 and Traefik already support 1.36.
