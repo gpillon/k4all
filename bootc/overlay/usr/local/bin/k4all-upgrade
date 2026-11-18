@@ -1031,7 +1031,8 @@ def save_state(host, state):
     host.write(state_path(), json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
-def new_state(target, mode, path, current, image):
+def new_state(target, mode, path, current, image, previous=None):
+    """A new plan. The history of the previous state goes on in it."""
     return {
         "schema": 1,
         "agent": {"version": TOOL_VERSION, "capabilities": CAPABILITIES},
@@ -1044,7 +1045,7 @@ def new_state(target, mode, path, current, image):
         "phase": "IDLE",
         "rollbacks": 0,
         "hold": None,
-        "history": [],
+        "history": list((previous or {}).get("history") or []),
     }
 
 
@@ -2920,7 +2921,7 @@ def cmd_run(host, cfg, args, upgrader):
         if answer.strip().lower() not in ("y", "yes"):
             return 1
     previous = state
-    state = new_state(args.to, "run", path, current, cfg["image"])
+    state = new_state(args.to, "run", path, current, cfg["image"], previous)
     save_state(host, state)
     upgrader.drive(state)
     if state.get("waiting") and state.get("phase") == "PREFLIGHT":
@@ -2958,7 +2959,7 @@ def cmd_auto(host, cfg, args, upgrader):
     path = auto_allowed(path, current, cfg["autoAllow"])
     if not path:
         return 0
-    state = new_state(None, "auto", path, current, cfg["image"])
+    state = new_state(None, "auto", path, current, cfg["image"], state)
     save_state(host, state)
     upgrader.drive(state)
     return 0
@@ -3179,8 +3180,7 @@ def cmd_agent(host, cfg, args, upgrader):
 
 
 def _agent_start_hop(host, cfg, upgrader, old, current, rel):
-    state = new_state(rel.version, "operator", [rel], current, cfg["image"])
-    state["history"] = list((old or {}).get("history") or [])
+    state = new_state(rel.version, "operator", [rel], current, cfg["image"], old)
     host.log("agent: the k4all-operator asks for %s -> %s" % (current, rel.version))
     save_state(host, state)
     upgrader.drive(state)

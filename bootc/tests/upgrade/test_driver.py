@@ -79,6 +79,30 @@ def test_patch_hop_stages_reboots_and_commits(make_host):
     assert ku.ANNOTATION_IN_PROGRESS not in host.annotations
 
 
+# VM 953: after `run --to v2.4.0` the v2.2.4 -> v2.3.0 entry was gone from
+# state.json; the agent already kept it.
+def test_a_new_run_keeps_the_history(make_host):
+    host = make_host(version="v2.2.4", kubernetes="1.35.6")
+    write_graph(host, STREAM_23)
+    assert run_cli(host, "run", "--to", "v2.3.0", "--yes") == 0
+    finish(host)
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    st = finish(host)
+    assert st["current"] == "v2.3.1"
+    assert [(h["from"], h["to"], h["result"]) for h in st["history"]] == [
+        ("v2.2.4", "v2.3.0", "ok"), ("v2.3.0", "v2.3.1", "ok")]
+
+
+def test_the_timer_keeps_the_history(make_host):
+    host = make_host(version="v2.2.4", kubernetes="1.35.6")
+    write_graph(host, STREAM_23)
+    run_cli(host, "run", "--to", "v2.3.0", "--yes")
+    finish(host)
+    assert run_cli(host, "auto") == 0          # the patch, in the window
+    st = finish(host)
+    assert [h["to"] for h in st["history"]] == ["v2.3.0", "v2.3.1"]
+
+
 def test_backup_runs_before_staging(make_host):
     host = make_host(version="v2.3.0", kubernetes="1.35.10")
     write_graph(host, STREAM_23)
