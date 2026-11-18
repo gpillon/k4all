@@ -10,6 +10,7 @@ check-ip.sh
 if [ $? -eq 0 ]; then
     echo "At least one IP is available. Proceeding with LoadBalancer Service and ConfigMap update..."
 
+    # shellcheck source=SCRIPTDIR/../bootstrap-control/control-plane-utils
     source /var/opt/k4all/bin/control-plane-utils
 
     # Check if the service already exists

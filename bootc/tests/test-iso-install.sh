@@ -309,6 +309,7 @@ info "Serial log: $INSTALL_LOG (tail -f it in another shell to watch progress)"
 # the VM back into the same installer (via -kernel/-initrd) instead of
 # exiting and losing the debug session.
 NOREBOOT_FLAG=(-no-reboot)
+# shellcheck disable=SC2054 # qemu option lists use commas
 NET_ARGS=(-netdev user,id=net0)
 [ "$NO_AUTO_REBOOT" = "true" ] && NOREBOOT_FLAG=()
 # With NO_AUTO_REBOOT, also forward SSH_PORT -> guest:22 — the debug console

@@ -12,6 +12,7 @@ extract_ips_from_range() {
     start_ip=$(echo $start | awk -F '.' '{ print $1*256*256*256 + $2*256*256 + $3*256 + $4 }')
     end_ip=$(echo $end | awk -F '.' '{ print $1*256*256*256 + $2*256*256 + $3*256 + $4 }')
     for ip in $(seq $start_ip $end_ip); do
+        # shellcheck disable=SC2046 # echo joins the four octets on one line
         echo $(echo -n $(($ip>>24)) ; echo -n .$(($ip>>16&255)) ; echo -n .$(($ip>>8&255)) ; echo .$(($ip&255)))
     done
 }

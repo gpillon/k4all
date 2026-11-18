@@ -3,6 +3,7 @@
 # Initialize variables
 mode=""
 debug=0
+# shellcheck disable=SC2034 # unused, kept
 join_time=""
 
 function print_help {
@@ -101,6 +102,7 @@ else
             sleep 5  # Check every 10 seconds for a new node
             all_nodes=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
             for node in $all_nodes; do
+                # shellcheck disable=SC2076 # a literal substring match
                 if [[ ! "$current_nodes" =~ "$node" ]]; then
                     echo "New node detected: $node"
                     new_node_detected=true
@@ -111,6 +113,7 @@ else
 
                     # Delete the join token now that the new node has joined
                     echo "Deleting join token..."
+                    # shellcheck disable=SC2046 # the token is one word
                     kubeadm token delete $(echo $JOIN_COMMAND | awk '{print $5}')  # Assumes the token is the third element in JOIN_COMMAND
 
                     break

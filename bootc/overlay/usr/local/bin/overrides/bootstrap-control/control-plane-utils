@@ -2,6 +2,7 @@
 
 source /usr/local/bin/k4all-utils
 
+# shellcheck disable=SC2034 # for the scripts that source this file
 CURRENT_IP=$(ip addr show ovs-bridge 2>/dev/null | grep -v secondary | grep -Po 'inet \K[\d.]+' || hostname -I | awk '{print $1}')
 K8S_CONFIG_FILE="/etc/k8s-config.yaml"
 

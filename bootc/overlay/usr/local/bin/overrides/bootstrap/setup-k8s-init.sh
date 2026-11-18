@@ -8,6 +8,7 @@ fi
 
 source /usr/local/bin/k4all-utils
 
+# shellcheck disable=SC2034 # unused, kept
 K4ALL_CONFIG="/etc/k4all-config.json"
 K8S_CONFIG="/etc/k8s-config.yaml"
 
@@ -49,6 +50,7 @@ fi
 if [ -f "$K4ALL_CONFIG_FILE" ]; then
   POD_NET=$(yq e '.spec.cluster.podNetwork // "10.100.0.1/18"' "$K4ALL_CONFIG_FILE")
   SVC_NET=$(yq e '.spec.cluster.serviceNetwork // "10.96.0.0/16"' "$K4ALL_CONFIG_FILE")
+  # shellcheck disable=SC2034 # for the commented-out cilium block below
   CNI=$(yq e '.spec.networking.cni.type // "calico"' "$K4ALL_CONFIG_FILE")
 
   # if [ "$CNI" == "cilium" ]; then

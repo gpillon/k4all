@@ -1,6 +1,7 @@
 name: Checks
 
-# The tests of the upgrade tool and of the Anaconda addon:
+# The tests of the upgrade tool and of the Anaconda addon, and the linters
+# of .pre-commit-config.yaml (shellcheck, ruff):
 # - on every pull request, with no path filter: the job is a required
 #   check of main (branch protection), and a required check that does not
 #   run blocks the merge;
@@ -30,8 +31,8 @@ jobs:
           # when a tag is missing.
           fetch-depth: 0
 
-      - name: Install test dependencies
-        run: python3 -m pip install --user pytest pyyaml
+      - name: Install test and lint dependencies
+        run: python3 -m pip install --user pytest pyyaml pre-commit
 
       - name: Install yq (the version the image ships)
         # test_ingress_scripts.py runs the node scripts with mikefarah yq v4;
@@ -52,3 +53,8 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: k4all-anaconda-addon
         run: python3 -m pytest -q tests
+
+      - name: Lint shell and Python (shellcheck, ruff)
+        # The hooks of .pre-commit-config.yaml, on every tracked file.
+        if: ${{ !cancelled() }}
+        run: python3 -m pre_commit run --all-files --show-diff-on-failure

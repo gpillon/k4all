@@ -22,8 +22,10 @@ setup_kubeconfig_for_user "core" "/home/core"
 
 # Verify join
 echo "Node has joined the cluster as a control plane node. Verifying..."
+# shellcheck disable=SC2046 # hostnamectl prints one word
 kubectl get nodes | grep $(hostnamectl --static)
 
+# shellcheck disable=SC2046 # hostnamectl prints one word
 kubectl --kubeconfig=/etc/kubernetes/admin.conf taint nodes $(hostnamectl --static) node-role.kubernetes.io/control-plane:NoSchedule-
 
 # On an HA kube-vip cluster this control plane holds the VIP too: kube-vip's
