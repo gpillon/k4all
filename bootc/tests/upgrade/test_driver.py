@@ -642,6 +642,48 @@ def test_a_failing_pod_stop_does_not_stop_the_reboot(make_host):
     assert any("before the reboot: systemctl stop exited 1" in m for m in host.logs)
 
 
+# VM 953: "before the reboot: sh -c exited 123: ... failed to remove netns
+# path: unlinkat /var/run/netns/...: device or resource busy" on every hop. It
+# is xargs saying that some `crictl stopp` failed; the reboot ends those pods.
+NETNS_BUSY = ('time="2026-11-18T08:20:44Z" level=fatal msg="stopping the pod '
+              'sandbox \\"5eac46e3\\": rpc error: code = Unknown desc = failed '
+              'to remove netns path: unlinkat /var/run/netns/5eac46e3-a8e6-413e-'
+              'bf1a-7e0ad8c19ea8: device or resource busy"')
+
+
+def _pod_stop_answers(host, rc, stderr):
+    real = host._dispatch
+
+    def answer(argv, input_text):
+        if argv[:2] == ["sh", "-c"] and "stopp" in argv[2]:
+            host.pods_stopped += 1
+            return Proc(returncode=rc, stderr=stderr)
+        return real(argv, input_text)
+    host._dispatch = answer
+
+
+def test_pods_that_do_not_stop_cleanly_are_only_a_note(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    _pod_stop_answers(host, 123, NETNS_BUSY)
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert host.reboots == 1
+    note, = [m for m in host.logs if m.startswith("before the reboot:")]
+    assert note.startswith("before the reboot: some pods did not stop cleanly; "
+                           "the reboot ends them (last crictl message: ")
+    assert "device or resource busy" in note and "exited" not in note
+
+
+def test_a_pod_stop_that_cannot_run_still_says_how_it_exited(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    _pod_stop_answers(host, 127, "sh: crictl: command not found")
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert host.reboots == 1
+    assert "before the reboot: sh -c exited 127: sh: crictl: command not found" \
+        in host.logs
+
+
 def test_host_run_turns_a_timeout_into_a_failed_command(monkeypatch):
     def slow(argv, **kwargs):
         raise subprocess.TimeoutExpired(argv, kwargs["timeout"], output="half")

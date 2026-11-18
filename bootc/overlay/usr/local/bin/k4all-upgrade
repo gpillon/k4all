@@ -88,6 +88,8 @@ CRICTL = "crictl --runtime-endpoint unix:///run/crio/crio.sock"
 # containers' stop timeout. One crictl per pod, all at once.
 STOP_PODS_SCRIPT = (CRICTL + " pods -q --state ready | xargs -r -n 1 -P 0 "
                     + CRICTL + " --timeout=%ds stopp")
+# xargs: some of the commands it ran exited 1-125, here some `crictl stopp`.
+XARGS_SOME_FAILED = 123
 RELEASE_MANIFEST_NAME = "k4all"
 FIELD_MANAGER = "k4all-upgrade"
 OPERATOR_COMPONENT = "k4all-operator"
@@ -1871,7 +1873,15 @@ class Upgrader:
             except Exception as exc:  # pylint: disable=broad-except
                 host.log("before the reboot: %s: %s" % (argv[0], exc))
                 continue
-            if got.returncode != 0:
+            if argv[0] == "sh" and got.returncode == XARGS_SOME_FAILED:
+                # Some pods did not stop cleanly, mostly their network: the
+                # CNI cannot reach the apiserver any more, or the netns is
+                # still busy ("failed to remove netns path ... device or
+                # resource busy", VM 953). The reboot ends them anyway.
+                host.log("before the reboot: some pods did not stop cleanly; "
+                         "the reboot ends them (last crictl message: %s)"
+                         % (got.stderr or "").strip()[-160:])
+            elif got.returncode != 0:
                 host.log("before the reboot: %s exited %d: %s"
                          % (" ".join(argv[:2]), got.returncode,
                             (got.stderr or "").strip()[-200:]))
