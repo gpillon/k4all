@@ -32,33 +32,9 @@ jobs:
   # ------------------------------------------------------------------
   # 0. Unit and contract tests — gate every build
   # ------------------------------------------------------------------
+  # The same job as on pull requests: checks.yaml.
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@v4
-
-      - name: Install test dependencies
-        run: python3 -m pip install --user pytest pyyaml
-
-      - name: Install yq (the version the image ships)
-        # test_ingress_scripts.py runs the node scripts with mikefarah yq v4;
-        # without it those tests are skipped.
-        run: |
-          YQ_VERSION="$(sed -n 's/^ARG YQ_VERSION=//p' bootc/Containerfile)"
-          curl -fsSL -o "$RUNNER_TEMP/yq" \
-            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-          chmod +x "$RUNNER_TEMP/yq"
-          echo "K4ALL_TEST_YQ=$RUNNER_TEMP/yq" >> "$GITHUB_ENV"
-
-      - name: Upgrade tool, graph and image contract tests
-        run: python3 -m pytest -q bootc/tests/upgrade
-
-      - name: Anaconda addon tests
-        # From the addon directory: the tests import com_k4all_installer
-        # from there.
-        working-directory: k4all-anaconda-addon
-        run: python3 -m pytest -q tests
+    uses: ./.github/workflows/checks.yaml
 
   # ------------------------------------------------------------------
   # 1. Build the bootc OCI image (per arch) — always runs

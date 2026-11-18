@@ -1,0 +1,49 @@
+name: Checks
+
+# The tests of the upgrade tool and of the Anaconda addon:
+# - on every pull request, with no path filter: the job is a required
+#   check of main (branch protection), and a required check that does not
+#   run blocks the merge;
+# - before every build: build.yaml calls this workflow as its test job,
+#   on pushes to main and dev/bootc*, tags, the nightly run and dispatches.
+#
+# The branch protection names the job: "lint-and-test". Renaming it
+# needs the same change in the protection rule of main.
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    name: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: python3 -m pip install --user pytest pyyaml
+
+      - name: Install yq (the version the image ships)
+        # test_ingress_scripts.py runs the node scripts with mikefarah yq v4;
+        # without it those tests are skipped.
+        run: |
+          YQ_VERSION="$(sed -n 's/^ARG YQ_VERSION=//p' bootc/Containerfile)"
+          curl -fsSL -o "$RUNNER_TEMP/yq" \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          chmod +x "$RUNNER_TEMP/yq"
+          echo "K4ALL_TEST_YQ=$RUNNER_TEMP/yq" >> "$GITHUB_ENV"
+
+      - name: Upgrade tool, graph and image contract tests
+        run: python3 -m pytest -q bootc/tests/upgrade
+
+      - name: Anaconda addon tests
+        # From the addon directory: the tests import com_k4all_installer
+        # from there.
+        if: ${{ !cancelled() }}
+        working-directory: k4all-anaconda-addon
+        run: python3 -m pytest -q tests
