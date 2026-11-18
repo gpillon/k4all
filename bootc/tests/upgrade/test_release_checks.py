@@ -211,3 +211,26 @@ def test_the_graph_command_reads_the_registry_with_docker(tmp_path):
 def test_the_graph_command_fails_on_a_file_it_cannot_read(tmp_path):
     proc = run("graph", str(tmp_path / "missing.json"))
     assert proc.returncode == 1 and "cannot read" in proc.stderr
+
+
+# --- latest -------------------------------------------------------------------
+@pytest.mark.parametrize("version,tags,latest", [
+    ("v2.6.1", TAGS, "true"),
+    ("v2.6.2", TAGS + ["v2.6.2"], "true"),
+    # 18 Nov: v2.3.0's release job finished last and took Latest from v2.6.0
+    ("v2.3.0", TAGS, "false"),
+    ("v2.6.0", TAGS, "false"),
+    # GitHub never makes a prerelease Latest: neither the version nor a tag
+    ("v2.7.0-rc1", TAGS + ["v2.7.0-rc1"], "false"),
+    ("v2.6.2", TAGS + ["v2.6.2", "v2.7.0-rc1"], "true"),
+    # versions compare as semver, not as strings
+    ("v2.10.0", TAGS + ["v2.9.0", "v2.10.0"], "true"),
+    ("v2.9.0", TAGS + ["v2.9.0", "v2.10.0"], "false"),
+    # tags that are not v* release versions do not count
+    ("v2.6.1", TAGS + ["image-based", "9.9.9", "headlamp-plugin-v0.1.2"], "true"),
+    ("main", TAGS, "false"),
+])
+def test_only_the_highest_release_becomes_latest(version, tags, latest):
+    proc = run("latest", version, stdin=ls_remote(tags))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == latest

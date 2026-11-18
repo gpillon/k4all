@@ -390,6 +390,21 @@ jobs:
       - name: List release assets
         run: ls -lh isos/
 
+      - name: Is this the highest release?
+        # softprops makes Latest whichever release it writes last: on
+        # 18 Nov v2.3.0, whose release job finished last, took it from
+        # v2.6.0. Latest goes only to the highest v* release tag.
+        id: latest
+        if: steps.published.outputs.published == 'false'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          LATEST=$(git ls-remote --tags --refs origin \
+            | python3 bootc/upgrade/release-checks.py latest "$VERSION")
+          echo "make_latest=${LATEST}" >> "$GITHUB_OUTPUT"
+          echo "${VERSION} becomes Latest: ${LATEST}"
+
       - name: Create GitHub Release
         if: steps.published.outputs.published == 'false'
         uses: softprops/action-gh-release@v2
@@ -397,6 +412,7 @@ jobs:
           tag_name: ${{ needs.version.outputs.version }}
           name: "K4All ${{ needs.version.outputs.version }}"
           prerelease: ${{ needs.version.outputs.prerelease }}
+          make_latest: ${{ steps.latest.outputs.make_latest }}
           generate_release_notes: true
           body: |
             ## K4All ${{ needs.version.outputs.version }}

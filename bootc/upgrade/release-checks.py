@@ -5,6 +5,7 @@
     release-checks.py new-version VERSION < tags
     release-checks.py published VERSION < releases
     release-checks.py graph upgrade-graph.json
+    release-checks.py latest VERSION < tags
 
 new-version  Fails when VERSION is already a tag. A build with that
              version pushes the images of a published release again, and
@@ -21,23 +22,41 @@ graph        Fails when an entry of the upgrade graph has `digest`, or has
              v2.2.4 - v2.6.0 switches to image@digest on `digest` and then
              stops in HOLD at STAGE; build-graph.py writes indexDigest only,
              and this checks the file that is about to be uploaded.
+latest       Prints true when VERSION is a release (not a prerelease) and
+             no release tag is higher, false otherwise: the make_latest of
+             its GitHub release. softprops/action-gh-release otherwise
+             makes Latest whichever release it writes last.
 
 Tags come one per line on stdin, as `git tag -l` or `git ls-remote --tags`
 prints them. Releases come as `gh release list --json tagName,isDraft`
-prints them.
+prints them. Versions compare as k4all-upgrade compares them.
 """
 
 import argparse
+import importlib.machinery
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TOOL = os.path.join(HERE, "..", "overlay", "usr", "local", "bin", "k4all-upgrade")
 
 # What a multi-arch tag points to (docker manifest push writes the OCI one).
 INDEX_MEDIA_TYPES = (
     "application/vnd.oci.image.index.v1+json",
     "application/vnd.docker.distribution.manifest.list.v2+json",
 )
+
+
+def load_tool():
+    """k4all-upgrade, for its version rules (as build-graph.py loads it)."""
+    loader = importlib.machinery.SourceFileLoader("k4all_upgrade", TOOL)
+    spec = importlib.util.spec_from_loader("k4all_upgrade", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
 
 
 def read_tags(text):
@@ -71,6 +90,24 @@ def is_published(version, releases):
     a published release, not a draft, for ``version``."""
     return any(rel.get("tagName") == version and rel.get("isDraft") is False
                for rel in releases)
+
+
+def is_latest(version, tags, parse_version):
+    """True when ``version`` is a release, not a prerelease, and no release
+    tag in ``tags`` is higher. GitHub never makes a prerelease Latest, so
+    prerelease tags do not count either."""
+    def release_key(name):
+        if not name.startswith("v") or "-" in name:
+            return None
+        try:
+            return parse_version(name)
+        except ValueError:
+            return None
+
+    key = release_key(version)
+    if key is None:
+        return False
+    return all(other is None or other <= key for other in map(release_key, tags))
 
 
 def registry_index(image, version):
@@ -157,6 +194,9 @@ def main(argv=None):
     graph = sub.add_parser("graph",
                            help="check upgrade-graph.json against the registry")
     graph.add_argument("path")
+    latest = sub.add_parser("latest",
+                            help="print whether VERSION is the highest release")
+    latest.add_argument("version")
     args = parser.parse_args(argv)
 
     if args.command == "new-version":
@@ -189,6 +229,10 @@ def main(argv=None):
             return 1
         print("%s: no digest, and each indexDigest is the registry's "
               "(%d releases)" % (args.path, len(doc["releases"])))
+    elif args.command == "latest":
+        tags = read_tags(sys.stdin.read())
+        latest = is_latest(args.version, tags, load_tool().parse_version)
+        print("true" if latest else "false")
     return 0
 
 
