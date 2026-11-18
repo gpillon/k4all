@@ -96,3 +96,18 @@ releases:
       Base image moves from Fedora 43 to Fedora 45 (Fedora 43 reaches end of
       life on 2026-12-02). Kubernetes and CRI-O are unchanged. The host etcd
       package is gone: backups run etcdctl from the etcd image.
+
+  - version: v2.6.0
+    kind: minor
+    minFrom: v2.5.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    syncManifest: false
+    notes: >-
+      Kubernetes 1.35 to 1.36 (kubeadm upgrade before the reboot) and CRI-O
+      1.36. Before kubeadm 1.36, k4all-upgrade removes the flex-volume flag
+      from the kubeadm-config ConfigMap and from /etc/k8s-config.yaml on every
+      node (kubeadm 1.36 no longer mounts the flex-volume directory into the
+      controller manager). The components of v2.4.0, Traefik included,
+      already support 1.36.

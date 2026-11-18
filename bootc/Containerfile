@@ -10,9 +10,9 @@ FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR}
 
 ARG FEDORA_MAJOR
 ARG K4ALL_VERSION=dev
-ARG KUBERNETES_VERSION=1.35.10
-ARG CRIO_PACKAGE=cri-o1.35
-ARG CRIO_MINOR=1.35
+ARG KUBERNETES_VERSION=1.36.6
+ARG CRIO_PACKAGE=cri-o1.36
+ARG CRIO_MINOR=1.36
 ARG YQ_VERSION=v4.53.3
 ARG HELM_VERSION=v3.22.1
 # ============================================================================
