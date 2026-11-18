@@ -59,8 +59,6 @@ class TestK4AllInstallationTask:
             if yaml is not None:
                 return yaml.safe_load(f)
             # Minimal fallback for envs without PyYAML
-            import json
-            content = f.read()
             return None  # cannot parse without yaml
 
     def test_task_name(self):

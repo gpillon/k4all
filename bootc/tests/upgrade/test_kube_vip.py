@@ -6,7 +6,6 @@ and the LoadBalancer Services of class kube-vip.io/kube-vip-class.
 """
 
 import os
-import re
 
 import pytest
 import yaml

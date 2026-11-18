@@ -2,10 +2,9 @@
 # Tests for com_k4all_installer.service.k4all (D-Bus service logic)
 # =============================================================================
 
-import copy
 import json
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 
 class TestK4AllService:
@@ -183,7 +182,7 @@ class TestK4AllService:
 
 class TestK4AllInterface:
     def test_import(self):
-        from com_k4all_installer.service.k4all_interface import K4AllInterface
+        from com_k4all_installer.service.k4all_interface import K4AllInterface  # noqa: F401 (the import is the test)
 
     def test_role_property(self):
         from com_k4all_installer.service.k4all_interface import K4AllInterface
