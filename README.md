@@ -35,6 +35,7 @@ disk (the first fixed disk of at least 10 GiB). Back up your data first.**
 - 2 CPU cores.
 - 4 GB RAM (2 GB used by k4all).
 - 20 minutes.
+- Working DNS (optional) (.... what do you mean?)
 - Coffee, sugar, milk (not required).
 
 ## Which ISO
@@ -68,7 +69,8 @@ Linux, as `root` (replace `X` with your USB device):
 sudo dd if=k4all-bootstrap.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
-Windows: use [Rufus](https://rufus.ie/).
+Windows: use [Rufus](https://rufus.ie/): select the ISO and your USB device,
+**select DD mode (!)**, then click `Start`.
 
 ### Install
 
@@ -113,7 +115,7 @@ The rules, the policy file and what to do when an upgrade stops are in
 [docs/upgrades.md](docs/upgrades.md). Don't run `bootc upgrade` by hand: it
 skips the kubeadm step.
 
-## Debugging a failed setup
+## Debugging a failed installation
 
 Some failing logs during the installation are normal. When the installation
 is complete, all `fck8s-*` services should be `loaded active exited`, and
@@ -154,8 +156,8 @@ the installer addon.
 Next features:
 
 - [x] Kubernetes and OS upgrades ([docs/upgrades.md](docs/upgrades.md))
-- [ ] Traefik as ingress controller (v2.4.0)
-- [ ] Multi-node upgrades driven by the k4all-operator
+- [x] Traefik as ingress controller (v2.4.0)
+- [x] Multi-node upgrades driven by the k4all-operator (ClusterUpgrade, from v2.4.0)
 - [ ] Fancy UI to manage your k4all installation
 - [ ] Applications catalog
 - [ ] ArgoCD-based installation ([?](https://github.com/gpillon/k4all/issues/12))
