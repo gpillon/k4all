@@ -327,6 +327,26 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
 
+      - name: Is the release already published?
+        # A rerun of this job for a published release (not a draft) keeps
+        # its upgrade-graph.json and k4all-bridge.sh, its notes and its
+        # Latest flag: built again, the graph would carry what the registry
+        # and the code say today, not what nodes were offered. It uploads
+        # the ISOs again (what a failed upload leaves missing), nothing else.
+        id: published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          PUBLISHED=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 \
+              --json tagName,isDraft \
+            | python3 bootc/upgrade/release-checks.py published "$VERSION")
+          echo "published=${PUBLISHED}" >> "$GITHUB_OUTPUT"
+          if [ "$PUBLISHED" = true ]; then
+            echo "::notice::${VERSION} is already published: its upgrade-graph.json, k4all-bridge.sh, notes and Latest flag stay as they are; only the ISOs are uploaded again."
+          fi
+
       - name: Download all ISO artifacts
         uses: actions/download-artifact@v4
         with:
@@ -342,6 +362,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build upgrade graph and bridge script
+        if: steps.published.outputs.published == 'false'
         run: |
           python3 -m pip install --user pyyaml
           # every listed release must already be in the registry
@@ -362,6 +383,7 @@ jobs:
         run: ls -lh isos/
 
       - name: Create GitHub Release
+        if: steps.published.outputs.published == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.version }}
@@ -418,3 +440,11 @@ jobs:
             isos/upgrade-graph.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload the ISOs again to the published release
+        # isos/ holds only the ISOs here: no graph and no bridge were built.
+        if: steps.published.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: gh release upload "$VERSION" isos/k4all-* --clobber --repo "$GITHUB_REPOSITORY"

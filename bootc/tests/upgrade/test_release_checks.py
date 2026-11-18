@@ -1,5 +1,6 @@
 """bootc/upgrade/release-checks.py: the guards of the release workflow."""
 
+import json
 import os
 import subprocess
 import sys
@@ -50,3 +51,29 @@ def test_only_the_exact_tag_is_refused():
     # image tags are literal: 2.6.1 and v2.6.1-rc1 push other images
     for version in ("2.6.1", "v2.6.1-rc1"):
         assert run("new-version", version, stdin=ls_remote()).returncode == 0
+
+
+# --- published ----------------------------------------------------------------
+RELEASES = json.dumps([
+    {"tagName": "v2.6.1", "isDraft": False},
+    {"tagName": "v2.6.2", "isDraft": True},
+    {"tagName": "v2.3.0", "isDraft": False},
+])
+
+
+def test_a_published_release_is_reported_as_published():
+    proc = run("published", "v2.3.0", stdin=RELEASES)
+    assert proc.returncode == 0 and proc.stdout.strip() == "true"
+
+
+def test_a_draft_or_a_missing_release_is_not_published():
+    for version in ("v2.6.2", "v2.7.0"):
+        proc = run("published", version, stdin=RELEASES)
+        assert proc.returncode == 0 and proc.stdout.strip() == "false"
+
+
+def test_an_unreadable_release_list_fails():
+    # never "false": the job would then write a published release's graph
+    for listing in ("", "gh: HTTP 502", '{"tagName": "v2.3.0"}'):
+        proc = run("published", "v2.3.0", stdin=listing)
+        assert proc.returncode == 1 and proc.stdout == ""
