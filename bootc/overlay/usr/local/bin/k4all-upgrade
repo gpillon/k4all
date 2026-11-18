@@ -1783,9 +1783,11 @@ class Upgrader:
         it was in) under the state directory; a failure is an UpgradeError
         that names the log."""
         host = self.host
-        proc = host.run(argv, check=False, timeout=3600)
+        # Named by the start, which the journal's "kubeadm upgrade ..." line
+        # shows; a run takes minutes.
         log = "%s/logs/kubeadm-%s.log" % (
             STATE_DIR, host.now().strftime("%Y%m%dT%H%M%S"))
+        proc = host.run(argv, check=False, timeout=3600)
         try:
             host.write(log, "$ %s\nrc=%d\n--- stdout\n%s\n--- stderr\n%s\n"
                        % (" ".join(argv), proc.returncode, proc.stdout or "",

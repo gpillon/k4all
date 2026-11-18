@@ -837,6 +837,26 @@ def test_a_kubeadm_apply_that_times_out_once_is_tried_again(make_host):
         "kubeadm's whole output is kept"
 
 
+def test_the_kubeadm_log_is_named_by_its_start(make_host):
+    # VM 953: the name had the time kubeadm ended, minutes after the
+    # "kubeadm upgrade apply" line of the journal.
+    host = make_host(version="v2.2.4", kubernetes="1.35.6")
+    write_graph(host, STREAM_23)
+    original = host._kubeadm
+    started = []
+
+    def slow(cmd, args):
+        if args[:2] == ["upgrade", "apply"]:
+            started.append(host.clock)
+            host.clock += datetime.timedelta(seconds=113)
+        return original(cmd, args)
+    host._kubeadm = slow
+    assert run_cli(host, "run", "--to", "v2.3.0", "--yes") == 0
+    logs = [n for n in os.listdir(host.path(ku.STATE_DIR + "/logs"))
+            if n.startswith("kubeadm-")]
+    assert logs == ["kubeadm-%s.log" % started[0].strftime("%Y%m%dT%H%M%S")]
+
+
 def _scale_up_fails(host):
     """kubectl scale --replicas>0 of the operator fails, as with the
     apiserver down; returns a function that heals it."""
