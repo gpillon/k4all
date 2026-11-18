@@ -10,7 +10,8 @@ import time
 import pytest
 import yaml
 
-from conftest import READYZ_NOT_READY, Proc, ku, release, run_cli, write_graph
+from conftest import (READYZ_NOT_READY, Proc, index_digest, ku, manifest_digest,
+                      release, run_cli, write_graph)
 
 STREAM_23 = [
     release("v2.2.4", "patch", "v2.0.0-beta1", "1.35.6", "1.32", 43),
@@ -947,6 +948,94 @@ def test_foreign_staged_deployment_blocks_the_hop(make_host):
     assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
     assert "already staged" in state(host)["hold"]["reason"]
     assert not commands(host, ["bootc", "switch"])
+
+
+# --- releases named by digest ---------------------------------------------------
+# VM 953, 18 nov: the published graph named every release by the digest of its
+# multi-arch index. bootc keeps that ref, but reports the digest of the amd64
+# manifest inside the index as imageDigest, and the tool compared only the
+# digests: every hop stopped in HOLD at STAGE ("bootc did not stage ...").
+BOOTC_REPO = "ghcr.io/gpillon/k4all-bootc"
+
+
+def by_index_digest(entries, key="digest"):
+    return [dict(entry, **{key: index_digest(entry["version"])})
+            for entry in entries]
+
+
+def test_a_hop_by_index_digest_is_staged_and_committed(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, by_index_digest(STREAM_23))
+    ref = "%s@%s" % (BOOTC_REPO, index_digest("v2.3.1"))
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert commands(host, ["bootc", "switch", "--download-only"])[0][-1] == ref
+    st = state(host)
+    assert st["phase"] == "REBOOT" and not st.get("hold")
+    st = finish(host)
+    assert st["current"] == "v2.3.1" and st["phase"] == "DONE"
+    assert host.booted["image"] == ref
+    assert host.booted["digest"] == manifest_digest("v2.3.1") != \
+        index_digest("v2.3.1"), "the fake reports what bootc reports"
+
+
+def test_preflight_accepts_the_hops_own_image_staged_by_digest(make_host):
+    # A hop that starts again (a new run after an abandoned one) finds its
+    # own image staged: no "already staged", nothing downloaded twice.
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, by_index_digest(STREAM_23))
+    host.staged = {"version": "v2.3.1", "kubernetes": "1.35.10",
+                   "image": "%s@%s" % (BOOTC_REPO, index_digest("v2.3.1")),
+                   "digest": manifest_digest("v2.3.1")}
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert not commands(host, ["bootc", "switch"])
+    assert finish(host)["current"] == "v2.3.1"
+
+
+def test_another_release_staged_by_digest_still_blocks_the_hop(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, by_index_digest(STREAM_23))
+    host.staged = {"version": "v2.4.0", "kubernetes": "1.35.10",
+                   "image": "%s@%s" % (BOOTC_REPO, index_digest("v2.4.0")),
+                   "digest": manifest_digest("v2.4.0")}
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
+    assert "already staged" in state(host)["hold"]["reason"]
+
+
+# The staged entry of `bootc status --json` on VM 953 in that HOLD (bootc
+# 1.17.1): v2.3.0 staged by the digest of its index.
+VM953_V230_INDEX = ("sha256:34a7ccc8f8d750c7d01dca0cf6154885670fade9e451111810d0"
+                    "2830d789ca61")
+VM953_V230_AMD64 = ("sha256:e16f762286e2a8e5464d4f618967f6a072999be2f4b421b4678"
+                    "502f5611822f3")
+VM953_V240_INDEX = ("sha256:fc557418db89932fde0ba65977069cb92831936ed992042b6194"
+                    "b8b467f6ecac")
+VM953_STAGED = {
+    "image": {"image": {"image": BOOTC_REPO + "@" + VM953_V230_INDEX,
+                        "transport": "registry"},
+              "imageDigest": VM953_V230_AMD64, "version": "v2.3.0",
+              "architecture": "amd64"},
+}
+
+
+@pytest.mark.parametrize("ref,same", [
+    (BOOTC_REPO + "@" + VM953_V230_INDEX, True),     # the ref bootc keeps
+    (BOOTC_REPO + "@" + VM953_V230_AMD64, True),     # its platform manifest
+    (BOOTC_REPO + "@" + VM953_V240_INDEX, False),    # another release
+    (BOOTC_REPO + ":v2.3.0", False),                 # the tag: another ref
+])
+def test_same_image_on_the_bootc_status_of_vm_953(ref, same):
+    assert ku._same_image(VM953_STAGED, ref) is same
+
+
+def test_same_image_by_tag_compares_the_ref():
+    entry = {"image": {"image": {"image": BOOTC_REPO + ":v2.3.1"},
+                       "imageDigest": manifest_digest("v2.3.1")}}
+    assert ku._same_image(entry, BOOTC_REPO + ":v2.3.1")
+    assert not ku._same_image(entry, BOOTC_REPO + ":v2.3.2")
+    assert not ku._same_image({}, BOOTC_REPO + "@" + index_digest("v2.3.1"))
 
 
 def test_run_refuses_while_an_upgrade_is_in_progress(make_host):

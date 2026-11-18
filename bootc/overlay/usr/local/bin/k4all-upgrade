@@ -2563,11 +2563,18 @@ class Upgrader:
 
 
 def _same_image(deployment, ref):
-    """True when a bootc deployment entry is the image ``ref`` names."""
+    """True when a bootc deployment entry is the image ``ref`` names.
+
+    The ref bootc keeps is compared first. Its imageDigest comes second: it
+    is the digest of the manifest bootc pulled for this architecture, not of
+    the multi-arch index that a release ref names (bootc 1.17, VM 953: every
+    hop by index digest stopped in HOLD at STAGE)."""
     image, digest = deployment_image(deployment)
+    if image == ref:
+        return True
     if "@" in ref:
         return bool(digest) and ref.endswith("@" + digest)
-    return image == ref
+    return False
 
 
 BACKUP_FILES = ("/var/lib/kubelet/config.yaml",
