@@ -1,0 +1,12 @@
+[Unit]
+Description=K4All - Update Kubernetes Ingress Routes
+After=fck8s-operator-deploy.service
+ConditionPathExists=/etc/kubernetes/admin.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-routes.sh
+WorkingDirectory=/root/
+
+[Install]
+WantedBy=multi-user.target

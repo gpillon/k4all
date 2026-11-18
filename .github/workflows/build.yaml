@@ -1,0 +1,413 @@
+name: Build K4All
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  push:
+    tags:
+      - "v*"
+    branches:
+      - dev/bootc*
+      - main
+  workflow_dispatch:
+    inputs:
+      build_iso:
+        description: "Build ISOs (slow, ~1h per arch)"
+        type: boolean
+        default: false
+      version:
+        description: "Version override (e.g. v2.0.0-beta)"
+        required: false
+        default: ""
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/k4all-bootc
+  # :latest is frozen. Nodes installed from local builds track it with
+  # bootc's auto-update timer still active (before v2.2.4), so moving it to a
+  # release that changes Kubernetes would reboot them into it without
+  # kubeadm. It moves only to the bridge release, once; never past it.
+  LATEST_PIN: v2.2.4
+
+jobs:
+  # ------------------------------------------------------------------
+  # 0. Unit and contract tests — gate every build
+  # ------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: python3 -m pip install --user pytest pyyaml
+
+      - name: Install yq (the version the image ships)
+        # test_ingress_scripts.py runs the node scripts with mikefarah yq v4;
+        # without it those tests are skipped.
+        run: |
+          YQ_VERSION="$(sed -n 's/^ARG YQ_VERSION=//p' bootc/Containerfile)"
+          curl -fsSL -o "$RUNNER_TEMP/yq" \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          chmod +x "$RUNNER_TEMP/yq"
+          echo "K4ALL_TEST_YQ=$RUNNER_TEMP/yq" >> "$GITHUB_ENV"
+
+      - name: Upgrade tool, graph and image contract tests
+        run: python3 -m pytest -q bootc/tests/upgrade
+
+      - name: Anaconda addon tests
+        # From the addon directory: the tests import com_k4all_installer
+        # from there.
+        working-directory: k4all-anaconda-addon
+        run: python3 -m pytest -q tests
+
+  # ------------------------------------------------------------------
+  # 1. Build the bootc OCI image (per arch) — always runs
+  # ------------------------------------------------------------------
+  build-image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      is_tag: ${{ steps.version.outputs.is_tag }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="${GITHUB_REF_NAME//\//-}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          IS_TAG="false"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            IS_TAG="true"
+          fi
+          echo "is_tag=${IS_TAG}" >> "$GITHUB_OUTPUT"
+
+          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc) ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Stamp version in k4all-release.yaml
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          RELEASE_FILE="bootc/overlay/usr/local/share/k4all-release.yaml"
+          yq eval ".spec.osImage.imageTag = \"${VERSION}\"" -i "${RELEASE_FILE}"
+          # k4all-operator keeps the version committed in the file: each k4all
+          # release pins its own operator, and the image build refuses "latest".
+
+      - name: Build and push (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: bootc
+          file: bootc/Containerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            K4ALL_VERSION=${{ steps.version.outputs.version }}
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+  # ------------------------------------------------------------------
+  # 2. Create multi-arch manifest — always runs
+  # ------------------------------------------------------------------
+  push-manifest:
+    needs: build-image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest
+        run: |
+          VERSION="${{ needs.build-image.outputs.version }}"
+          docker manifest create "${{ env.IMAGE_NAME }}:${VERSION}" \
+            "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
+            "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
+          docker manifest push "${{ env.IMAGE_NAME }}:${VERSION}"
+
+          # :latest moves only to the pinned bridge release (see LATEST_PIN)
+          if [ "${{ needs.build-image.outputs.is_tag }}" = "true" ] && [ "${VERSION}" = "${LATEST_PIN}" ]; then
+            docker manifest create "${{ env.IMAGE_NAME }}:latest" \
+              "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
+              "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
+            docker manifest push "${{ env.IMAGE_NAME }}:latest"
+          fi
+
+  # ------------------------------------------------------------------
+  # 3. Build ISOs — only on tags or manual request
+  # ------------------------------------------------------------------
+  build-iso:
+    needs: [build-image, push-manifest]
+    if: needs.build-image.outputs.is_tag == 'true' || github.event.inputs.build_iso == 'true'
+    permissions:
+      contents: write
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        mode: [attended, unattended-bootstrap, unattended-control, unattended-worker]
+        include:
+          - arch: amd64
+            # Not ubuntu-latest: on the Ubuntu 26.04 runners osbuild cannot
+            # mount /dev inside the privileged bootc-image-builder container
+            # ("mount: /run/osbuild/tree/dev: permission denied").
+            runner: ubuntu-24.04
+            bib_arch: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            bib_arch: aarch64
+          - mode: attended
+            suffix: attended
+          - mode: unattended-bootstrap
+            suffix: bootstrap
+          - mode: unattended-control
+            suffix: control
+          - mode: unattended-worker
+            suffix: worker
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.build-image.outputs.version }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get clean
+          df -h /
+
+      - name: Log in to GHCR (docker)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to GHCR (podman/root for BIB)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build K4All Anaconda addon
+        run: |
+          make -C k4all-anaconda-addon updates
+          mkdir -p bootc/iso/images
+          cp k4all-anaconda-addon/k4all_addon_updates.img bootc/iso/images/k4all_updates.img
+
+      - name: Install xorriso
+        run: sudo apt-get update && sudo apt-get install -y xorriso
+
+      - name: Pull bootc image for BIB
+        run: |
+          OCI_IMAGE="${{ env.IMAGE_NAME }}:${{ env.VERSION }}-${{ matrix.arch }}"
+          echo "Pulling ${OCI_IMAGE}..."
+          sudo podman pull "${OCI_IMAGE}"
+
+      - name: Build ISO (${{ matrix.mode }} / ${{ matrix.arch }})
+        run: |
+          OCI_IMAGE="${{ env.IMAGE_NAME }}:${{ env.VERSION }}-${{ matrix.arch }}"
+          OUTPUT_DIR="$(pwd)/output"
+          STORE_DIR="$(pwd)/.cache/osbuild-store"
+          RPMMD_DIR="$(pwd)/.cache/rpmmd"
+          mkdir -p "$OUTPUT_DIR" "$STORE_DIR" "$RPMMD_DIR"
+
+          MODE="${{ matrix.mode }}"
+          SUFFIX="${{ matrix.suffix }}"
+          CONFIG="$(pwd)/bootc/iso/config/${MODE}.toml"
+
+          echo "========================================"
+          echo "Building ISO: ${MODE} (${{ matrix.arch }})"
+          echo "========================================"
+
+          sudo podman run --rm --privileged --pull=newer \
+            --security-opt label=type:unconfined_t \
+            -v "${CONFIG}":/config.toml:ro \
+            -v "${OUTPUT_DIR}":/output \
+            -v "${STORE_DIR}":/store \
+            -v "${RPMMD_DIR}":/rpmmd \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            quay.io/centos-bootc/bootc-image-builder:latest \
+            --type anaconda-iso \
+            --rootfs xfs \
+            --local \
+            "${OCI_IMAGE}"
+
+          BIB_OUT="${OUTPUT_DIR}/bootiso/install.iso"
+          FINAL="${OUTPUT_DIR}/k4all-${SUFFIX}.iso"
+          if [ -f "$BIB_OUT" ]; then
+            sudo mv "$BIB_OUT" "$FINAL"
+            sudo chown "$(id -u):$(id -g)" "$FINAL"
+            rmdir "${OUTPUT_DIR}/bootiso" 2>/dev/null || true
+          fi
+
+          ./bootc/scripts/remaster-iso.sh "$FINAL"
+
+          VERSIONED="${OUTPUT_DIR}/k4all-${SUFFIX}-${{ env.VERSION }}-${{ matrix.bib_arch }}.iso"
+          mv "$FINAL" "$VERSIONED"
+          echo "Built: $VERSIONED ($(du -h "$VERSIONED" | cut -f1))"
+
+          echo ""
+          echo "=== Compressing ISO with zstd ==="
+          MAX_SIZE=$((2000 * 1024 * 1024))
+          BASE=$(basename "$VERSIONED")
+          echo "Compressing ${BASE}..."
+          zstd -T0 -12 --rm "$VERSIONED"
+          SIZE=$(stat -c%s "${VERSIONED}.zst")
+          if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+            echo "  ${BASE}.zst is $(( SIZE / 1024 / 1024 ))MB — splitting into parts..."
+            split -b 1900m "${VERSIONED}.zst" "${VERSIONED}.zst.part-"
+            rm "${VERSIONED}.zst"
+          fi
+          ls -lh output/k4all-*
+
+      - name: Upload ISO artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: isos-${{ matrix.suffix }}-${{ matrix.arch }}
+          path: output/k4all-*
+          retention-days: 3
+
+  # ------------------------------------------------------------------
+  # 4. Create GitHub Release — only on tags
+  # ------------------------------------------------------------------
+  release:
+    needs: [build-image, build-iso]
+    if: needs.build-image.outputs.is_tag == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Download all ISO artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: isos
+          pattern: isos-*
+          merge-multiple: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build upgrade graph and bridge script
+        run: |
+          python3 -m pip install --user pyyaml
+          # every listed release must already be in the registry
+          python3 bootc/upgrade/build-graph.py bootc/upgrade/releases.yaml \
+            --image "${IMAGE_NAME}" --resolve-digests --require-digests \
+            -o isos/upgrade-graph.json
+          BRIDGE_DIGEST=$(jq -r '.releases[] | select(.version == "v2.2.4") | .digest' isos/upgrade-graph.json)
+          sed "s|@@BRIDGE_DIGEST@@|${BRIDGE_DIGEST}|" bootc/scripts/k4all-bridge.sh > isos/k4all-bridge.sh
+          chmod +x isos/k4all-bridge.sh
+
+      - name: List release assets
+        run: ls -lh isos/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-image.outputs.version }}
+          name: "K4All ${{ needs.build-image.outputs.version }}"
+          prerelease: ${{ needs.build-image.outputs.prerelease }}
+          generate_release_notes: true
+          body: |
+            ## K4All ${{ needs.build-image.outputs.version }}
+
+            ### Bootc OCI Image
+            ```
+            ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.build-image.outputs.version }}
+            ```
+
+            ### ISO Downloads
+            
+            | Variant | x86_64 | aarch64 |
+            |---------|--------|---------|
+            | **Attended** (interactive GUI) | `k4all-attended-*-x86_64.iso.zst*` | `k4all-attended-*-aarch64.iso.zst` |
+            | **Bootstrap** (unattended, first node) | `k4all-bootstrap-*-x86_64.iso.zst*` | `k4all-bootstrap-*-aarch64.iso.zst` |
+            | **Control** (unattended, control plane) | `k4all-control-*-x86_64.iso.zst*` | `k4all-control-*-aarch64.iso.zst` |
+            | **Worker** (unattended, worker node) | `k4all-worker-*-x86_64.iso.zst*` | `k4all-worker-*-aarch64.iso.zst` |
+
+
+            #### Linux / Mac
+            ISOs are compressed with zstd. Decompress with: `unzstd <file>.iso.zst`
+            If the ISO was split (x86_64), reassemble first: `cat <file>.iso.zst.part-* > <file>.iso.zst`
+
+            #### Windows
+            - combine the ISOs using the following command: `copy /b k4all-attended-${{ needs.build-image.outputs.version }}-x86_64.iso.zst.part-* k4all-attended-${{ needs.build-image.outputs.version }}-x86_64.iso.zst`
+            - Extract the ISOs from zst using Winrar > 6.10
+
+            ### Update existing systems
+
+            From v2.2.4 on, nodes upgrade themselves with `k4all-upgrade`
+            (patch releases automatically in the Saturday 02:30 window, minor
+            releases on command):
+            ```bash
+            sudo k4all-upgrade plan
+            sudo k4all-upgrade run
+            ```
+
+            Nodes on v2.0 – v2.2.3 first move to the v2.2.4 bridge, one node
+            at a time, control planes first:
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/v2.2.4/k4all-bridge.sh | sudo bash -s -- --now
+            ```
+
+            ### Why are the files split?
+            - Splitting avoids GitHub Actions timeouts when uploading and downloading the artifacts.
+            - It also keeps the release within the free GitHub storage.
+          files: |
+            isos/k4all-*
+            isos/upgrade-graph.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

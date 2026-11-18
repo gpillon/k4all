@@ -1,0 +1,14 @@
+[Unit]
+Description=K4All - Wait for Node Ready and Schedulable
+Requires=fck8s-k8s-setup-init.service
+After=fck8s-k8s-setup-init.service
+ConditionPathExists=/etc/kubernetes/admin.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/node-ready-and-schedulable.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

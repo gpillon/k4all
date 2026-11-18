@@ -1,0 +1,14 @@
+[Unit]
+Description=K4All - Setup Proxy
+Requires=network-online.target
+After=network-online.target
+ConditionPathExists=!/opt/k4all/setup-proxy.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-proxy.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

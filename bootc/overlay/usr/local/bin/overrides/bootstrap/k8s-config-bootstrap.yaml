@@ -1,0 +1,91 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+networking:
+  podSubnet: "10.100.0.1/18"
+  serviceSubnet: "10.96.0.0/16"
+# No flex-volume-plugin-dir for the controller-manager: kubeadm 1.36 dropped
+# the integrated mount, and k4all uses no attachable flex volumes.
+controllerManager: {}
+apiServer: {}
+caCertificateValidityPeriod: 87600h0m0s
+certificateValidityPeriod: 8760h0m0s
+certificatesDir: /etc/kubernetes/pki
+clusterName: kubernetes
+# controlPlaneEndpoint: 192.168.221.234:6443 - must be set in the bootstrap-control/setup-k8s-ph3.sh script when using ha (like, keepalived or kubevip).
+dns: {}
+imageRepository: registry.k8s.io
+proxy: 
+  disabled: false
+scheduler: {}
+
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  # advertiseAddress: 192.168.221.161 - must be set in the bootstrap-control/setup-k8s-ph3.sh script when using ha (like, keepalived or kubevip).
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix:///var/run/crio/crio.sock
+  imagePullPolicy: IfNotPresent
+  imagePullSerial: true
+  kubeletExtraArgs:
+  - name: volume-plugin-dir
+    value: /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
+
+# apiVersion: kubeadm.k8s.io/v1beta4
+# bootstrapTokens:
+# - groups:
+#   - system:bootstrappers:kubeadm:default-node-token
+#   token: ek4cg4.i9dc6iptft628qja
+#   ttl: 24h0m0s
+#   usages:
+#   - signing
+#   - authentication
+# kind: InitConfiguration
+# localAPIEndpoint:
+#   advertiseAddress: 192.168.5.98
+#   bindPort: 6443
+# nodeRegistration:
+#   criSocket: unix:///var/run/crio/crio.sock
+#   imagePullPolicy: IfNotPresent
+#   imagePullSerial: true
+#   kubeletExtraArgs:
+#   - name: volume-plugin-dir
+#     value: /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
+#   name: kube-bootstrap-6hcib.farm.local
+#   taints:
+#   - effect: NoSchedule
+#     key: node-role.kubernetes.io/control-plane
+# timeouts:
+#   controlPlaneComponentHealthCheck: 4m0s
+#   discovery: 5m0s
+#   etcdAPICall: 2m0s
+#   kubeletHealthCheck: 4m0s
+#   kubernetesAPICall: 1m0s
+#   tlsBootstrap: 5m0s
+#   upgradeManifests: 5m0s
+# ---
+# apiServer: {}
+# apiVersion: kubeadm.k8s.io/v1beta4
+# caCertificateValidityPeriod: 87600h0m0s
+# certificateValidityPeriod: 8760h0m0s
+# certificatesDir: /etc/kubernetes/pki
+# clusterName: kubernetes
+# controllerManager:
+#   extraArgs:
+#   - name: flex-volume-plugin-dir
+#     value: /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
+# dns: {}
+# encryptionAlgorithm: RSA-2048
+# etcd:
+#   local:
+#     dataDir: /var/lib/etcd
+# imageRepository: registry.k8s.io
+# kind: ClusterConfiguration
+# kubernetesVersion: v1.31.3
+# networking:
+#   dnsDomain: cluster.local
+#   podSubnet: 10.100.0.1/18
+#   serviceSubnet: 10.96.0.0/16
+# proxy: {}
+# scheduler: {}

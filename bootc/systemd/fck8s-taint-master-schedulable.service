@@ -1,0 +1,16 @@
+[Unit]
+Description=K4All - Taint Master Node as Schedulable
+Requires=fck8s-k8s-setup-init.service
+After=fck8s-k8s-setup-init.service
+PartOf=fck8s-k8s-setup-init.service
+ConditionPathExists=/etc/kubernetes/admin.conf
+ConditionPathExists=!/opt/k4all/setup-taint-master-schedulable.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-taint-master-scheduleable.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

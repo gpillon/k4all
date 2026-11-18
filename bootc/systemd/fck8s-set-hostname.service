@@ -1,0 +1,14 @@
+[Unit]
+Description=K4All - Set Hostname
+Requires=network-online.target
+After=network-online.target
+ConditionPathExists=!/opt/k4all/setup-hostname.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/set-hostname.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

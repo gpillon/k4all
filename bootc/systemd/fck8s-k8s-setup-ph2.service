@@ -1,0 +1,15 @@
+[Unit]
+Description=K4All - Kubernetes Setup Phase 2 (OVS/Network/Firewall)
+Requires=fck8s-set-hostname.service
+Requires=fck8s-setup-proxy.service
+After=fck8s-set-hostname.service fck8s-setup-proxy.service
+ConditionPathExists=!/opt/k4all/setup-ph2.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-k8s-ph2.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

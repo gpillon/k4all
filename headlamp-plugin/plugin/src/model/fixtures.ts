@@ -1,0 +1,396 @@
+/*
+ * Test fixtures shaped like real k4all clusters: the installer's default
+ * ClusterConfig and a subset of k4all-release.yaml, for a v2.6.0 cluster
+ * (Traefik, as from v2.4.0; its operator kept at v0.3.0, so the
+ * compatibility paths for older operators stay covered) and a v2.4.0
+ * cluster that kept ingress-nginx (operator v0.5.0).
+ */
+
+import {
+  ClusterConfigObject,
+  ClusterUpgradeObject,
+  NodeLike,
+  ReleaseInfo,
+  ReleaseManifestObject,
+} from './types';
+
+export function defaultClusterConfig(): ClusterConfigObject {
+  return {
+    apiVersion: 'k4all.magesgate.com/v1alpha1',
+    kind: 'ClusterConfig',
+    metadata: { name: 'k4all-cluster-config', generation: 3, resourceVersion: '4711' },
+    spec: {
+      networking: { cni: { type: 'calico' }, firewalld: { enabled: false } },
+      features: {
+        virt: { enabled: false, emulation: 'auto' },
+        argocd: { enabled: false },
+        ovsCni: { enabled: false },
+        ovsBridge: { enabled: true },
+      },
+      cluster: {
+        apiEndPointUseHostName: false,
+        customApiEndPoint: '',
+        podNetwork: '10.100.0.1/18',
+        serviceNetwork: '10.96.0.0/16',
+        ha: {
+          interface: 'auto',
+          type: 'none',
+          apiControlEndpoint: '',
+          apiControlEndpointSubnetSize: '',
+        },
+      },
+      ingress: { traefik: { dedicatedIP: '', isDefault: true }, cilium: { dedicatedIP: '' } },
+      proxy: { httpProxy: '', httpsProxy: '', noProxy: '' },
+      componentOverrides: {},
+    },
+    status: {
+      observedGeneration: 3,
+      activeCNI: 'calico',
+      lastReconcileTime: '2026-11-17T10:00:00Z',
+      conditions: [{ type: 'Reconciled', status: 'True', reason: 'Synced' }],
+    },
+  };
+}
+
+export function releaseManifest(): ReleaseManifestObject {
+  return {
+    apiVersion: 'k4all.magesgate.com/v1alpha1',
+    kind: 'ReleaseManifest',
+    metadata: { name: 'k4all', generation: 7, resourceVersion: '900' },
+    spec: {
+      osImage: {
+        name: 'k4all-bootc',
+        repository: 'ghcr.io/gpillon/k4all-bootc',
+        imageTag: 'v2.6.0-amd64',
+      },
+      components: {
+        calico: { type: 'manifest', version: 'v3.33.1', upgradePath: [{ version: 'v3.32.4' }] },
+        cilium: { type: 'helm-oci', version: '1.20.4', dependsOn: ['gateway-api'] },
+        'cilium-cli': { type: 'binary', version: 'v0.20.3', dependsOn: ['cilium'] },
+        metallb: { type: 'manifest', version: 'v0.16.2', dependsOn: ['calico', 'cilium'] },
+        'gateway-api': { type: 'manifest', version: 'v1.6.3' },
+        'kube-vip': { type: 'static-pod', version: 'v1.3.1' },
+        'ingress-nginx': {
+          type: 'helm',
+          version: '4.14.3',
+          management: 'Removed',
+          dependsOn: ['cert-manager', 'metallb'],
+        },
+        traefik: { type: 'helm', version: '42.4.0', dependsOn: ['cert-manager', 'metallb'] },
+        'cert-manager': {
+          type: 'helm',
+          version: 'v1.21.3',
+          dependsOn: ['calico', 'cilium'],
+          upgradePath: [
+            { version: 'v1.15.5' },
+            { version: 'v1.16.5' },
+            { version: 'v1.17.4' },
+            { version: 'v1.18.6' },
+            { version: 'v1.19.6' },
+            { version: 'v1.20.5' },
+          ],
+        },
+        headlamp: { type: 'helm', version: '0.46.0', dependsOn: ['cert-manager', 'traefik'] },
+        kubevirt: { type: 'manifest', version: 'v1.9.1', featureGate: 'virt' },
+        virtctl: {
+          type: 'binary',
+          version: 'v1.9.1',
+          featureGate: 'virt',
+          dependsOn: ['kubevirt'],
+        },
+        cdi: { type: 'manifest', version: 'v1.66.1', featureGate: 'virt', dependsOn: ['kubevirt'] },
+        'kubevirt-manager': {
+          type: 'manifest',
+          version: 'v1.5.4',
+          featureGate: 'virt',
+          dependsOn: ['kubevirt'],
+        },
+        argocd: {
+          type: 'helm',
+          version: '10.18.0',
+          featureGate: 'argocd',
+          dependsOn: ['calico', 'cilium', 'traefik'],
+        },
+        'multus-cni': {
+          type: 'manifest',
+          version: 'v4.3.2',
+          featureGate: 'ovsCni',
+          dependsOn: ['calico', 'cilium'],
+        },
+        'ovs-cni': {
+          type: 'manifest',
+          version: 'v0.40.0',
+          featureGate: 'ovsCni',
+          dependsOn: ['multus-cni'],
+        },
+        'k4all-operator': { type: 'manifest', version: 'v0.3.0' },
+      },
+    },
+    status: {
+      conditions: [
+        {
+          type: 'Ready',
+          status: 'True',
+          reason: 'AllComponentsReconciled',
+          message: '9/9 components installed',
+        },
+      ],
+      components: {
+        calico: { state: 'Installed', installedVersion: 'v3.33.1' },
+        metallb: { state: 'Installed', installedVersion: 'v0.16.2' },
+        'gateway-api': { state: 'Installed', installedVersion: 'v1.6.3' },
+        'ingress-nginx': { state: 'Removed' },
+        traefik: { state: 'Installed', installedVersion: '42.4.0' },
+        'cert-manager': { state: 'Upgrading', installedVersion: 'v1.17.4' },
+        headlamp: { state: 'Installed', installedVersion: '0.46.0' },
+        kubevirt: { state: 'Skipped' },
+        'k4all-operator': { state: 'Installed', installedVersion: 'v0.3.0' },
+      },
+    },
+  };
+}
+
+export function node(
+  name: string,
+  extra: Partial<NodeLike['metadata']> = {},
+  ip = '192.168.1.10'
+): NodeLike {
+  return {
+    metadata: { name, labels: { 'node-role.kubernetes.io/control-plane': '' }, ...extra },
+    status: {
+      addresses: [{ type: 'InternalIP', address: ip }],
+      conditions: [{ type: 'Ready', status: 'True' }],
+      nodeInfo: {
+        kubeletVersion: 'v1.36.2',
+        osImage: 'Fedora Linux 45',
+        containerRuntimeVersion: 'cri-o://1.36.0',
+      },
+    },
+  };
+}
+
+/**
+ * A v2.4.0 cluster that still runs ingress-nginx: its ReleaseManifest was
+ * changed by hand to keep it, without Traefik (k4all's own has Traefik and
+ * ingress-nginx Removed from v2.4.0, the first release with the plugin). The
+ * ClusterConfig has spec.ingress.nginx only, as on clusters installed before
+ * v2.4.0. Operator v0.5.0, as v2.4.0 pins it.
+ */
+export function clusterConfigNginx(): ClusterConfigObject {
+  const cc = defaultClusterConfig();
+  cc.spec!.ingress = { nginx: { dedicatedIP: '', isDefault: true }, cilium: { dedicatedIP: '' } };
+  return cc;
+}
+
+export function releaseManifestNginx(): ReleaseManifestObject {
+  const rm = releaseManifest();
+  const components = rm.spec!.components!;
+  delete components.traefik;
+  components['ingress-nginx'] = {
+    type: 'helm',
+    version: '4.14.3',
+    dependsOn: ['cert-manager', 'metallb'],
+  };
+  components['k4all-operator'] = { type: 'manifest', version: 'v0.5.0' };
+  rm.spec!.osImage!.imageTag = 'v2.4.0-amd64';
+  const status = rm.status!.components!;
+  delete status.traefik;
+  status['ingress-nginx'] = { state: 'Installed', installedVersion: '4.14.3' };
+  status['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.5.0' };
+  return rm;
+}
+
+/** The ReleaseManifest as k4all v2.4.0 leaves it: Traefik, ingress-nginx Removed, operator v0.5.0. */
+export function releaseManifestV240(): ReleaseManifestObject {
+  const rm = releaseManifest();
+  rm.spec!.osImage!.imageTag = 'v2.4.0-amd64';
+  rm.spec!.components!['k4all-operator'] = { type: 'manifest', version: 'v0.5.0' };
+  rm.status!.components!['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.5.0' };
+  return rm;
+}
+
+/** The fixture graph: a linear ladder, every release one hop after the previous one. */
+const LADDER: ReleaseInfo[] = [
+  {
+    version: 'v2.4.0',
+    kind: 'minor',
+    minFrom: 'v2.3.0',
+    kubernetes: '1.35.10',
+    crio: '1.35',
+    fedora: 43,
+  },
+  {
+    version: 'v2.4.1',
+    kind: 'patch',
+    minFrom: 'v2.4.0',
+    kubernetes: '1.35.10',
+    crio: '1.35',
+    fedora: 43,
+    notes: 'Fixes.',
+  },
+  {
+    version: 'v2.5.0',
+    kind: 'minor',
+    minFrom: 'v2.4.1',
+    kubernetes: '1.35.10',
+    crio: '1.35',
+    fedora: 45,
+    notes: 'Fedora 45.',
+  },
+  {
+    version: 'v2.6.0',
+    kind: 'minor',
+    minFrom: 'v2.5.0',
+    kubernetes: '1.36.4',
+    crio: '1.36',
+    fedora: 45,
+    notes: 'Kubernetes 1.36.',
+  },
+  {
+    version: 'v2.7.0',
+    kind: 'minor',
+    minFrom: 'v2.6.0',
+    kubernetes: '1.36.4',
+    crio: '1.36',
+    fedora: 45,
+    notes: 'Unattended join.',
+  },
+];
+
+/** The releases newer than current, as the operator lists them (oldest first, with their path). */
+export function availableReleases(current = 'v2.4.0'): ReleaseInfo[] {
+  const start = LADDER.findIndex(r => r.version === current);
+  return LADDER.slice(start + 1).map((r, i, newer) => ({
+    ...r,
+    path: newer.slice(0, i + 1).map(h => h.version),
+  }));
+}
+
+export function releaseInfo(version: string): ReleaseInfo {
+  return { ...LADDER.find(r => r.version === version)! };
+}
+
+/** The ClusterUpgrade as the operator keeps it on an idle three-node v2.4.0 cluster. */
+export function clusterUpgrade(extra: Partial<ClusterUpgradeObject> = {}): ClusterUpgradeObject {
+  return {
+    apiVersion: 'k4all.magesgate.com/v1alpha1',
+    kind: 'ClusterUpgrade',
+    metadata: { name: 'k4all', generation: 1, resourceVersion: '50' },
+    spec: { drain: { timeoutMinutes: 30 } },
+    status: {
+      phase: 'Idle',
+      currentRelease: 'v2.4.0',
+      currentReleaseInfo: releaseInfo('v2.4.0'),
+      availableReleases: availableReleases('v2.4.0'),
+      nodes: [
+        { name: 'cp-1', role: 'bootstrap', release: 'v2.4.0', phase: 'Done' },
+        { name: 'cp-2', role: 'control', release: 'v2.4.0', phase: 'Done' },
+        { name: 'w-1', role: 'worker', release: 'v2.4.0', phase: 'Done' },
+      ],
+      graphUrl: 'https://github.com/gpillon/k4all/releases/latest/download/upgrade-graph.json',
+      observedGeneration: 1,
+      conditions: [
+        {
+          type: 'GraphAvailable',
+          status: 'True',
+          reason: 'Read',
+          message: 'https://github.com/gpillon/k4all/releases/latest/download/upgrade-graph.json',
+        },
+        { type: 'Progressing', status: 'False', reason: 'Idle' },
+        { type: 'Succeeded', status: 'False', reason: 'Idle' },
+        { type: 'Failed', status: 'False', reason: 'Idle' },
+      ],
+    },
+    ...extra,
+  };
+}
+
+/** The same cluster upgrading to v2.6.0: hop v2.5.0 in progress, cp-2 draining. */
+export function clusterUpgradeInProgress(): ClusterUpgradeObject {
+  const cu = clusterUpgrade();
+  cu.metadata.generation = 2;
+  cu.spec = { targetRelease: 'v2.6.0', drain: { timeoutMinutes: 30 } };
+  cu.status = {
+    ...cu.status,
+    phase: 'Progressing',
+    message: 'v2.5.0: draining cp-2, 3 pods left',
+    currentHop: 'v2.5.0',
+    path: [
+      {
+        release: 'v2.4.1',
+        kind: 'patch',
+        phase: 'Done',
+        startedAt: '2026-11-17T09:00:00Z',
+        completedAt: '2026-11-17T09:27:00Z',
+      },
+      { release: 'v2.5.0', kind: 'minor', phase: 'InProgress', startedAt: '2026-11-17T09:30:00Z' },
+      { release: 'v2.6.0', kind: 'minor', phase: 'Pending' },
+    ],
+    currentRelease: 'v2.4.1',
+    currentReleaseInfo: releaseInfo('v2.4.1'),
+    availableReleases: availableReleases('v2.4.1'),
+    nodes: [
+      {
+        name: 'cp-1',
+        role: 'bootstrap',
+        release: 'v2.5.0',
+        phase: 'Done',
+        startedAt: '2026-11-17T09:30:00Z',
+        completedAt: '2026-11-17T09:41:00Z',
+      },
+      {
+        name: 'cp-2',
+        role: 'control',
+        release: 'v2.4.1',
+        phase: 'Draining',
+        message: '3 pods left',
+        drainStartedAt: '2026-11-17T10:00:00Z',
+        startedAt: '2026-11-17T10:00:00Z',
+      },
+      {
+        name: 'w-1',
+        role: 'worker',
+        release: 'v2.4.1',
+        phase: 'Pending',
+        startedAt: '2026-11-17T09:15:00Z',
+        completedAt: '2026-11-17T09:27:00Z',
+      },
+    ],
+    observedGeneration: 2,
+    conditions: [
+      {
+        type: 'GraphAvailable',
+        status: 'True',
+        reason: 'Read',
+        message: 'https://example/graph.json',
+      },
+      {
+        type: 'Progressing',
+        status: 'True',
+        reason: 'Progressing',
+        message: 'v2.5.0: draining cp-2, 3 pods left',
+      },
+      { type: 'Succeeded', status: 'False', reason: 'Progressing' },
+      { type: 'Failed', status: 'False', reason: 'Progressing' },
+    ],
+  };
+  return cu;
+}
+
+/** Marks the in-progress fixture Failed, with the Failed condition the operator sets. */
+export function failWith(
+  cu: ClusterUpgradeObject,
+  reason: string,
+  message: string
+): ClusterUpgradeObject {
+  cu.status!.phase = 'Failed';
+  cu.status!.message = message;
+  cu.status!.conditions = (cu.status!.conditions ?? []).map(c =>
+    c.type === 'Failed'
+      ? { ...c, status: 'True', reason, message }
+      : c.type === 'Progressing'
+      ? { ...c, status: 'False', reason: 'Failed' }
+      : c
+  );
+  return cu;
+}

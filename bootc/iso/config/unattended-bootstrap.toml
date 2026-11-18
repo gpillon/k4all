@@ -1,0 +1,60 @@
+# K4All bootc-image-builder config — Unattended Bootstrap Node
+# Builds an anaconda-iso that auto-installs a bootstrap (first) K4All node.
+# K4All layout: 80% OS (rootvg) / remaining 20% for vg_data, no swap.
+# Note: customizations.user CANNOT coexist with customizations.installer.kickstart
+
+[customizations.iso]
+volume_id = "K4all"
+application_id = "K4all"
+publisher = "gpillon"
+
+[customizations.installer.kickstart]
+contents = """
+text --non-interactive
+
+rootpw --lock
+user --name=core --groups=wheel --password=core --plaintext
+lang en_US.UTF-8
+keyboard us
+timezone UTC --utc
+
+network --bootproto=dhcp --device=link --activate --onboot=on
+services --enabled=sshd
+
+# Apply the same K4All storage policy used by the addon's dedicated spoke.
+%include /tmp/part-include
+
+%addon com_k4all_installer --role=bootstrap --cni=calico --ha=none
+{
+  "networking": {
+    "cni": { "type": "calico" },
+    "firewalld": { "enabled": false }
+  },
+  "cluster": {
+    "apiEndPointUseHostName": false,
+    "ha": { "type": "none" }
+  },
+  "features": {
+    "virt": { "enabled": false, "emulation": "auto" },
+    "argocd": { "enabled": false },
+    "ovsBridge": { "enabled": true }
+  }
+}
+%end
+
+%pre --interpreter=/bin/bash --log=/tmp/k4all-storage-layout.log
+set -euo pipefail
+python3 /usr/share/anaconda/addons/com_k4all_installer/storage_layout.py \
+  --output /tmp/part-include --os-percent 80
+%end
+
+%post --nochroot
+cp /etc/resolv.conf /mnt/sysimage/etc/resolv.conf
+%end
+
+%post
+echo "core ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/core
+%end
+
+reboot --eject
+"""

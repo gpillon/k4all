@@ -1,0 +1,20 @@
+# k4all-upgrade policy (defaults).
+# Copy this file to /etc/k4all-upgrade.yaml to change it on a node.
+#
+# mode:
+#   auto     k4all-upgrade.timer runs the allowed hops inside the window
+#   manual   nothing happens until you run `k4all-upgrade run`
+#   managed  the k4all-operator drives upgrades; the timer does nothing
+mode: auto
+
+# Which hops the timer may run on its own:
+#   patch    only patch releases (same X.Y stream); minor releases wait
+#            for `k4all-upgrade run`
+#   minor    every hop, including Kubernetes minors and Fedora majors
+autoAllow: patch
+
+# Maintenance window, in the node's local time. A window may cross midnight.
+window:
+  days: [Sat]
+  start: "02:30"
+  durationMinutes: 120

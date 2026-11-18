@@ -1,0 +1,10 @@
+[Unit]
+Description=K4All - Setup LVM (vg_data)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-lvm.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,178 @@
+name: Headlamp plugin
+
+# The k4all Headlamp plugin (headlamp-plugin/):
+# - every push or pull request that touches it: lint, type check, tests,
+#   build, and the helm template check of the headlamp component values;
+# - a tag headlamp-plugin-v<version> (or a manual run with a version):
+#   also the image ghcr.io/<owner>/k4all-headlamp-plugin:<version>, for
+#   amd64 and arm64. A k4all release then pins that tag in
+#   bootc/overlay/usr/local/share/k4all-release.yaml (DISTRIBUTION.md).
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["headlamp-plugin-v*"] # path filters are not applied to tags
+    paths:
+      - "headlamp-plugin/**"
+      - "bootc/overlay/usr/local/share/k4all-release.yaml"
+      - ".github/workflows/headlamp-plugin.yaml"
+  pull_request:
+    paths:
+      - "headlamp-plugin/**"
+      - "bootc/overlay/usr/local/share/k4all-release.yaml"
+      - ".github/workflows/headlamp-plugin.yaml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Plugin version to build and push (e.g. 0.1.0); must match headlamp-plugin/plugin/package.json"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/k4all-headlamp-plugin
+
+jobs:
+  # ------------------------------------------------------------------
+  # Lint, type check, unit tests, build
+  # ------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: headlamp-plugin/plugin
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: headlamp-plugin/plugin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run tsc
+
+      - name: Unit tests
+        run: npm test # CI=true on GitHub runners: vitest runs once
+
+      - name: Build
+        run: npm run build
+
+      - name: Keep the built plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: k4all-headlamp-plugin
+          path: |
+            headlamp-plugin/plugin/dist/main.js
+            headlamp-plugin/plugin/package.json
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # The headlamp component of the release renders with the plugin wired in
+  # ------------------------------------------------------------------
+  helm-template:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Install PyYAML
+        run: python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user pyyaml
+
+      - name: Render chart with the release values
+        run: headlamp-plugin/distribution/test-helm-template.sh bootc/overlay/usr/local/share/k4all-release.yaml
+
+  # ------------------------------------------------------------------
+  # Image, on a headlamp-plugin-v<version> tag or a manual run
+  # ------------------------------------------------------------------
+  image:
+    if: startsWith(github.ref, 'refs/tags/headlamp-plugin-v') || github.event_name == 'workflow_dispatch'
+    needs: [test, helm-template]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "${INPUT_VERSION}" ]; then
+            VERSION="${INPUT_VERSION#v}"
+          else
+            VERSION="${GITHUB_REF_NAME#headlamp-plugin-v}"
+          fi
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'${VERSION}' is not a version (X.Y.Z)"
+            exit 1
+          fi
+          PACKAGE="$(jq -r .version headlamp-plugin/plugin/package.json)"
+          if [ "${VERSION}" != "${PACKAGE}" ]; then
+            echo "::error::version ${VERSION} does not match headlamp-plugin/plugin/package.json (${PACKAGE})"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: headlamp-plugin
+          file: headlamp-plugin/Containerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            PLUGIN_VERSION=${{ steps.version.outputs.version }}
+          push: true
+          provenance: false
+          # Never :latest: each k4all release pins its plugin version.
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          cache-from: type=gha,scope=headlamp-plugin
+          cache-to: type=gha,mode=max,scope=headlamp-plugin
+
+      - name: Image reference for k4all-release.yaml
+        run: |
+          {
+            echo "### k4all Headlamp plugin ${{ steps.version.outputs.version }}"
+            echo
+            echo "Pin it in bootc/overlay/usr/local/share/k4all-release.yaml,"
+            echo "spec.components.headlamp.values.initContainers[name=k4all-plugin].image:"
+            echo
+            echo '```'
+            echo "${IMAGE_NAME}:${{ steps.version.outputs.version }}"
+            echo '```'
+            echo
+            echo "Digest: \`${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

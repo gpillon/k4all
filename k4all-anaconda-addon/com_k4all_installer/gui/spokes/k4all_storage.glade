@@ -1,0 +1,560 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk+" version="3.24"/>
+  <requires lib="AnacondaWidgets" version="3.4"/>
+  <object class="AnacondaSpokeWindow" id="k4allStorageSpokeWindow">
+    <property name="can_focus">False</property>
+    <property name="hexpand">True</property>
+    <property name="vexpand">True</property>
+    <property name="window_name" translatable="yes">K4ALL STORAGE &amp; BACKUP</property>
+    <signal name="button-clicked" handler="on_back_clicked" swapped="no"/>
+    <child internal-child="main_box">
+      <object class="GtkBox" id="AnacondaSpokeWindow-main_box">
+        <property name="can_focus">False</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">6</property>
+        <child internal-child="nav_box">
+          <object class="GtkEventBox" id="AnacondaSpokeWindow-nav_box">
+            <property name="can_focus">False</property>
+            <child internal-child="nav_area">
+              <object class="GtkGrid" id="AnacondaSpokeWindow-nav_area">
+                <property name="can_focus">False</property>
+                <property name="margin_left">6</property>
+                <property name="margin_right">6</property>
+                <property name="margin_top">6</property>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">False</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child internal-child="alignment">
+          <object class="GtkAlignment" id="AnacondaSpokeWindow-alignment">
+            <property name="can_focus">False</property>
+            <property name="yalign">0</property>
+            <property name="xscale">1</property>
+            <property name="yscale">1</property>
+            <child internal-child="action_area">
+              <object class="GtkBox" id="AnacondaSpokeWindow-action_area">
+                <property name="can_focus">False</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+
+                <child>
+                  <object class="GtkScrolledWindow" id="storageScrolledWindow">
+                    <property name="visible">True</property>
+                    <property name="can_focus">True</property>
+                    <property name="hscrollbar_policy">never</property>
+                    <property name="vscrollbar_policy">automatic</property>
+                    <property name="shadow_type">none</property>
+                    <property name="min_content_height">400</property>
+                    <child>
+                      <object class="GtkViewport">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="shadow_type">none</property>
+                        <child>
+                  <object class="GtkBox" id="storageContentBox">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">12</property>
+                    <property name="margin_start">24</property>
+                    <property name="margin_end">24</property>
+                    <property name="margin_top">12</property>
+                    <property name="margin_bottom">12</property>
+
+                    <!-- ============================================ -->
+                    <!-- BACKUP / RESTORE SECTION                     -->
+                    <!-- ============================================ -->
+                    <child>
+                      <object class="GtkFrame" id="backupRestoreFrame">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">Backup &amp; Restore</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">8</property>
+                            <property name="margin_start">12</property>
+                            <property name="margin_end">12</property>
+                            <property name="margin_top">12</property>
+                            <property name="margin_bottom">12</property>
+
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Automatically scans all partitions, USB drives, and optical media for K4All backup archives. When a backup is selected, it is copied to a safe location so it survives disk formatting.</property>
+                                <property name="halign">start</property>
+                                <property name="wrap">True</property>
+                                <attributes>
+                                  <attribute name="scale" value="0.9"/>
+                                </attributes>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">0</property>
+                              </packing>
+                            </child>
+
+                            <child>
+                              <object class="GtkBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">12</property>
+
+                                <child>
+                                  <object class="GtkButton" id="scanBackupsButton">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="label" translatable="yes">Scan All Disks</property>
+                                    <property name="tooltip_text" translatable="yes">Automatically mount and scan all partitions, USB drives, and CD/DVDs for K4All backup archives.</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">False</property>
+                                    <property name="position">0</property>
+                                  </packing>
+                                </child>
+
+                                <child>
+                                  <object class="GtkSpinner" id="scanSpinner">
+                                    <property name="visible">False</property>
+                                    <property name="can_focus">False</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">False</property>
+                                    <property name="position">1</property>
+                                  </packing>
+                                </child>
+
+                                <child>
+                                  <object class="GtkComboBoxText" id="backupArchiveCombo">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="hexpand">True</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">True</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">2</property>
+                                  </packing>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">1</property>
+                              </packing>
+                            </child>
+
+                            <child>
+                              <object class="GtkCheckButton" id="restoreEnableCheck">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">Restore from selected backup after installation</property>
+                                <property name="sensitive">False</property>
+                                <property name="tooltip_text" translatable="yes">The selected backup will be safely copied to RAM/tmp before disk formatting, then written to the new system for restoration at first boot.</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">2</property>
+                              </packing>
+                            </child>
+
+                            <child>
+                              <object class="GtkLabel" id="backupDetailsLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">No backups found yet. Click "Scan All Disks" to search all partitions.</property>
+                                <property name="halign">start</property>
+                                <property name="wrap">True</property>
+                                <attributes>
+                                  <attribute name="style" value="italic"/>
+                                  <attribute name="scale" value="0.9"/>
+                                </attributes>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">3</property>
+                              </packing>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">0</property>
+                      </packing>
+                    </child>
+
+                    <!-- ============================================ -->
+                    <!-- EXISTING LVM VOLUMES SECTION                 -->
+                    <!-- ============================================ -->
+                    <child>
+                      <object class="GtkFrame" id="existingVGFrame">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">Existing LVM Volume Groups</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">8</property>
+                            <property name="margin_start">12</property>
+                            <property name="margin_end">12</property>
+                            <property name="margin_top">12</property>
+                            <property name="margin_bottom">12</property>
+
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">If you had a previous K4All installation with TopoLVM data volumes (vg_data), you can preserve them. Check the volumes you want to KEEP — they will NOT be formatted. The installer will only use remaining free space.</property>
+                                <property name="halign">start</property>
+                                <property name="wrap">True</property>
+                                <attributes>
+                                  <attribute name="scale" value="0.9"/>
+                                </attributes>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">0</property>
+                              </packing>
+                            </child>
+
+                            <child>
+                              <object class="GtkButton" id="refreshVGButton">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">Refresh Volume Groups</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">False</property>
+                                <property name="position">1</property>
+                              </packing>
+                            </child>
+
+                            <!-- VG checkboxes will be added dynamically -->
+                            <child>
+                              <object class="GtkBox" id="vgListBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">4</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">2</property>
+                              </packing>
+                            </child>
+
+                            <child>
+                              <object class="GtkLabel" id="vgStatusLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">No existing volume groups detected.</property>
+                                <property name="halign">start</property>
+                                <property name="wrap">True</property>
+                                <attributes>
+                                  <attribute name="style" value="italic"/>
+                                  <attribute name="scale" value="0.9"/>
+                                </attributes>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">3</property>
+                              </packing>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">1</property>
+                      </packing>
+                    </child>
+
+                    <!-- ============================================ -->
+                    <!-- DISK LAYOUT SECTION                          -->
+                    <!-- ============================================ -->
+                    <child>
+                      <object class="GtkFrame" id="diskLayoutFrame">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                        <property name="label" translatable="yes">K4All Disk Layout</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">8</property>
+                            <property name="margin_start">12</property>
+                            <property name="margin_end">12</property>
+                            <property name="margin_top">12</property>
+                            <property name="margin_bottom">12</property>
+
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Apply the K4All recommended disk layout: OS partition + vg_data for TopoLVM storage. Adjust the slider to control how much disk space goes to the OS vs. data. This configures Anaconda's Storage module via D-Bus — you can verify or override in the standard Storage spoke.</property>
+                                <property name="halign">start</property>
+                                <property name="wrap">True</property>
+                                <attributes>
+                                  <attribute name="scale" value="0.9"/>
+                                </attributes>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">0</property>
+                              </packing>
+                            </child>
+
+                            <!-- Target Disk -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">12</property>
+
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="label" translatable="yes">Target Disk:</property>
+                                    <property name="halign">end</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">False</property>
+                                    <property name="position">0</property>
+                                  </packing>
+                                </child>
+
+                                <child>
+                                  <object class="GtkComboBoxText" id="diskTargetCombo">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="hexpand">True</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">True</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">1</property>
+                                  </packing>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">1</property>
+                              </packing>
+                            </child>
+
+                            <!-- Partition info for selected disk -->
+                            <child>
+                              <object class="GtkLabel" id="diskPartitionInfoLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Select a disk to see its current partition layout.</property>
+                                <property name="halign">start</property>
+                                <property name="wrap">True</property>
+                                <property name="selectable">True</property>
+                                <attributes>
+                                  <attribute name="scale" value="0.85"/>
+                                  <attribute name="family" value="monospace"/>
+                                </attributes>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">2</property>
+                              </packing>
+                            </child>
+
+                            <!-- OS / Data slider -->
+                            <child>
+                              <object class="GtkBox">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">12</property>
+
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="label" translatable="yes">OS</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">False</property>
+                                    <property name="position">0</property>
+                                  </packing>
+                                </child>
+
+                                <child>
+                                  <object class="GtkScale" id="osSizeScale">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="hexpand">True</property>
+                                    <property name="orientation">horizontal</property>
+                                    <property name="draw_value">True</property>
+                                    <property name="value_pos">bottom</property>
+                                    <property name="digits">0</property>
+                                    <property name="round_digits">0</property>
+                                    <property name="adjustment">osSizeAdjustment</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">True</property>
+                                    <property name="fill">True</property>
+                                    <property name="position">1</property>
+                                  </packing>
+                                </child>
+
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="visible">True</property>
+                                    <property name="can_focus">False</property>
+                                    <property name="label" translatable="yes">Data (vg_data)</property>
+                                  </object>
+                                  <packing>
+                                    <property name="expand">False</property>
+                                    <property name="fill">False</property>
+                                    <property name="position">2</property>
+                                  </packing>
+                                </child>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">3</property>
+                              </packing>
+                            </child>
+
+                            <child>
+                              <object class="GtkLabel" id="sliderInfoLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">OS: 20% — Data (vg_data): 80%</property>
+                                <property name="halign">center</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">4</property>
+                              </packing>
+                            </child>
+
+                            <!-- Apply button -->
+                            <child>
+                              <object class="GtkButton" id="applyDiskLayoutButton">
+                                <property name="visible">True</property>
+                                <property name="can_focus">True</property>
+                                <property name="label" translatable="yes">Apply K4All Layout to Storage</property>
+                                <property name="tooltip_text" translatable="yes">Configure Anaconda's Storage module with the K4All disk layout via D-Bus. This sets up partitions, volume groups, and logical volumes automatically.</property>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">False</property>
+                                <property name="position">5</property>
+                              </packing>
+                            </child>
+
+                            <child>
+                              <object class="GtkLabel" id="diskLayoutStatusLabel">
+                                <property name="visible">True</property>
+                                <property name="can_focus">False</property>
+                                <property name="label" translatable="yes">Storage not yet configured. Apply K4All layout or configure manually in the Storage spoke.</property>
+                                <property name="halign">start</property>
+                                <property name="wrap">True</property>
+                                <attributes>
+                                  <attribute name="style" value="italic"/>
+                                  <attribute name="scale" value="0.9"/>
+                                </attributes>
+                              </object>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">True</property>
+                                <property name="position">6</property>
+                              </packing>
+                            </child>
+
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">2</property>
+                      </packing>
+                    </child>
+
+                    <!-- Bottom padding -->
+                    <child>
+                      <object class="GtkBox">
+                        <property name="visible">True</property>
+                        <property name="can_focus">False</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">False</property>
+                        <property name="position">3</property>
+                      </packing>
+                    </child>
+
+                  </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                    <property name="position">0</property>
+                  </packing>
+                </child>
+
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">True</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+  </object>
+  <object class="GtkAdjustment" id="osSizeAdjustment">
+    <property name="lower">10</property>
+    <property name="upper">90</property>
+    <property name="value">20</property>
+    <property name="step_increment">5</property>
+    <property name="page_increment">10</property>
+  </object>
+</interface>

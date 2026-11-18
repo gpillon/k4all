@@ -1,0 +1,263 @@
+# K4All bootc image
+# Base: Fedora bootc
+# This image contains all required packages for Kubernetes nodes (kubeadm, kubelet, kubectl, CRI-O, etc.)
+# The actual cluster configuration is done at install time via Anaconda addon or at first boot.
+
+# Version lines of this release. They must match the release's entry in
+# upgrade/releases.yaml (checked by bootc/tests/upgrade/test_image_contract.py).
+ARG FEDORA_MAJOR=45
+FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR}
+
+ARG FEDORA_MAJOR
+ARG K4ALL_VERSION=dev
+ARG KUBERNETES_VERSION=1.36.6
+ARG CRIO_PACKAGE=cri-o1.36
+ARG CRIO_MINOR=1.36
+ARG YQ_VERSION=v4.53.3
+ARG HELM_VERSION=v3.22.1
+# ============================================================================
+# REPOS
+# ============================================================================
+# Kubernetes repo
+COPY overlay/etc/yum.repos.d/kubernetes.repo /etc/yum.repos.d/kubernetes.repo
+
+# # CRI-O repo (from OpenSUSE OBS for EL9)
+# RUN cat > /etc/yum.repos.d/cri-o.repo <<'EOF'
+# [cri-o]
+# name=CRI-O
+# baseurl=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.31/rpm/
+# enabled=1
+# gpgcheck=1
+# gpgkey=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.31/rpm/repodata/repomd.xml.key
+# EOF
+
+# ============================================================================
+# PACKAGES
+# ============================================================================
+# Install all required packages in a single layer for efficiency
+# Kubernetes components, CRI-O, networking, LVM, firewall, HA, tools
+# No etcd package (Fedora 45 has none): k4all-backup.sh and k4all-restore.sh
+# run etcdctl/etcdutl from the control plane's etcd image through podman.
+
+RUN dnf install -y \
+    kubeadm-${KUBERNETES_VERSION} kubelet-${KUBERNETES_VERSION} kubectl-${KUBERNETES_VERSION} \
+    ${CRIO_PACKAGE} \
+    openvswitch NetworkManager-ovs \
+    nmstate \
+    skopeo \
+    lvm2 \
+    jq \
+    firewalld \
+    cri-tools \
+    keepalived \
+    openssl bash-completion tar gzip curl wget git python3 \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /run/dnf
+
+# Fedora 45 keeps its repo files in /usr/share/dnf5/repos.d. bootc-image-builder
+# resolves the installer's packages only from /etc/yum.repos.d, so the ISO
+# build finds no Fedora repo without these links. dnf5 reads both directories.
+# The links are relative: bootc-image-builder reads the image mounted under
+# another root, where an absolute link would point outside the image.
+RUN for f in /usr/share/dnf5/repos.d/*.repo; do \
+        [ -e "$f" ] || continue; \
+        b="$(basename "$f")"; \
+        [ -e "/etc/yum.repos.d/$b" ] || ln -s "../../usr/share/dnf5/repos.d/$b" "/etc/yum.repos.d/$b"; \
+    done
+
+# Fedora 45's containers-common keeps policy.json and registries.conf in
+# /usr/share/containers. CRI-O reads the signature policy only from
+# /etc/containers/policy.json: without it every image pull fails ("no
+# policy.json file found"). Relative links, as for the repo files above.
+RUN for f in policy.json registries.conf; do \
+        [ -e "/etc/containers/$f" ] || [ ! -e "/usr/share/containers/$f" ] || \
+            ln -s "../../usr/share/containers/$f" "/etc/containers/$f"; \
+    done
+
+# CRI-O's example networks (100-crio-bridge.conflist, 200-loopback.conflist)
+# stay out of /etc/cni/net.d. Pods that start on the bridge before the
+# cluster's CNI get 10.85.0.0/16 addresses that no other node can route
+# (coredns among them); without the bridge, loopback would become the default
+# network. A node that joins a cluster waits for the cluster's CNI instead.
+# Only a new bootstrap node borrows the bridge, until the k4all-operator, whose
+# pod needs a network, has installed that CNI (lend_crio_bridge_cni in
+# k4all-utils). Existing nodes lose the unchanged files with the next image
+# (ostree's /etc merge); k4all-migrate-config.sh removes changed ones.
+RUN mkdir -p /usr/local/share/k4all-cni && \
+    for f in 100-crio-bridge.conflist 200-loopback.conflist; do \
+        [ ! -e "/etc/cni/net.d/$f" ] || mv "/etc/cni/net.d/$f" /usr/local/share/k4all-cni/; \
+    done && \
+    test -s /usr/local/share/k4all-cni/100-crio-bridge.conflist
+
+# Install yq (not available in standard repos), pinned
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then GOARCH="amd64"; else GOARCH="arm64"; fi && \
+    curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${GOARCH}" -o /usr/local/bin/yq && \
+    chmod +x /usr/local/bin/yq
+
+# Install Helm (build-time instead of runtime), pinned
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then GOARCH="amd64"; else GOARCH="arm64"; fi && \
+    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${GOARCH}.tar.gz" | \
+        tar -xz -C /tmp "linux-${GOARCH}/helm" && \
+    install -m 0755 "/tmp/linux-${GOARCH}/helm" /usr/local/bin/helm && \
+    rm -rf "/tmp/linux-${GOARCH}" && \
+    helm completion bash > /etc/bash_completion.d/helm
+
+# ============================================================================
+# SYSCTL CONFIGURATION
+# ============================================================================
+COPY overlay/etc/sysctl.d/k8s.conf /etc/sysctl.d/k8s.conf
+
+# Short image names resolve on docker.io only (see the file for why)
+COPY overlay/etc/containers/registries.conf.d/50-k4all-short-names.conf \
+     /etc/containers/registries.conf.d/50-k4all-short-names.conf
+
+# ============================================================================
+# SCRIPTS AND MANIFESTS
+# ============================================================================
+# K4All utility scripts
+COPY overlay/usr/local/bin/ /usr/local/bin/
+RUN find /usr/local/bin -type f \( -name '*.sh' -o -name 'k4all-*' \) -exec chmod +x {} + && \
+    chmod +x /usr/local/bin/k4all-utils 2>/dev/null || true
+
+# K4All manifests and values
+COPY overlay/usr/local/share/ /usr/local/share/
+
+# Default cluster config (will be overwritten by Anaconda addon or first-boot)
+COPY overlay/etc/k4all-config.yaml.default /usr/local/share/k4all-config.yaml.default
+
+# k4all-release.yaml is already in overlay/usr/local/share/ (copied above)
+
+# Upgrade graph and the release this image is (read by k4all-upgrade)
+COPY upgrade/releases.yaml /tmp/k4all-releases.yaml
+RUN mkdir -p /usr/local/share/k4all-upgrade && \
+    yq -o=json '.' /tmp/k4all-releases.yaml > /usr/local/share/k4all-upgrade/releases.json && \
+    rm -f /tmp/k4all-releases.yaml && \
+    printf '%s\n' "${K4ALL_VERSION}" > /usr/local/share/k4all-upgrade/version
+
+# ============================================================================
+# SYSTEMD UNITS
+# ============================================================================
+COPY systemd/*.service /etc/systemd/system/
+COPY systemd/*.timer /etc/systemd/system/
+COPY overlay/etc/systemd/system/kubelet.service.d/ /etc/systemd/system/kubelet.service.d/
+
+# Enable services that should start at boot
+RUN systemctl enable crio.service && \
+    systemctl enable kubelet.service && \
+    systemctl enable openvswitch.service
+
+# Enable pre-operator bootstrap services (these must run before the operator deploys)
+RUN systemctl enable fck8s-first-boot.service && \
+    systemctl enable fck8s-set-hostname.service && \
+    systemctl enable fck8s-setup-proxy.service && \
+    systemctl enable fck8s-role-dispatcher.service && \
+    systemctl enable fck8s-k8s-setup-ph2.service && \
+    systemctl enable fck8s-k8s-setup-ph3.service && \
+    systemctl enable fck8s-k8s-setup-init.service && \
+    systemctl enable fck8s-lvm-setup.service && \
+    # systemctl enable fck8s-node-ready-and-schedulable.service && \
+    # systemctl enable fck8s-taint-master-schedulable.service && \
+    systemctl enable fck8s-restore.service && \
+    # systemctl enable fck8s-auto-join.service && \
+    # systemctl enable fck8s-operator-deploy.service && \
+    # systemctl enable fck8s-update-routes.timer && \
+    systemctl enable fck8s-migrate.service
+
+# Upgrades: k4all-upgrade walks release hops (kubeadm first, then reboot).
+# bootc's own timer runs `bootc upgrade --apply`, which would reboot into a
+# new Kubernetes minor without kubeadm: it stays masked. The agent timer
+# follows the k4all-operator's ClusterUpgrade through Node annotations; until
+# an operator writes upgrade-target (from v2.4.0) it only publishes the
+# node's release and node-type.
+RUN systemctl mask bootc-fetch-apply-updates.timer && \
+    systemctl enable k4all-upgrade.timer && \
+    systemctl enable k4all-upgrade-resume.service && \
+    systemctl enable k4all-upgrade-agent.timer
+
+# Component-install services (cni, ingress, dashboard, etc.) are now managed
+# by the k4all-operator and are NOT enabled as systemd units.
+
+# ============================================================================
+# DIRECTORIES (bootc composefs makes / read-only; use /var for writable paths)
+# ============================================================================
+RUN mkdir -p /var/opt/k4all /var/opt/k4all/bin /var/opt/cni/bin /var/opt/libexec/kubernetes/kubelet-plugins/volume/exec/ && \
+    rm -rf /opt/k4all /opt/cni /opt/libexec && \
+    ln -sf /var/opt/k4all /opt/k4all && \
+    ln -sf /var/opt/cni /opt/cni && \
+    ln -sf /var/opt/libexec /opt/libexec && \
+    mkdir -p /var/roothome/.kube
+
+# PATH for systemd services: include /var/opt/k4all/bin for runtime overrides/binaries
+RUN mkdir -p /etc/systemd/system.conf.d && \
+    printf '[Manager]\nDefaultEnvironment=PATH=/var/opt/k4all/bin:/usr/local/bin:/usr/bin:/bin\n' \
+    > /etc/systemd/system.conf.d/k4all-path.conf
+
+# PATH for interactive shells
+RUN printf 'export PATH="/var/opt/k4all/bin:$PATH"\n' > /etc/profile.d/k4all-path.sh
+
+# CRI-O drop-in: ensure plugin_dirs resolve through the /opt/cni symlink
+RUN mkdir -p /etc/crio/crio.conf.d && \
+    printf '[crio.network]\nplugin_dirs = [\n\t"/opt/cni/bin",\n\t"/usr/libexec/cni",\n]\n' \
+    > /etc/crio/crio.conf.d/10-k4all-cni-dirs.conf
+
+RUN useradd -m -d /var/home/core -G wheel -s /bin/bash core && \
+    echo "core ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/core && \
+    mkdir -p /var/home/core/.kube /var/roothome/.kube && \
+    echo 'core:core' | chpasswd
+
+# Operator manifest (fallback for deploy-operator.sh) and pre-pulled images.
+# The operator version is the one pinned in k4all-release.yaml. It must be a
+# release tag: with "latest", operator v0.1.x replaces itself with every new
+# stable operator release, without waiting for a k4all release.
+# Images live under /usr: bootc refreshes /usr on every upgrade, never /var,
+# and k4all-upgrade loads the next release's images from the staged image.
+# kube-vip's image is there for k4all-upgrade, which writes kube-vip's static
+# pod on the control planes of HA clusters after a reboot, once the manifest
+# pins a kube-vip release (v2.4.0); with "latest" nothing is cached and
+# k4all-upgrade leaves kube-vip.yaml as it is.
+# Traefik's image is there too: it replaces ingress-nginx during the v2.4.0
+# manifest sync, and with the image local it starts without waiting on a
+# pull. Its tag is the appVersion of the pinned chart.
+RUN set -eux; \
+    OPERATOR_VERSION="$(yq '.spec.components.k4all-operator.version' /usr/local/share/k4all-release.yaml)"; \
+    case "$OPERATOR_VERSION" in v[0-9]*) ;; \
+    *) echo "k4all-release.yaml: k4all-operator.version must be a release tag, got '${OPERATOR_VERSION}'" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/gpillon/k4all-operator/releases/download/${OPERATOR_VERSION}/install.yaml" \
+        -o /usr/local/share/k4all-operator-install.yaml; \
+    mkdir -p /usr/local/share/k4all-images; \
+    kubeadm config images list --kubernetes-version "v${KUBERNETES_VERSION}" > /tmp/k8s-images.txt; \
+    echo "ghcr.io/gpillon/k4all-operator:${OPERATOR_VERSION}" >> /tmp/k8s-images.txt; \
+    KUBE_VIP_VERSION="$(yq '.spec.components.kube-vip.version' /usr/local/share/k4all-release.yaml)"; \
+    case "$KUBE_VIP_VERSION" in v[0-9]*) \
+        echo "ghcr.io/kube-vip/kube-vip:${KUBE_VIP_VERSION}" >> /tmp/k8s-images.txt ;; \
+    esac; \
+    TRAEFIK_CHART="$(yq '.spec.components.traefik.version' /usr/local/share/k4all-release.yaml)"; \
+    TRAEFIK_REPO="$(yq '.spec.components.traefik.repo' /usr/local/share/k4all-release.yaml)"; \
+    TRAEFIK_TAG="$(HELM_CACHE_HOME=/tmp/helm HELM_CONFIG_HOME=/tmp/helm HELM_DATA_HOME=/tmp/helm \
+        helm show chart traefik --repo "$TRAEFIK_REPO" --version "$TRAEFIK_CHART" | yq '.appVersion')"; \
+    rm -rf /tmp/helm; \
+    case "$TRAEFIK_TAG" in v[0-9]*) ;; *) echo "no appVersion for traefik chart ${TRAEFIK_CHART}" >&2; exit 1 ;; esac; \
+    echo "docker.io/traefik:${TRAEFIK_TAG}" >> /tmp/k8s-images.txt; \
+    while read -r img; do \
+    file="$(printf '%s' "$img" | tr '/:@' '_')"; \
+    skopeo copy \
+        "docker://$img" \
+        "docker-archive:/usr/local/share/k4all-images/${file}.tar:${img}"; \
+    done < /tmp/k8s-images.txt; \
+    rm -f /tmp/k8s-images.txt
+
+# ============================================================================
+# BOOTC LABELS
+# ============================================================================
+LABEL com.redhat.bootc.base="quay.io/fedora/fedora-bootc:${FEDORA_MAJOR}"
+LABEL org.opencontainers.image.title="K4All - Kubernetes for All"
+LABEL org.opencontainers.image.description="Bootc image with Kubernetes (kubeadm/kubelet/kubectl), CRI-O, and K4All tooling"
+LABEL org.opencontainers.image.version="${K4ALL_VERSION}"
+LABEL io.k4all.version="${K4ALL_VERSION}"
+LABEL io.k4all.kubernetes="${KUBERNETES_VERSION}"
+LABEL io.k4all.crio="${CRIO_MINOR}"
+LABEL io.k4all.fedora="${FEDORA_MAJOR}"
+LABEL org.opencontainers.image.source https://github.com/gpillon/k4all

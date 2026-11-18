@@ -1,0 +1,353 @@
+/*
+ * TypeScript mirror of the k4all-operator API (group k4all.magesgate.com,
+ * version v1alpha1), as of k4all-operator v0.4.0 (api/v1alpha1/*.go).
+ *
+ * Every field is optional: the operator's Go types use omitempty, so a field
+ * the user never set is simply missing from the object the API server returns.
+ */
+
+export const K4ALL_GROUP = 'k4all.magesgate.com';
+export const K4ALL_API_VERSION = 'v1alpha1';
+export const K4ALL_GROUP_VERSION = `${K4ALL_GROUP}/${K4ALL_API_VERSION}`;
+
+/** Set by k4all-upgrade on its Node while an OS/Kubernetes hop runs ("<from>-><to>"). */
+export const UPGRADE_IN_PROGRESS_ANNOTATION = 'k4all.magesgate.com/upgrade-in-progress';
+/** On the ReleaseManifest: component name, or "all", to re-apply. Removed by the operator. */
+export const FORCE_RESYNC_ANNOTATION = 'k4all.magesgate.com/force-resync';
+/** fieldManager used for every write, so managedFields show who changed what. */
+export const FIELD_MANAGER = 'k4all-headlamp';
+
+/** The names the k4all installer and the release use. */
+export const DEFAULT_CLUSTER_CONFIG_NAME = 'k4all-cluster-config';
+export const DEFAULT_RELEASE_MANIFEST_NAME = 'k4all';
+
+export interface ObjectMeta {
+  name: string;
+  uid?: string;
+  resourceVersion?: string;
+  generation?: number;
+  creationTimestamp?: string;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+}
+
+export interface Condition {
+  type: string;
+  status: 'True' | 'False' | 'Unknown' | string;
+  reason?: string;
+  message?: string;
+  lastTransitionTime?: string;
+  observedGeneration?: number;
+}
+
+// ---------------------------------------------------------------- ClusterConfig
+
+export type CNIType = 'calico' | 'cilium';
+export type HAType = 'none' | 'keepalived' | 'kubevip';
+export type EmulationMode = 'true' | 'false' | 'auto';
+
+export interface CiliumConfig {
+  additionalDevices?: string[];
+  l2announcements?: boolean;
+  hubble?: boolean;
+  gatewayAPI?: boolean;
+}
+
+export interface IngressControllerConfig {
+  dedicatedIP?: string;
+  isDefault?: boolean;
+}
+
+export interface ComponentOverride {
+  /** Arbitrary Helm values, deep-merged over the ReleaseManifest values. */
+  values?: Record<string, unknown>;
+  /** "--set key=value" style arguments, applied after values. */
+  helmArgs?: string[];
+}
+
+export interface ClusterConfigSpec {
+  networking?: {
+    cni?: { type?: CNIType | string; cilium?: CiliumConfig };
+    firewalld?: { enabled?: boolean };
+  };
+  features?: {
+    virt?: { enabled?: boolean; emulation?: EmulationMode | string };
+    argocd?: { enabled?: boolean };
+    ovsCni?: { enabled?: boolean };
+    ovsBridge?: { enabled?: boolean };
+  };
+  cluster?: {
+    apiEndPointUseHostName?: boolean;
+    customApiEndPoint?: string;
+    podNetwork?: string;
+    serviceNetwork?: string;
+    ha?: {
+      interface?: string;
+      type?: HAType | string;
+      apiControlEndpoint?: string;
+      apiControlEndpointSubnetSize?: string;
+    };
+  };
+  ingress?: {
+    nginx?: IngressControllerConfig;
+    traefik?: IngressControllerConfig;
+    cilium?: { dedicatedIP?: string };
+  };
+  proxy?: { httpProxy?: string; httpsProxy?: string; noProxy?: string };
+  componentOverrides?: Record<string, ComponentOverride>;
+}
+
+export interface ClusterConfigStatus {
+  conditions?: Condition[];
+  observedGeneration?: number;
+  activeCNI?: string;
+  features?: {
+    virtReady?: boolean;
+    argocdReady?: boolean;
+    ovsCniReady?: boolean;
+    ovsBridgeReady?: boolean;
+  };
+  lastReconcileTime?: string;
+}
+
+export interface ClusterConfigObject {
+  apiVersion?: string;
+  kind?: string;
+  metadata: ObjectMeta;
+  spec?: ClusterConfigSpec;
+  status?: ClusterConfigStatus;
+}
+
+// -------------------------------------------------------------- ReleaseManifest
+
+export type ComponentType = 'helm' | 'helm-oci' | 'manifest' | 'binary' | 'static-pod';
+export type ComponentManagement = 'Managed' | 'Removed' | 'Unmanaged';
+export type ComponentState =
+  | 'Pending'
+  | 'Installing'
+  | 'Installed'
+  | 'Upgrading'
+  | 'Failed'
+  | 'Uninstalling'
+  | 'Skipped'
+  | 'Removed'
+  | 'Unmanaged';
+
+export interface UpgradeStep {
+  version: string;
+  helmArgs?: string[];
+  values?: Record<string, unknown>;
+}
+
+export interface ComponentSpec {
+  type: ComponentType | string;
+  management?: ComponentManagement | string;
+  version: string;
+  versionUrl?: string;
+  repo?: string;
+  chart?: string;
+  source?: string;
+  sources?: string[];
+  namespace?: string;
+  values?: Record<string, unknown>;
+  valuesFrom?: { kind: string; name: string; namespace?: string; valuesKey?: string }[];
+  helmArgs?: string[];
+  installPath?: string;
+  image?: string;
+  dependsOn?: string[];
+  patches?: unknown[];
+  inlineManifests?: string[];
+  custom?: Record<string, string>;
+  upgradePath?: UpgradeStep[];
+  featureGate?: string;
+}
+
+export interface ComponentStatus {
+  state?: ComponentState | string;
+  installedVersion?: string;
+  appliedHash?: string;
+  message?: string;
+  lastTransitionTime?: string;
+}
+
+export interface ReleaseManifestObject {
+  apiVersion?: string;
+  kind?: string;
+  metadata: ObjectMeta;
+  spec?: {
+    osImage?: { name?: string; repository?: string; imageTag?: string };
+    components?: Record<string, ComponentSpec>;
+  };
+  status?: {
+    components?: Record<string, ComponentStatus>;
+    conditions?: Condition[];
+    resolvedOSImageTag?: string;
+  };
+}
+
+// ------------------------------------------------------------------- NodeConfig
+
+export interface NodeConfigObject {
+  metadata: ObjectMeta;
+  status?: {
+    nodeName?: string;
+    nodeType?: 'bootstrap' | 'control' | 'worker' | string;
+    availableInterfaces?: { name: string; mac: string }[];
+    networkInterface?: {
+      state?: string;
+      phase?: string;
+      message?: string;
+      lastUpdateTime?: string;
+    };
+  };
+}
+
+// ------------------------------------------------------------------------ Nodes
+
+/** The part of a core/v1 Node the plugin reads. */
+export interface NodeLike {
+  metadata: ObjectMeta;
+  spec?: { unschedulable?: boolean };
+  status?: {
+    addresses?: { type: string; address: string }[];
+    conditions?: Condition[];
+    nodeInfo?: {
+      kubeletVersion?: string;
+      osImage?: string;
+      containerRuntimeVersion?: string;
+      kernelVersion?: string;
+      architecture?: string;
+    };
+  };
+}
+
+// --------------------------------------------------------------- ClusterUpgrade
+
+/** The only ClusterUpgrade; k4all-operator (v0.4.0+) creates it with an empty spec. */
+export const CLUSTER_UPGRADE_NAME = 'k4all';
+/** On the ClusterUpgrade: retry the nodes whose hop failed. The operator removes it. */
+export const RETRY_ANNOTATION = 'k4all.magesgate.com/retry';
+/** The graph k4all-upgrade reads on the nodes, used when spec.graphUrl is empty. */
+export const DEFAULT_UPGRADE_GRAPH_URL =
+  'https://github.com/gpillon/k4all/releases/latest/download/upgrade-graph.json';
+
+/** Node annotations of the protocol between k4all-operator and k4all-upgrade. */
+export const NODE_RELEASE_ANNOTATION = 'k4all.magesgate.com/release';
+export const NODE_TYPE_ANNOTATION = 'k4all.magesgate.com/node-type';
+export const NODE_UPGRADE_PHASE_ANNOTATION = 'k4all.magesgate.com/upgrade-phase';
+export const NODE_UPGRADE_MESSAGE_ANNOTATION = 'k4all.magesgate.com/upgrade-message';
+export const NODE_UPGRADE_TARGET_ANNOTATION = 'k4all.magesgate.com/upgrade-target';
+
+export type ClusterUpgradePhase = 'Idle' | 'Paused' | 'Progressing' | 'Succeeded' | 'Failed';
+export type HopPhase = 'Done' | 'InProgress' | 'Pending';
+export type NodeUpgradePhase = 'Pending' | 'Draining' | 'Upgrading' | 'Done' | 'Failed';
+
+/**
+ * Why a node failed, or what the upgrade waits for on it. Retry (the retry
+ * annotation) acts on DrainTimeout and Abandoned only; a HOLD (HostHold,
+ * TargetRejected, RollbackRebooted) goes on once resumed on the node;
+ * NodeNotReady is not a failure.
+ */
+export type NodeUpgradeReason =
+  | 'DrainTimeout'
+  | 'HostHold'
+  | 'Abandoned'
+  | 'TargetRejected'
+  | 'RollbackRebooted'
+  | 'NodeNotReady';
+
+/** ClusterUpgrade condition types (k4all-operator v0.4.0). */
+export const CONDITION_GRAPH_AVAILABLE = 'GraphAvailable';
+export const CONDITION_PROGRESSING = 'Progressing';
+export const CONDITION_SUCCEEDED = 'Succeeded';
+export const CONDITION_FAILED = 'Failed';
+
+export interface DrainSpec {
+  /** Minutes to wait for the evictions (default 30). */
+  timeoutMinutes?: number;
+  /** Run the hop anyway when the drain times out. */
+  continueOnTimeout?: boolean;
+}
+
+export interface ClusterUpgradeSpec {
+  /** Release to bring every node to; empty means none. Lowering or clearing stops after the current node. */
+  targetRelease?: string;
+  /** Upgrade graph; empty means the k4all release graph on GitHub. */
+  graphUrl?: string;
+  /** Stops the upgrade before the next node. */
+  paused?: boolean;
+  drain?: DrainSpec;
+}
+
+export interface Hop {
+  release: string;
+  kind?: 'minor' | 'patch' | string;
+  phase: HopPhase | string;
+  /** When the hop became InProgress. */
+  startedAt?: string;
+  /** When every node had run it. */
+  completedAt?: string;
+}
+
+export interface ReleaseInfo {
+  version: string;
+  kind?: 'minor' | 'patch' | string;
+  /** kubelet version in the image, e.g. "1.36.4". */
+  kubernetes?: string;
+  fedora?: number;
+  notes?: string;
+  /** The oldest release that may switch straight to this one. */
+  minFrom?: string;
+  /** CRI-O minor of the image. */
+  crio?: string;
+  /**
+   * Only in availableReleases: the hops from currentRelease to this release,
+   * as the operator plans them; empty when the graph has no way there.
+   */
+  path?: string[];
+}
+
+export interface NodeUpgradeStatus {
+  name: string;
+  /** bootstrap, control or worker: the upgrade order. */
+  role?: string;
+  /** Release the node runs (its last committed release). */
+  release?: string;
+  phase: NodeUpgradePhase | string;
+  /** k4all-upgrade's phase on the node: PREFLIGHT ... COMMIT, HOLD, ABANDONED. */
+  hostPhase?: string;
+  message?: string;
+  reason?: NodeUpgradeReason | string;
+  /** When the operator cordoned the node for the current hop; a retry starts it over. */
+  drainStartedAt?: string;
+  /** When the operator started the node's latest hop (its cordon). */
+  startedAt?: string;
+  /** When the node finished its latest hop. */
+  completedAt?: string;
+}
+
+export interface ClusterUpgradeStatus {
+  phase?: ClusterUpgradePhase | string;
+  message?: string;
+  /** The oldest release among the nodes. */
+  currentRelease?: string;
+  /** The graph's entry for currentRelease (Kubernetes, CRI-O, Fedora). */
+  currentReleaseInfo?: ReleaseInfo;
+  /** Release of the hop in progress. */
+  currentHop?: string;
+  path?: Hop[];
+  /** Releases newer than currentRelease that targetRelease can name, oldest first. */
+  availableReleases?: ReleaseInfo[];
+  nodes?: NodeUpgradeStatus[];
+  graphUrl?: string;
+  observedGeneration?: number;
+  conditions?: Condition[];
+}
+
+export interface ClusterUpgradeObject {
+  apiVersion?: string;
+  kind?: string;
+  metadata: ObjectMeta;
+  spec?: ClusterUpgradeSpec;
+  status?: ClusterUpgradeStatus;
+}

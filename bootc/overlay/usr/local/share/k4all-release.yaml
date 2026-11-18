@@ -1,0 +1,531 @@
+apiVersion: k4all.magesgate.com/v1alpha1
+kind: ReleaseManifest
+metadata:
+  name: k4all
+# Centralized source-of-truth for all K4All component versions.
+# This file is baked into the bootc image at /usr/local/share/k4all-release.yaml.
+# At first boot, it is copied to /etc/k4all-release.yaml if not already present.
+# The migration script updates component versions from the base release to /etc/k4all-release.yaml
+# while preserving user customizations in the `custom` section of each component.
+spec:
+  # The `os-image.imageTag` is stamped by CI during build.
+  osImage:
+    name: k4all-bootc
+    repository: ghcr.io/gpillon/k4all-bootc
+    imageTag: latest
+  components:
+    # --- CNI ---
+    calico:
+      type: manifest
+      # 3.33 is tested on Kubernetes 1.35-1.37 but only upgrades from the two
+      # previous minors; 3.32 upgrades from 3.15+. From 3.30 the CRDs are no
+      # longer in tigera-operator.yaml and must be applied first (server-side).
+      version: "v3.33.1"
+      sources:
+        - "https://raw.githubusercontent.com/projectcalico/calico/{{ version }}/manifests/v1_crd_projectcalico_org.yaml"
+        - "https://raw.githubusercontent.com/projectcalico/calico/{{ version }}/manifests/tigera-operator.yaml"
+      upgradePath:
+        - version: "v3.32.4"
+      namespace: tigera-operator
+      inlineManifests:
+        - |
+          apiVersion: operator.tigera.io/v1
+          kind: Installation
+          metadata:
+            name: default
+          spec:
+            # Keep it explicit: without it tigera-operator defaults to
+            # /usr/libexec/kubernetes/kubelet-plugins/volume/exec/ (read-only on bootc).
+            flexVolumePath: /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
+            calicoNetwork:
+              ipPools:
+              - blockSize: 22
+                cidr: 10.100.0.1/18
+                encapsulation: VXLANCrossSubnet
+                natOutgoing: Enabled
+                nodeSelector: all()
+        - |
+          apiVersion: operator.tigera.io/v1
+          kind: APIServer
+          metadata:
+            name: default
+          spec: {}
+      custom: {}
+
+    cilium:
+      type: helm-oci
+      # 1.20 is tested on Kubernetes 1.33-1.36 (1.37 needs 1.21, not released
+      # yet) and needs Gateway API >= v1.6.1. One minor at a time.
+      version: "1.20.4"
+      upgradePath:
+        - version: "1.19.10"
+      repo: "quay.io/cilium/charts/cilium"
+      namespace: kube-system
+      # Gateway API CRDs must exist before the Cilium operator starts,
+      # otherwise networking.cni.cilium.gatewayAPI is silently ignored.
+      dependsOn:
+        - gateway-api
+      custom: {}
+
+    cilium-cli:
+      type: binary
+      version: "v0.20.3"
+      source: "https://github.com/cilium/cilium-cli/releases/download/{{ version }}/cilium-linux-{{ arch }}.tar.gz"
+      installPath: /var/opt/k4all/bin
+      dependsOn:
+        - cilium
+      custom: {}
+
+    # --- Networking ---
+    metallb:
+      type: manifest
+      # v0.15.3 fails on Kubernetes 1.36 (metallb#3034, fixed in v0.16.0).
+      version: "v0.16.2"
+      source: "https://raw.githubusercontent.com/metallb/metallb/{{ version }}/config/manifests/metallb-native.yaml"
+      namespace: metallb-system
+      dependsOn:
+        - calico
+        - cilium
+      custom: {}
+
+    gateway-api:
+      type: manifest
+      # The version Cilium 1.20 pins; must be applied before Cilium 1.20.
+      version: "v1.6.3"
+      source: "https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ version }}/standard-install.yaml"
+      custom: {}
+
+    nmstate:
+      custom: {}
+      dependsOn:
+        - calico
+        - cilium
+      management: Managed
+      namespace: nmstate
+      inlineManifests:
+        - |
+          apiVersion: nmstate.io/v1
+          kind: NMState
+          metadata:
+            name: nmstate
+      sources:
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/nmstate.io_nmstates.yaml
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/namespace.yaml
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/service_account.yaml
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/role.yaml
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/role_binding.yaml
+        - https://github.com/nmstate/kubernetes-nmstate/releases/download/{{ version }}/operator.yaml
+      type: manifest
+      version: v0.87.3
+
+    # --- HA ---
+    kube-vip:
+      type: static-pod
+      # The host writes kube-vip's static-pod manifest on each control plane
+      # (setup-k8s-ph3.sh, k4all-upgrade). The operator's static-pod type
+      # writes the image alone, without settings, and the API VIP goes away.
+      # The version is the one the host writes.
+      management: Unmanaged
+      # Not v1.3.0: upstream asks not to install it.
+      version: "v1.3.1"
+      image: "ghcr.io/kube-vip/kube-vip:{{ version }}"
+      namespace: kube-system
+      custom: {}
+
+    # --- Ingress ---
+    # No ingress-nginx entry from v2.6.0: v2.4.0, a mandatory stop, set it
+    # to management: Removed and uninstalled it on every cluster. The
+    # ReleaseManifest sync keeps that entry on clusters that have it.
+    traefik:
+      type: helm
+      # Traefik v3.7.18. k4all's own routes (Headlamp, Argo CD) use the
+      # traefik class. Its Ingress-NGINX provider still serves users'
+      # Ingresses of class "nginx" with their nginx.ingress.kubernetes.io
+      # annotations (ssl-passthrough included), until they move to traefik.
+      # The operator's Traefik hook adds the service, the host ports and the
+      # default class from ClusterConfig spec.ingress.traefik (or
+      # spec.ingress.nginx on clusters installed before v2.4.0, until the
+      # operator moves it).
+      version: "42.4.0"
+      repo: "https://traefik.github.io/charts"
+      chart: traefik
+      namespace: traefik
+      values:
+        deployment:
+          kind: DaemonSet
+        nodeSelector:
+          kubernetes.io/os: linux
+          node-role.kubernetes.io/control-plane: ""
+        providers:
+          kubernetesIngressNGINX:
+            enabled: true
+          kubernetesIngress:
+            enabled: true
+          kubernetesCRD:
+            enabled: true
+        ingressClass:
+          enabled: true
+          name: traefik
+        extraObjects:
+          # For users' Ingresses only. The provider only follows Ingresses
+          # whose class has the ingress-nginx controller; the chart creates
+          # only the traefik class. Never the default class: the hook makes
+          # traefik the default instead.
+          - apiVersion: networking.k8s.io/v1
+            kind: IngressClass
+            metadata:
+              name: nginx
+              annotations:
+                ingressclass.kubernetes.io/is-default-class: "false"
+            spec:
+              controller: k8s.io/ingress-nginx
+          # What ingress-nginx's force-ssl-redirect did: routes name it with
+          # traefik.ingress.kubernetes.io/router.middlewares:
+          # traefik-redirect-https@kubernetescrd. On the websecure entry
+          # point the request is already https and goes through.
+          - apiVersion: traefik.io/v1alpha1
+            kind: Middleware
+            metadata:
+              name: redirect-https
+              namespace: traefik
+            spec:
+              redirectScheme:
+                scheme: https
+                permanent: true
+      # MetalLB only: the operator's helm wait needs the LoadBalancer IP.
+      # Traefik does not use cert-manager; that dependency came from
+      # ingress-nginx.
+      dependsOn:
+        - metallb
+      custom: {}
+
+    # --- Storage ---
+    topolvm:
+      type: helm
+      # App 0.42.x supports Kubernetes 1.34-1.36; nothing supports 1.37 yet.
+      version: "17.3.1"
+      repo: "https://topolvm.github.io/topolvm"
+      chart: topolvm
+      namespace: topolvm-system
+      values:
+        controller:
+          replicaCount: 1
+          # The chart's required pod anti-affinity (one controller per node)
+          # stops a surge rollout on a single node: the new pod never
+          # schedules and the old one never leaves. Replace it instead.
+          updateStrategy:
+            type: RollingUpdate
+            rollingUpdate:
+              maxSurge: 0
+              maxUnavailable: 1
+        lvmd:
+          deviceClasses:
+            - name: default
+              volume-group: vg_data
+              default: true
+              spare-gb: 5
+              type: thin
+              thin-pool:
+                name: thin-pool
+                overprovision-ratio: 4.0
+        # The subchart would run a second cert-manager (~1.17) next to the
+        # standalone one; TopoLVM uses the standalone cert-manager instead.
+        cert-manager:
+          enabled: false
+        # The list replaces the chart's own, so every field the chart sets
+        # in it must be here. Without volumeBindingMode the API defaults to
+        # Immediate: the volume is created on some node before the pod is
+        # scheduled, and the pod then cannot run anywhere else. The field is
+        # immutable; operator v0.5.0 recreates an existing StorageClass.
+        storageClasses:
+          - name: topolvm-provisioner
+            storageClass:
+              fsType: xfs
+              isDefaultClass: true
+              volumeBindingMode: WaitForFirstConsumer
+              allowVolumeExpansion: true
+      dependsOn:
+        - calico
+        - cilium
+        - cert-manager
+      custom: {}
+
+    # --- Certificates ---
+    cert-manager:
+      type: helm
+      # 1.21 is tested on Kubernetes 1.33-1.36; no release supports 1.37 yet.
+      # Upstream: one minor at a time, latest patch of each. installCRDs is
+      # deprecated from 1.15 (crds.enabled); never set both.
+      version: "v1.21.3"
+      repo: "https://charts.jetstack.io"
+      chart: cert-manager
+      namespace: cert-manager
+      helmArgs:
+        - "--set crds.enabled=true"
+      upgradePath:
+        - version: "v1.15.5"
+        - version: "v1.16.5"
+        - version: "v1.17.4"
+        - version: "v1.18.6"
+        - version: "v1.19.6"   # never v1.19.0
+        - version: "v1.20.5"
+      dependsOn:
+        - calico
+        - cilium
+      custom: {}
+
+    # --- Dashboard ---
+    headlamp:
+      type: helm
+      version: "0.46.0"
+      repo: "https://kubernetes-sigs.github.io/headlamp/"
+      chart: headlamp
+      namespace: headlamp
+      values:
+        config:
+          oidc:
+            clientID: ""
+            clientSecret: ""
+            issuerURL: ""
+            scopes: ""
+          pluginsDir: /headlamp/plugins
+        service:
+          type: NodePort
+          port: 4466
+          nodePort: 32323
+        # The dashboard route is the Ingress of the operator's headlamp hook
+        # (class traefik and the redirect Middleware, k4all-operator v0.4.2
+        # and later), plus the FQDN rule of update-routes.sh: the chart's own
+        # Ingress stays off. Turned on through componentOverrides, it uses
+        # Traefik too.
+        ingress:
+          enabled: false
+          ingressClassName: traefik
+          annotations:
+            traefik.ingress.kubernetes.io/router.middlewares: traefik-redirect-https@kubernetescrd
+        # The k4all Headlamp plugin (headlamp-plugin/ in this repo), pinned
+        # like every component: an initContainer copies it from its image
+        # into an emptyDir mounted read-only at <pluginsDir>/k4all-headlamp-plugin,
+        # so pluginsDir stays usable for other plugins. A new plugin tag
+        # changes the pod template: the operator re-applies headlamp and the
+        # new pod starts with the new plugin. componentOverrides.headlamp
+        # that set initContainers, volumes or volumeMounts replace these
+        # lists (Helm does not merge lists): copy these entries into them.
+        initContainers:
+          - name: k4all-plugin
+            image: ghcr.io/gpillon/k4all-headlamp-plugin:0.1.2
+            imagePullPolicy: IfNotPresent
+            command:
+              - sh
+              - -c
+              - cp -R /plugins/k4all-headlamp-plugin/. /k4all-plugin/
+            resources:
+              requests:
+                cpu: 10m
+                memory: 16Mi
+              limits:
+                memory: 32Mi
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 100
+              runAsGroup: 101
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                  - ALL
+              seccompProfile:
+                type: RuntimeDefault
+            volumeMounts:
+              - name: k4all-plugin
+                mountPath: /k4all-plugin
+        volumes:
+          - name: k4all-plugin
+            emptyDir:
+              sizeLimit: 16Mi
+        volumeMounts:
+          - name: k4all-plugin
+            mountPath: /headlamp/plugins/k4all-headlamp-plugin
+            readOnly: true
+      # traefik: its Middleware traefik/redirect-https exists by the time
+      # the headlamp hook writes the dashboard route.
+      dependsOn:
+        - cert-manager
+        - traefik
+      custom: {}
+
+    # --- Monitoring ---
+    metrics-server:
+      type: manifest
+      # Pinned: without a versionUrl "latest" is never resolved, so each install
+      # would get whatever release is current and the args patch could break.
+      version: "v0.9.1"
+      source: "https://github.com/kubernetes-sigs/metrics-server/releases/download/{{ version }}/components.yaml"
+      namespace: kube-system
+      dependsOn:
+        - calico
+        - cilium
+      patches:
+        - target:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: metrics-server
+            namespace: kube-system
+          type: strategic
+          patch: '{"spec":{"template":{"spec":{"containers":[{"name":"metrics-server","args":["--cert-dir=/tmp","--secure-port=10250","--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname","--kubelet-use-node-status-port","--metric-resolution=15s","--kubelet-insecure-tls"]}]}}}}'
+      custom: {}
+
+    # --- Virtualization ---
+    kubevirt:
+      type: manifest
+      # 1.9 supports Kubernetes 1.34-1.36; 1.37 needs 1.10. One minor at a
+      # time, latest patch to latest patch. Was "latest": pinned so stable.txt
+      # cannot jump a minor on its own.
+      version: "v1.9.1"
+      upgradePath:
+        - version: "v1.6.6"
+        - version: "v1.7.4"
+        - version: "v1.8.4"
+      sources:
+        - "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/kubevirt-operator.yaml"
+        - "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/kubevirt-cr.yaml"
+      namespace: kubevirt
+      featureGate: virt
+      custom: {}
+
+    virtctl:
+      type: binary
+      version: "v1.9.1"   # same tag as kubevirt
+      source: "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/virtctl-{{ version }}-linux-{{ arch }}"
+      installPath: /var/opt/k4all/bin
+      featureGate: virt
+      dependsOn:
+        - kubevirt
+      custom: {}
+
+    cdi:
+      type: manifest
+      version: "v1.66.1"
+      upgradePath:
+        - version: "v1.65.0"
+      sources:
+        - "https://github.com/kubevirt/containerized-data-importer/releases/download/{{ version }}/cdi-operator.yaml"
+        - "https://github.com/kubevirt/containerized-data-importer/releases/download/{{ version }}/cdi-cr.yaml"
+      namespace: cdi
+      featureGate: virt
+      dependsOn:
+        - kubevirt
+      patches:
+        - target:
+            apiVersion: cdi.kubevirt.io/v1beta1
+            kind: CDI
+            name: cdi
+          type: merge
+          patch: '{"spec":{"config":{"podResourceRequirements":{"limits":{"memory":"2G"}}}}}'
+      custom: {}
+
+    kubevirt-manager:
+      type: manifest
+      version: "v1.5.4"
+      sources:
+        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/{{ version }}/kubernetes/bundled.yaml"
+        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/{{ version }}/kubernetes/crd.yaml"
+      namespace: kubevirt-manager
+      featureGate: virt
+      dependsOn:
+        - kubevirt
+      # The tagged manifest still uses the floating :nightly image. Patches are
+      # not templated: bump the image tag together with version.
+      patches:
+        - target:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: kubevirt-manager
+            namespace: kubevirt-manager
+          type: strategic
+          patch: '{"spec":{"template":{"spec":{"containers":[{"name":"kubevirtmgr","image":"kubevirtmanager/kubevirt-manager:1.5.4"}]}}}}'
+      custom: {}
+
+    # --- GitOps ---
+    argocd:
+      type: helm
+      # Argo CD v3.6.1, tested on Kubernetes 1.34-1.37. Was "" (latest chart at install).
+      version: "10.18.0"
+      repo: "https://argoproj.github.io/argo-helm"
+      chart: argo-cd
+      namespace: argocd
+      values:
+        global:
+          domain: argocd.example.com
+        configs:
+          params:
+            server.insecure: true
+        # server.insecure: the backend is plain HTTP on the service's http
+        # port, Traefik's default scheme (no serversscheme needed). The
+        # Middleware replaces ingress-nginx's force-ssl-redirect.
+        server:
+          ingress:
+            enabled: true
+            ingressClassName: traefik
+            annotations:
+              traefik.ingress.kubernetes.io/router.middlewares: traefik-redirect-https@kubernetescrd
+      featureGate: argocd
+      dependsOn:
+        - calico
+        - cilium
+        - traefik
+      custom: {}
+
+    # --- OVS/Multus ---
+    multus-cni:
+      type: manifest
+      version: "v4.3.2"
+      source: "https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/{{ version }}/deployments/multus-daemonset.yml"
+      featureGate: ovsCni
+      dependsOn:
+        - calico
+        - cilium
+      # The tagged manifest still uses the floating :snapshot image. Patches are
+      # not templated: bump the image tag together with version.
+      patches:
+        - target:
+            apiVersion: apps/v1
+            kind: DaemonSet
+            name: kube-multus-ds
+            namespace: kube-system
+          type: strategic
+          patch: '{"spec":{"template":{"spec":{"initContainers":[{"name":"install-multus-binary","image":"ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.2"}],"containers":[{"name":"kube-multus","image":"ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.2"}]}}}}'
+      custom: {}
+
+    ovs-cni:
+      type: manifest
+      version: "v0.40.0"
+      source: "https://raw.githubusercontent.com/k8snetworkplumbingwg/ovs-cni/{{ version }}/examples/ovs-cni.yml"
+      featureGate: ovsCni
+      dependsOn:
+        - multus-cni
+      # The tagged manifest still uses the floating :latest image. Patches are
+      # not templated: bump the image tag together with version.
+      patches:
+        - target:
+            apiVersion: apps/v1
+            kind: DaemonSet
+            name: ovs-cni-amd64
+            namespace: kube-system
+          type: strategic
+          patch: '{"spec":{"template":{"spec":{"initContainers":[{"name":"ovs-cni-plugin","image":"ghcr.io/k8snetworkplumbingwg/ovs-cni-plugin:v0.40.0"}],"containers":[{"name":"ovs-cni-marker","image":"ghcr.io/k8snetworkplumbingwg/ovs-cni-plugin:v0.40.0"}]}}}}'
+      custom: {}
+
+    # --- Operator (bootstrapped by deploy-operator.sh, tracked here for version/source) ---
+    k4all-operator:
+      type: manifest
+      management: Managed
+      # A release tag, never "latest" (the image build refuses it).
+      # v0.5.0: the topolvm hook recreates a StorageClass whose immutable
+      # fields (volumeBindingMode) changed, which WaitForFirstConsumer above
+      # needs on existing clusters.
+      version: "v0.5.0"
+      versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
+      source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
+      namespace: k4all-operator-system
+      custom: {}

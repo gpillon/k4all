@@ -1,0 +1,459 @@
+#!/bin/bash
+
+# Path to the cluster configuration file (ClusterConfig CR YAML)
+K4ALL_CONFIG_FILE="/etc/k4all-config.yaml"
+KUBECONFIG=/etc/kubernetes/admin.conf
+
+# Release manifest: user copy with fallback to base image copy
+K4ALL_RELEASE_FILE="/etc/k4all-release.yaml"
+K4ALL_RELEASE_BASE="/usr/local/share/k4all-release.yaml"
+
+_k4all_release_file() {
+    if [ -f "$K4ALL_RELEASE_FILE" ]; then
+        echo "$K4ALL_RELEASE_FILE"
+    elif [ -f "$K4ALL_RELEASE_BASE" ]; then
+        echo "$K4ALL_RELEASE_BASE"
+    else
+        echo ""
+    fi
+}
+
+# traefik_is_active [manifest]: true when the release manifest (default: the
+# one in the image) runs Traefik as the ingress controller, as k4all does from
+# v2.4.0, unless the component is Removed.
+traefik_is_active() {
+    local manifest="${1:-$K4ALL_RELEASE_BASE}"
+    [ -f "$manifest" ] || return 1
+    [ "$(yq e '(.spec.components.traefik != null) and ((.spec.components.traefik.management // "Managed") != "Removed")' "$manifest" 2>/dev/null)" = "true" ]
+}
+
+# --- CRI-O's example CNI networks -----------------------------------------
+# The image keeps them out of /etc/cni/net.d (see the Containerfile): pods
+# that start on CRI-O's bridge get 10.85.0.0/16 addresses that no other node
+# can route. A new bootstrap node borrows the bridge until the k4all-operator
+# has installed the cluster's CNI, because the operator's own pod needs a
+# network to start. The marker says it did: only then can pods hold a
+# bridge address, and only then is there anything to hand over.
+CNI_NET_DIR="${CNI_NET_DIR:-/etc/cni/net.d}"
+K4ALL_CNI_SHARE="${K4ALL_CNI_SHARE:-/usr/local/share/k4all-cni}"
+K4ALL_CNI_MARKER="${K4ALL_CNI_MARKER:-/var/lib/k4all/crio-bridge-lent}"
+CRIO_BRIDGE_CNI="100-crio-bridge.conflist"
+CRIO_BRIDGE_PREFIX="10.85."
+
+# cluster_cni_present: a CNI config other than CRI-O's own is installed
+cluster_cni_present() {
+    local f
+    for f in "$CNI_NET_DIR"/*.conf "$CNI_NET_DIR"/*.conflist; do
+        [ -e "$f" ] || continue
+        [ -e "$K4ALL_CNI_SHARE/$(basename "$f")" ] && continue
+        return 0
+    done
+    return 1
+}
+
+# lend_crio_bridge_cni: a new cluster's first node, before kubeadm init
+lend_crio_bridge_cni() {
+    cluster_cni_present && return 0
+    [ -f "$K4ALL_CNI_SHARE/$CRIO_BRIDGE_CNI" ] || return 0
+    mkdir -p "$CNI_NET_DIR" "$(dirname "$K4ALL_CNI_MARKER")"
+    cp "$K4ALL_CNI_SHARE/$CRIO_BRIDGE_CNI" "$CNI_NET_DIR/$CRIO_BRIDGE_CNI"
+    : > "$K4ALL_CNI_MARKER"
+    echo "Lent CRI-O's bridge CNI ($CRIO_BRIDGE_CNI) until the cluster's CNI is installed"
+}
+
+# drop_crio_cni: once the cluster's CNI is installed, CRI-O's networks go
+# (and the marker: no new pod gets a bridge address any more).
+drop_crio_cni() {
+    cluster_cni_present || return 0
+    local f name
+    for f in "$K4ALL_CNI_SHARE"/*; do
+        name=$(basename "$f")
+        [ -e "$CNI_NET_DIR/$name" ] || continue
+        rm -f "$CNI_NET_DIR/$name"
+        echo "Removed $CNI_NET_DIR/$name: the cluster's CNI is installed"
+    done
+    rm -f "$K4ALL_CNI_MARKER"
+}
+
+# recreate_crio_bridge_pods: delete the pods that hold an address of CRI-O's
+# bridge, one call per namespace without waiting; their controllers create
+# them again on the cluster's CNI. Nothing to do (and no pod list) unless
+# this node lent the bridge. Fails (1) when the pods cannot be listed or a
+# delete fails: then the bridge must stay, and the caller tries again.
+recreate_crio_bridge_pods() {
+    [ -e "$K4ALL_CNI_MARKER" ] || return 0
+    local pods groups ns names rc=0
+    if ! pods=$(kubectl --kubeconfig "$KUBECONFIG" get pods -A -o json); then
+        echo "Cannot list the pods: CRI-O's bridge stays for now" >&2
+        return 1
+    fi
+    if ! groups=$(printf '%s' "$pods" | jq -r --arg prefix "$CRIO_BRIDGE_PREFIX" '[.items[]
+            | select(.spec.hostNetwork != true)
+            | select((.status.podIP // "") | startswith($prefix))]
+            | group_by(.metadata.namespace)[]
+            | "\(.[0].metadata.namespace) \(map(.metadata.name) | join(" "))"'); then
+        echo "Cannot read the pod list: CRI-O's bridge stays for now" >&2
+        return 1
+    fi
+    while read -r ns names; do
+        [ -n "$ns" ] || continue
+        echo "Recreating pods in $ns on the cluster's CNI: $names"
+        # shellcheck disable=SC2086
+        kubectl --kubeconfig "$KUBECONFIG" delete pod -n "$ns" $names \
+            --wait=false || rc=1
+    done <<< "$groups"
+    return $rc
+}
+
+# handover_crio_bridge [seconds]: wait up to that long for the cluster's
+# CNI, then move the pods off the bridge and drop CRI-O's networks. Fails
+# (1) only when that should be tried again: pods that could not be listed
+# or deleted keep the bridge and the marker. Without the CNI after the wait
+# it gives up (0): generate_join.sh and the next boot do it.
+handover_crio_bridge() {
+    local wait="${1:-0}" waited=0
+    [ -e "$K4ALL_CNI_MARKER" ] || return 0
+    until cluster_cni_present; do
+        if [ "$waited" -ge "$wait" ]; then
+            echo "The cluster's CNI is not installed yet: CRI-O's bridge stays"
+            return 0
+        fi
+        sleep 10
+        waited=$((waited + 10))
+    done
+    recreate_crio_bridge_pods || return 1
+    drop_crio_cni
+}
+
+get_component_version() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".spec.components.${component}.version" "$rf" 2>/dev/null
+}
+
+get_component_repo() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".spec.components.${component}.repo // .spec.components.${component}.source" "$rf" 2>/dev/null
+}
+
+get_component_source() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".spec.components.${component}.source" "$rf" 2>/dev/null
+}
+
+get_component_chart() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".spec.components.${component}.chart" "$rf" 2>/dev/null
+}
+
+get_component_namespace() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".spec.components.${component}.namespace" "$rf" 2>/dev/null
+}
+
+get_component_version_url() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    yq e ".spec.components.${component}.versionUrl" "$rf" 2>/dev/null
+}
+
+get_component_custom_args() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    local args
+    args=$(yq e ".spec.components.${component}.custom.helmArgs // [] | .[]" "$rf" 2>/dev/null)
+    echo "$args"
+}
+
+get_component_helm_args() {
+    local component="$1"
+    local rf
+    rf=$(_k4all_release_file)
+    [ -z "$rf" ] && return 1
+    local args
+    args=$(yq e ".spec.components.${component}.helmArgs // [] | .[]" "$rf" 2>/dev/null)
+    echo "$args"
+}
+
+retry_command() {
+  local command="$1"
+  local max_retries="$2"
+  local delay="$3"
+  local retry_count=0
+  local success=false
+
+  while [ "$retry_count" -lt "$max_retries" ]; do
+    echo "Attempt $(($retry_count + 1))..."
+
+    # Execute the command
+    if eval "$command"; then
+      echo "Command executed successfully."
+      success=true
+      break
+    else
+      echo "Command failed. Retrying in $delay seconds..."
+      retry_count=$(($retry_count + 1))
+      sleep "$delay"
+    fi
+  done
+
+  # Check if we succeeded after all retries
+  if [ "$success" = false ]; then
+    echo "Command failed after $max_retries retries."
+    return 1
+  fi
+}
+
+# Function to set up kubeconfig for a specified user
+function setup_kubeconfig_for_user() {
+  local user_name=$1
+  local user_home=$2
+  local override_file_name=${3:-"admin.conf"}
+
+  mkdir -p "${user_home}/.kube"
+  cp /etc/kubernetes/${override_file_name} "${user_home}/.kube/config"
+  chown "${user_name}:${user_name}" "${user_home}/.kube/config"
+}
+
+# Function to finalize the setup for a specified user
+finalize_k8s_setup_for_user() {
+  local user_name=$1
+  local user_home=$2
+
+  # Ensure the .kube directory exists
+  mkdir -p "${user_home}/.kube"
+
+  # Generate the kubectl completion script
+  local completion_file="${user_home}/.kube/completion.bash.inc"
+  kubectl completion bash > "$completion_file"
+
+  # Source the completion script in the user's .bash_profile if not already sourced
+  local source_string="source '$completion_file'"
+  if ! grep -qF "$source_string" "${user_home}/.bash_profile"; then
+    printf "\n# kubectl shell completion\n$source_string\n" >> "${user_home}/.bash_profile"
+  fi
+}
+
+function get_network_device() {
+    ip route show default | awk '/default/ {print $5; exit}'
+}
+
+# Function to get the first available physical network interface
+get_first_physical_interface() {
+  ip link show | awk '/^[0-9]+: [^lo]/ {print $2}' | grep -v 'ovs-bridge' | sed 's/://g' | head -n 1
+}
+
+# Function to get the physical interface from the Open vSwitch bridge
+get_physical_interface_for_ovs_port() {
+  local ovs_port=$1
+  ovs-vsctl list interface "$ovs_port" 2>/dev/null | grep 'type.*system' >/dev/null && echo "$ovs_port" || echo ""
+}
+
+# Function to find the original physical interface used in the bridge
+get_original_physical_interface() {
+  for port in $(ovs-vsctl list-ports ovs-bridge); do
+    local physical_interface=$(get_physical_interface_for_ovs_port "$port")
+    if [ -n "$physical_interface" ]; then
+      echo "$physical_interface"
+      return
+    fi
+  done
+  # If no physical interface is found, return the first physical interface available
+  get_first_physical_interface
+}
+
+get_real_interface() {
+  local NET_DEV=$(get_network_device)
+
+  if [ "$NET_DEV" == "ovs-bridge" ]; then
+    local PHYS_NET_DEV=$(get_original_physical_interface)
+  else
+    local PHYS_NET_DEV=$NET_DEV
+  fi
+  echo $PHYS_NET_DEV
+}
+
+remove_tagged_block() {
+  local file_path="$1"
+  local start_tag="$2"
+  local end_tag="$3"
+  
+  sed -i "/#### ${start_tag} ####/,/#### ${end_tag} ####/d" "$file_path"
+}
+
+
+get_ip() {
+    local ha_type
+    ha_type=$(yq e '.spec.cluster.ha.type' "$K4ALL_CONFIG_FILE" 2>/dev/null)
+    if [ "$ha_type" = "keepalived" ]; then
+        yq e '.spec.cluster.ha.apiControlEndpoint' "$K4ALL_CONFIG_FILE"
+    else
+        hostname -I | awk '{print $1}'
+    fi
+}
+
+# Function to get the current FQDN
+get_fqdn() {
+    hostname -f
+}
+
+# Function to check if the FQDN contains a domain part
+has_domain() {
+    local fqdn=$1
+    [[ "$fqdn" =~ \. ]]
+}
+
+# Function to patch the ingress with a given host
+patch_ingress() {
+    local host=$1
+    local route_number=$2
+    local route_host_prefix=$3
+    local ingress_name=$4
+    local ingress_namespace=$5
+
+
+    kubectl --kubeconfig=$KUBECONFIG patch ingress $ingress_name -n $ingress_namespace --type=json -p="[
+      {
+        \"op\": \"replace\",
+        \"path\": \"/spec/rules/$route_number/host\",
+        \"value\": \"$route_host_prefix.$host\"
+      }
+    ]"
+}
+
+get_ingress_urls() {
+  # get_ingress_urls "namespace" "ingress-name"
+  local ingress_name="$1"
+  local namespace="$2"
+
+  if [[ -z "$namespace" || -z "$ingress_name" ]]; then
+    echo "Usage: get_ingress_urls <namespace> <ingress_name>" >&2
+    exit 1
+  fi
+
+  if ! kubectl get ingress "$ingress_name" -n "$namespace" &> /dev/null; then
+    echo "Ingress '$ingress_name' not found in namespace '$namespace'" >&2
+    exit 1
+  fi
+
+  kubectl get ingress "$ingress_name" -n "$namespace" -o jsonpath='{range .spec.rules[*]}{.host}{"\n"}{end}' | while read host; do
+    kubectl get ingress "$ingress_name" -n "$namespace" -o jsonpath="{range .spec.rules[?(@.host=='$host')].http.paths[*]}https://$host{.path}{'\n'}{end}"
+  done
+}
+
+cidr_to_mask() {
+  local cidr=$1
+  local mask=""
+  local full_octets=$((cidr / 8))
+  local partial_octet=$((cidr % 8))
+
+  for ((i=0; i<4; i++)); do
+    if [ $i -lt $full_octets ]; then
+      mask+=255
+    elif [ $i -eq $full_octets ]; then
+      mask+=$((256 - 2**(8-partial_octet)))
+    else
+      mask+=0
+    fi
+    if [ $i -lt 3 ]; then
+      mask+='.'
+    fi
+  done
+
+  echo $mask
+}
+
+# Function to convert subnet mask to CIDR notation
+mask_to_cidr() {
+  c=0 x=0$( printf '%o' ${1//./ } )
+  while [ $x -gt 0 ]; do
+      let c+=$((x%2)) 'x>>=1'
+  done
+
+  echo $c ; 
+}
+
+# Function to get the system's architecture
+get_architecture() {
+    uname -m
+}
+
+# Function to set CLI_ARCH based on the detected architecture
+set_cli_arch() {
+    local ARCH=$(get_architecture)
+    case "${ARCH}" in
+        x86_64)
+            CLI_ARCH="amd64"
+            ;;
+        armv7l | armv8* | aarch64)
+            CLI_ARCH="arm64"
+            ;;
+        *)
+            echo "Unsupported architecture: ${ARCH}"
+            exit 1
+            ;;
+    esac
+    echo "CLI_ARCH is set to: ${CLI_ARCH}"
+    export CLI_ARCH
+}
+
+patch_deployment_image_registry() {
+    local ns="$1"
+    local deploy="$2"
+    local container_index="${3:-0}"
+    local registry="${4:-docker.io}"
+
+    # recupera immagine attuale
+    local image
+    image=$(kubectl -n "$ns" get deploy "$deploy" -o jsonpath="{.spec.template.spec.containers[$container_index].image}")
+
+    if [[ -z "$image" ]]; then
+        echo "❌ Impossibile recuperare l'immagine del deployment $deploy nel namespace $ns"
+        return 1
+    fi
+
+    # Controlla se ha già un registry (un punto nel primo token prima dello slash)
+    local first_token="${image%%/*}"
+    if [[ "$first_token" == *.* ]]; then
+        echo "✅ Nessuna patch necessaria, immagine già con registry: $image"
+        return 0
+    fi
+
+    local new_image=""
+    if [[ "$image" == */* ]]; then
+        # Caso org/repo[:tag]
+        new_image="${registry}/${image}"
+    else
+        # Caso solo nome immagine
+        if [[ "$registry" == "docker.io" ]]; then
+            new_image="${registry}/library/${image}"
+        else
+            # per gli altri registry aggiungo l'org = nome immagine
+            local repo="${image%%:*}"
+            new_image="${registry}/${repo}/${image}"
+        fi
+    fi
+
+    echo "⚙️  Patching $deploy (ns=$ns, container=$container_index): $image -> $new_image"
+    kubectl -n "$ns" patch deployment "$deploy" \
+      --type='json' \
+      -p="[ {\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/$container_index/image\", \"value\": \"$new_image\"} ]"
+}

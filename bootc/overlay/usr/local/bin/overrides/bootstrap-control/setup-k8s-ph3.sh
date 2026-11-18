@@ -1,0 +1,155 @@
+#!/bin/bash
+set -euxo pipefail
+
+if [ -f "/opt/k4all/setup-ph3-reset-kube.done" ]; then
+  echo "Kubernetes setup phase 3 reset Kube already done. Skipping."
+elif [ -f /etc/kubernetes/admin.conf ] || [ -d /var/lib/etcd/member ] \
+     || [ -f /opt/k4all/restore.done ]; then
+  # A cluster already lives here (an earlier install, or a restore from
+  # backup): `kubeadm reset` would wipe its PKI and etcd.
+  echo "Existing cluster state found; not running kubeadm reset."
+  touch /opt/k4all/setup-ph3-reset-kube.done
+else
+  kubeadm reset --force
+  touch /opt/k4all/setup-ph3-reset-kube.done
+  rm -rf /opt/k4all/setup-ph3.done
+fi
+
+# Controlla se il file di stato esiste
+if [ -f "/opt/k4all/setup-ph3.done" ]; then
+  echo "Kubernetes setup phase 3 already done. Exiting."
+  exit 0
+fi
+
+source /var/opt/k4all/bin/control-plane-utils
+source /usr/local/bin/k4all-utils
+
+function setup_k8s_for_vip()  {
+  
+  #get EP from the config file
+  haEndpoint=$(get_ha_ep_ip)
+  interface=$(yq e '.spec.cluster.ha.interface' "$K4ALL_CONFIG_FILE")
+
+  if [ "$interface" == "auto" ]; then
+    NET_DEV=$(ip route show default | awk '/default/ {print $5}')
+    vip_interface=$NET_DEV
+  else
+    vip_interface=$interface
+  fi
+  
+  # Add the current and new LB IP to certSANs if they do not exist
+  add_ip_if_not_exists "$CURRENT_IP"
+  add_ip_if_not_exists "$haEndpoint"
+
+  set_control_plane_endpoint "$haEndpoint"
+}
+
+function setup_for_kubevip() {
+  setup_k8s_for_vip
+
+  # kube-vip's static pod comes from one generator, the one k4all-upgrade
+  # uses on every hop and the control planes' join script after the join
+  # (`k4all-upgrade kube-vip-manifest`). Here only on the bootstrap node:
+  # `kubeadm join --control-plane` wants /etc/kubernetes/manifests empty, and
+  # admin.conf, which kube-vip mounts there, comes with the join.
+  # --before-init: mount super-admin.conf, which kubeadm init is about to
+  # write. A failure stops the install: kubeadm init would point at a VIP
+  # that nobody announces.
+  # Up to v2.3.0 the release manifest says kube-vip "latest": the newest
+  # kube-vip release at install time, as setup-k8s-ph3.sh always did. From
+  # v2.4.0 the manifest pins it and nothing is looked up.
+  if [ "$(cat /etc/node-type)" = "bootstrap" ]; then
+    local kv_args=()
+    local kv_version
+    kv_version=$(get_component_version kube-vip || true)
+    case "$kv_version" in
+      v[0-9]*) ;;
+      *)
+        kv_version=$(curl -fsSL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
+        kv_args=(--version "$kv_version")
+        ;;
+    esac
+    /usr/local/bin/k4all-upgrade kube-vip-manifest --write --before-init "${kv_args[@]}"
+  fi
+}
+
+function setup_for_keepalived() {
+  setup_k8s_for_vip
+
+  # Set keepalived state based on /etc/node-type
+  if [ "$(cat /etc/node-type)" == "bootstrap" ]; then
+    keepalived_state="MASTER"
+  else
+    keepalived_state="BACKUP"
+  fi
+
+  apiControlEndpointSubnetSize=$(yq e '.spec.cluster.ha.apiControlEndpointSubnetSize' "$K4ALL_CONFIG_FILE")
+
+  echo "vrrp_instance VI_1 {
+  state $keepalived_state
+  interface $vip_interface
+  virtual_router_id 56
+  priority 255
+  advert_int 1
+  authentication {
+    auth_type PASS
+    auth_pass k4all-ultra-secret
+  }
+  virtual_ipaddress {
+    $haEndpoint/$apiControlEndpointSubnetSize
+  }
+}
+" > /etc/keepalived/keepalived.conf
+
+  systemctl enable --now keepalived
+    
+}
+
+HA_TYPE=$(yq e '.spec.cluster.ha.type' "$K4ALL_CONFIG_FILE")
+CUSTOM_EP=$(yq e '.spec.cluster.customApiEndPoint // ""' "$K4ALL_CONFIG_FILE")
+API_HOSTNAME=$(yq e '.spec.cluster.apiEndPointUseHostName' "$K4ALL_CONFIG_FILE")
+
+if [ "$HA_TYPE" = "keepalived" ]; then
+  setup_for_keepalived
+elif [ "$HA_TYPE" = "kubevip" ]; then
+  setup_for_kubevip
+elif [ -n "$CUSTOM_EP" ] && [ "$CUSTOM_EP" != "null" ]; then
+  set_control_plane_endpoint "$CUSTOM_EP"
+elif [ "$API_HOSTNAME" = "short" ]; then
+  set_control_plane_endpoint "$(hostname)"
+elif [ "$API_HOSTNAME" = "true" ]; then
+  set_control_plane_endpoint "$(hostname -f)"
+fi
+
+# Check if the block already exists and delete it
+if ! grep -q "#### K4ALL ADVERTISE CHECK ####" /root/.bash_profile; then
+
+  printf '\n
+#### K4ALL ADVERTISE CHECK ####
+#### pls, DO NOT REMOVE "K4ALL HELPER" tags, or you could mess up updates :) ###
+sh /var/opt/k4all/bin/check-advertise-address.sh
+#### END K4ALL ADVERTISE CHECK ####
+' >> /root/.bash_profile
+fi
+
+if ! grep -q "#### K4ALL HELPER ####" /root/.bash_profile; then
+
+  printf '\n
+#### K4ALL HELPER ####
+#### pls, DO NOT REMOVE "K4ALL HELPER" tags, or you could mess up updates :) ###
+
+HOST_IP=$(hostname -I | awk '"'"'{print $1}'"'"')
+echo ""
+echo "Welcome! Connect to the dashboard using those addresses: "
+if [ -f /etc/login_data ]; then
+    cat /etc/login_data
+fi
+echo " - Nodeport Fallback Route: http://$HOST_IP:32323"
+echo ""
+echo "Using this token"
+echo "$(kubectl get secret headlamp-admin-token -n headlamp -o jsonpath={".data.token"} | base64 -d)"
+echo ""
+#### END K4ALL HELPER ####
+' >> /root/.bash_profile
+fi
+touch /opt/k4all/setup-ph3.done

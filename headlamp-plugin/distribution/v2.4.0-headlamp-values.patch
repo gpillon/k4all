@@ -1,0 +1,106 @@
+k4all v2.4.0: the k4all Headlamp plugin in the headlamp component
+
+Apply to the v2.4.0 release commit (made against 9fc29b6):
+
+    git apply headlamp-plugin/distribution/v2.4.0-headlamp-values.patch
+
+- k4all-release.yaml: the headlamp component gets the plugin
+  initContainer (ghcr.io/gpillon/k4all-headlamp-plugin:0.1.0), its
+  emptyDir and the read-only mount under /headlamp/plugins.
+- test_image_contract.py: the headlamp component must carry the plugin
+  initContainer with a pinned release tag, its volume and mount.
+
+Push the image first (tag headlamp-plugin-v0.1.0, workflow
+headlamp-plugin.yaml): a release that names an image not yet pushed
+leaves Headlamp in Init:ImagePullBackOff after the sync. Check the result
+with:
+
+    headlamp-plugin/distribution/test-helm-template.sh --require
+
+diff --git a/bootc/overlay/usr/local/share/k4all-release.yaml b/bootc/overlay/usr/local/share/k4all-release.yaml
+index 96a02d0..51c3c52 100644
+--- a/bootc/overlay/usr/local/share/k4all-release.yaml
++++ b/bootc/overlay/usr/local/share/k4all-release.yaml
+@@ -234,6 +234,50 @@ spec:
+           nodePort: 32323
+         ingress:
+           enabled: false
++        # The k4all Headlamp plugin (headlamp-plugin/ in this repo), pinned
++        # like every component: an initContainer copies it from its image
++        # into an emptyDir mounted read-only at <pluginsDir>/k4all-headlamp-plugin,
++        # so pluginsDir stays usable for other plugins. A new plugin tag
++        # changes the pod template: the operator re-applies headlamp and the
++        # new pod starts with the new plugin. componentOverrides.headlamp
++        # that set initContainers, volumes or volumeMounts replace these
++        # lists (Helm does not merge lists): copy these entries into them.
++        initContainers:
++          - name: k4all-plugin
++            image: ghcr.io/gpillon/k4all-headlamp-plugin:0.1.0
++            imagePullPolicy: IfNotPresent
++            command:
++              - sh
++              - -c
++              - cp -R /plugins/k4all-headlamp-plugin/. /k4all-plugin/
++            resources:
++              requests:
++                cpu: 10m
++                memory: 16Mi
++              limits:
++                memory: 32Mi
++            securityContext:
++              runAsNonRoot: true
++              runAsUser: 100
++              runAsGroup: 101
++              allowPrivilegeEscalation: false
++              readOnlyRootFilesystem: true
++              capabilities:
++                drop:
++                  - ALL
++              seccompProfile:
++                type: RuntimeDefault
++            volumeMounts:
++              - name: k4all-plugin
++                mountPath: /k4all-plugin
++        volumes:
++          - name: k4all-plugin
++            emptyDir:
++              sizeLimit: 16Mi
++        volumeMounts:
++          - name: k4all-plugin
++            mountPath: /headlamp/plugins/k4all-headlamp-plugin
++            readOnly: true
+       dependsOn:
+         - cert-manager
+       custom: {}
+diff --git a/bootc/tests/upgrade/test_image_contract.py b/bootc/tests/upgrade/test_image_contract.py
+index 25ecafd..bbf699e 100644
+--- a/bootc/tests/upgrade/test_image_contract.py
++++ b/bootc/tests/upgrade/test_image_contract.py
+@@ -219,3 +219,27 @@ def test_deploy_operator_fallback_paths_exist_in_the_image():
+     assert "/usr/local/share/k4all-operator-install.yaml" in script
+     assert "/usr/local/share/k4all-operator-install.yaml" in text
+     assert "prerelease == false" in script
++
++
++def test_headlamp_carries_the_pinned_k4all_plugin():
++    # The k4all Headlamp plugin is an image that an initContainer copies into
++    # Headlamp's plugins dir. Pinned per release like every component: a
++    # floating tag would change the UI outside any k4all upgrade, and
++    # IfNotPresent would keep whichever build a node pulled first.
++    with open(os.path.join(BOOTC, "overlay", "usr", "local", "share",
++                           "k4all-release.yaml"), encoding="utf-8") as fh:
++        values = yaml.safe_load(fh)["spec"]["components"]["headlamp"]["values"]
++    plugin = [c for c in values.get("initContainers") or []
++              if c.get("name") == "k4all-plugin"]
++    assert len(plugin) == 1, "headlamp has no k4all-plugin initContainer"
++    image = plugin[0]["image"]
++    repo, _, tag = image.split("@")[0].rpartition(":")
++    assert repo == "ghcr.io/gpillon/k4all-headlamp-plugin", image
++    assert re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?", tag), \
++        "the plugin image needs a release tag, not %r" % tag
++    assert any(v.get("name") == "k4all-plugin" and "emptyDir" in v
++               for v in values.get("volumes") or [])
++    mount = "%s/k4all-headlamp-plugin" % values["config"]["pluginsDir"].rstrip("/")
++    assert any(m.get("name") == "k4all-plugin" and m.get("mountPath") == mount
++               and m.get("readOnly") is True
++               for m in values.get("volumeMounts") or []), mount
