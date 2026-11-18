@@ -1,4 +1,3 @@
-
 #!/bin/bash
 # Script to join a new node as a control plane to an existing Kubernetes cluster using an argument
 
