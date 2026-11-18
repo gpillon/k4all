@@ -958,14 +958,16 @@ def test_foreign_staged_deployment_blocks_the_hop(make_host):
 BOOTC_REPO = "ghcr.io/gpillon/k4all-bootc"
 
 
-def by_index_digest(entries, key="digest"):
+def by_index_digest(entries, key="indexDigest"):
     return [dict(entry, **{key: index_digest(entry["version"])})
             for entry in entries]
 
 
-def test_a_hop_by_index_digest_is_staged_and_committed(make_host):
+@pytest.mark.parametrize("key", ["indexDigest", "digest"])
+def test_a_hop_by_index_digest_is_staged_and_committed(make_host, key):
+    # indexDigest from v2.6.1 on; "digest" in the graphs up to v2.6.0
     host = make_host(version="v2.3.0", kubernetes="1.35.10")
-    write_graph(host, by_index_digest(STREAM_23))
+    write_graph(host, by_index_digest(STREAM_23, key))
     ref = "%s@%s" % (BOOTC_REPO, index_digest("v2.3.1"))
 
     assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0

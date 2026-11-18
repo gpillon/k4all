@@ -347,7 +347,13 @@ jobs:
           python3 bootc/upgrade/build-graph.py bootc/upgrade/releases.yaml \
             --image "${IMAGE_NAME}" --resolve-digests --require-digests \
             -o isos/upgrade-graph.json
-          BRIDGE_DIGEST=$(jq -r '.releases[] | select(.version == "v2.2.4") | .digest' isos/upgrade-graph.json)
+          # indexDigest, never digest: k4all-upgrade up to v2.6.0 stops in
+          # HOLD on a release named by digest (see build-graph.py)
+          BRIDGE_DIGEST=$(jq -r '.releases[] | select(.version == "v2.2.4") | .indexDigest' isos/upgrade-graph.json)
+          case "$BRIDGE_DIGEST" in
+            sha256:*) ;;
+            *) echo "no index digest for the v2.2.4 bridge: '${BRIDGE_DIGEST}'" >&2; exit 1 ;;
+          esac
           sed "s|@@BRIDGE_DIGEST@@|${BRIDGE_DIGEST}|" bootc/scripts/k4all-bridge.sh > isos/k4all-bridge.sh
           chmod +x isos/k4all-bridge.sh
 

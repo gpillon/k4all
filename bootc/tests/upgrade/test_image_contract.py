@@ -100,6 +100,16 @@ def test_operator_version_is_a_release_tag():
     assert "k4all-operator.version =" not in workflow
 
 
+def test_the_bridge_digest_comes_from_index_digest():
+    # The release job stamps k4all-bridge.sh with the bridge's index digest.
+    # The graph has it as indexDigest only (build-graph.py): from "digest"
+    # jq would give "null", and the bridge would fall back to the tag.
+    workflow = read(REPO, ".github", "workflows", "build.yaml")
+    line, = [l for l in workflow.splitlines() if l.strip().startswith("BRIDGE_DIGEST=")]
+    assert '.indexDigest' in line and '.digest' not in line
+    assert 'sha256:*) ;;' in workflow, "an empty digest fails the release job"
+
+
 def test_release_manifest_pins_every_component():
     # A floating version moves clusters outside any k4all release, and
     # upgradePath steps only make sense between fixed versions.

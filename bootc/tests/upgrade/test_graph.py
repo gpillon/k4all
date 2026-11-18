@@ -1,6 +1,8 @@
 """Versioning rules, the graph in the repo, and hop planning."""
 
 import datetime
+import importlib.machinery
+import importlib.util
 import json
 import os
 import subprocess
@@ -69,14 +71,82 @@ def test_agreed_ladder_is_valid(ladder):
     assert ku.validate_graph(ladder) == []
 
 
-def test_build_graph_script_emits_digests(tmp_path):
+def test_build_graph_script_emits_index_digests(tmp_path):
     out = tmp_path / "graph.json"
     script = os.path.join(REPO, "bootc", "upgrade", "build-graph.py")
     subprocess.run([sys.executable, script, RELEASES_YAML, "-o", str(out),
                     "--digest", "v2.2.4=sha256:feed"], check=True)
     doc = json.loads(out.read_text())
     assert doc["schema"] == 1
-    assert doc["releases"][0]["digest"] == "sha256:feed"
+    assert doc["releases"][0]["indexDigest"] == "sha256:feed"
+    # The tools of v2.2.4 - v2.6.0 stop in HOLD on a release under "digest".
+    assert not [r["version"] for r in doc["releases"] if "digest" in r]
+    assert ku.load_graph(doc)[0].image_ref("img") == "img@sha256:feed"
+
+
+def test_build_graph_script_moves_a_digest_to_index_digest(tmp_path):
+    source = tmp_path / "releases.yaml"
+    source.write_text(yaml.safe_dump({"releases": [
+        release("v2.2.4", "patch", "v2.0.0", "1.35.6", "1.32", 43,
+                digest="sha256:feed")]}))
+    script = os.path.join(REPO, "bootc", "upgrade", "build-graph.py")
+    proc = subprocess.run([sys.executable, script, str(source)],
+                          capture_output=True, text=True, check=True)
+    entry, = json.loads(proc.stdout)["releases"]
+    assert entry["indexDigest"] == "sha256:feed" and "digest" not in entry
+
+
+@pytest.mark.parametrize("extra,ref", [
+    ({"indexDigest": "sha256:aaa"}, "img@sha256:aaa"),
+    ({"digest": "sha256:bbb"}, "img@sha256:bbb"),       # a graph up to v2.6.0
+    ({"indexDigest": "sha256:aaa", "digest": "sha256:bbb"}, "img@sha256:aaa"),
+    ({}, "img:v2.3.0"),
+])
+def test_a_release_reads_index_digest_then_digest(extra, ref):
+    rel, = graph([release("v2.3.0", "minor", "v2.2.4", "1.35.10", "1.35", 43,
+                          **extra)])
+    assert rel.image_ref("img") == ref
+    # what start_next_hop reads back from state.json
+    assert ku.Release(rel.to_dict()).image_ref("img") == ref
+    assert "digest" not in rel.to_dict()
+
+
+SHIPPED_TOOL_TAGS = ["v2.2.4", "v2.3.0", "v2.4.0", "v2.5.0", "v2.6.0"]
+
+
+def shipped_tool(tag, tmp_path):
+    """k4all-upgrade as release ``tag`` ships it, from git."""
+    try:
+        text = subprocess.run(
+            ["git", "-C", REPO, "show",
+             "%s:bootc/overlay/usr/local/bin/k4all-upgrade" % tag],
+            capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("tag %s is not in this checkout" % tag)
+    path = tmp_path / ("k4all-upgrade-" + tag)
+    path.write_text(text)
+    name = "k4all_upgrade_" + tag.replace(".", "_")
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    module = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader(name, loader))
+    loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("tag", SHIPPED_TOOL_TAGS)
+def test_the_shipped_tools_use_tags_with_a_graph_of_index_digests(tag, tmp_path):
+    # Those tools keep their _same_image bug: they must keep switching to
+    # release tags when the graph names the releases by index digest.
+    old = shipped_tool(tag, tmp_path)
+    entry = release("v2.3.0", "minor", "v2.2.4", "1.35.10", "1.35", 43,
+                    indexDigest="sha256:aaa")
+    rel, = old.load_graph({"releases": [entry]})
+    assert rel.image_ref("img") == "img:v2.3.0"
+    assert old.validate_graph(old.load_graph({"releases": [
+        dict(e, indexDigest="sha256:aaa") for e in LADDER]})) == []
+    # ...as they would not with "digest", which this test would catch
+    rel, = old.load_graph({"releases": [dict(entry, digest="sha256:bbb")]})
+    assert rel.image_ref("img") == "img@sha256:bbb"
 
 
 def test_build_graph_script_rejects_an_invalid_graph(tmp_path):

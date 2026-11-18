@@ -232,14 +232,18 @@ class Release:
         self.fedora = int(data["fedora"])
         self.sync_manifest = bool(data.get("syncManifest", False))
         self.blocked = bool(data.get("blocked", False))
-        self.digest = data.get("digest") or ""
+        # The digest of the release's multi-arch index. Graphs carry it as
+        # indexDigest; "digest" is the key of older graphs. The tools of
+        # v2.2.4 - v2.6.0 read only "digest" and cannot match an image staged
+        # by it (see _same_image): a new graph must never use that key.
+        self.index_digest = data.get("indexDigest") or data.get("digest") or ""
         self.notes = data.get("notes", "")
         self.key = parse_version(self.version)
         self.min_from_key = parse_version(self.min_from)
 
     def image_ref(self, image):
-        if self.digest:
-            return "%s@%s" % (image, self.digest)
+        if self.index_digest:
+            return "%s@%s" % (image, self.index_digest)
         return "%s:%s" % (image, self.version)
 
     def to_dict(self):
@@ -247,8 +251,8 @@ class Release:
                "minFrom": self.min_from, "kubernetes": self.kubernetes,
                "crio": self.crio, "fedora": self.fedora,
                "syncManifest": self.sync_manifest, "blocked": self.blocked}
-        if self.digest:
-            out["digest"] = self.digest
+        if self.index_digest:
+            out["indexDigest"] = self.index_digest
         if self.notes:
             out["notes"] = self.notes
         return out

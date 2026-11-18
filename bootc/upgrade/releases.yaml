@@ -1,9 +1,10 @@
 # k4all upgrade graph (source).
 #
 # One entry per release, oldest first. The CI turns this file into
-# upgrade-graph.json (with the multi-arch digest of every release) and
-# publishes it with each GitHub release; a copy without digests is baked into
-# the image at /usr/local/share/k4all-upgrade/releases.json.
+# upgrade-graph.json (with the digest of every release's multi-arch index, as
+# indexDigest: never as digest, see build-graph.py) and publishes it with each
+# GitHub release; a copy without digests is baked into the image at
+# /usr/local/share/k4all-upgrade/releases.json.
 # `k4all-upgrade` reads it to plan hops; the rules are enforced by
 # bootc/tests/upgrade/test_graph.py.
 #
