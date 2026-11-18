@@ -379,6 +379,14 @@ jobs:
           sed "s|@@BRIDGE_DIGEST@@|${BRIDGE_DIGEST}|" bootc/scripts/k4all-bridge.sh > isos/k4all-bridge.sh
           chmod +x isos/k4all-bridge.sh
 
+      - name: Check the upgrade graph against the registry
+        # The file about to be uploaded: no entry with digest (the tools of
+        # v2.2.4 - v2.6.0 stop in HOLD at STAGE on it), and each indexDigest
+        # is the multi-arch index its tag points to now. The bridge script
+        # takes the v2.2.4 one.
+        if: steps.published.outputs.published == 'false'
+        run: python3 bootc/upgrade/release-checks.py graph isos/upgrade-graph.json
+
       - name: List release assets
         run: ls -lh isos/
 

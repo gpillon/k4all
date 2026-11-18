@@ -1,9 +1,14 @@
 """bootc/upgrade/release-checks.py: the guards of the release workflow."""
 
+import importlib.machinery
+import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
+
+import pytest
 
 from conftest import REPO
 
@@ -13,9 +18,9 @@ TAGS = ["v1.8.2", "v2.0.0-beta1", "v2.2.4", "v2.3.0", "v2.4.0", "v2.5.0",
         "v2.6.0", "v2.6.1", "image-based", "1.5.4"]
 
 
-def run(*args, stdin=""):
+def run(*args, stdin="", env=None):
     return subprocess.run([sys.executable, SCRIPT] + list(args), input=stdin,
-                          capture_output=True, text=True, check=False)
+                          capture_output=True, text=True, check=False, env=env)
 
 
 def tag_list(tags=TAGS):
@@ -77,3 +82,132 @@ def test_an_unreadable_release_list_fails():
     for listing in ("", "gh: HTTP 502", '{"tagName": "v2.3.0"}'):
         proc = run("published", "v2.3.0", stdin=listing)
         assert proc.returncode == 1 and proc.stdout == ""
+
+
+# --- graph --------------------------------------------------------------------
+IMAGE = "ghcr.io/gpillon/k4all-bootc"
+OCI_INDEX = "application/vnd.oci.image.index.v1+json"
+
+
+def load_checks():
+    loader = importlib.machinery.SourceFileLoader("release_checks", SCRIPT)
+    module = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader("release_checks", loader))
+    loader.exec_module(module)
+    return module
+
+
+checks = load_checks()
+
+
+def entry(version, **extra):
+    data = {"version": version, "kind": "minor", "minFrom": "v2.2.4",
+            "kubernetes": "1.35.10", "crio": "1.35", "fedora": 43}
+    data.update(extra)
+    return data
+
+
+def registry(manifests):
+    """A lookup over {version: manifest} for graph_errors."""
+    def lookup(image, version):
+        assert image == IMAGE
+        if version not in manifests:
+            raise LookupError("%s:%s: not found" % (image, version))
+        return manifests[version]
+    return lookup
+
+
+def index(digest):
+    return {"mediaType": OCI_INDEX, "digest": digest, "size": 1234}
+
+
+def test_a_graph_of_registry_index_digests_passes():
+    doc = {"schema": 1, "image": IMAGE, "releases": [
+        entry("v2.3.0", indexDigest="sha256:aaa"),
+        entry("v2.4.0", indexDigest="sha256:bbb")]}
+    lookup = registry({"v2.3.0": index("sha256:aaa"),
+                       "v2.4.0": index("sha256:bbb")})
+    assert checks.graph_errors(doc, lookup) == []
+
+
+def test_a_docker_manifest_list_is_an_index_too():
+    doc = {"image": IMAGE, "releases": [entry("v2.3.0", indexDigest="sha256:aaa")]}
+    manifest = {"mediaType":
+                "application/vnd.docker.distribution.manifest.list.v2+json",
+                "digest": "sha256:aaa"}
+    assert checks.graph_errors(doc, registry({"v2.3.0": manifest})) == []
+
+
+def test_an_entry_with_digest_fails():
+    # the graph that put v2.2.4 - v2.6.0 nodes in HOLD at STAGE on 18 Nov
+    doc = {"image": IMAGE, "releases": [
+        entry("v2.3.0", indexDigest="sha256:aaa", digest="sha256:aaa")]}
+    errors = checks.graph_errors(doc, registry({"v2.3.0": index("sha256:aaa")}))
+    assert len(errors) == 1 and "v2.3.0 has digest" in errors[0]
+
+
+@pytest.mark.parametrize("manifests,extra,message", [
+    ({"v2.3.0": index("sha256:new")}, {"indexDigest": "sha256:old"},
+     "indexDigest is sha256:old, the registry has sha256:new"),
+    ({"v2.3.0": index("sha256:aaa")}, {}, "v2.3.0 has no indexDigest"),
+    ({}, {"indexDigest": "sha256:aaa"}, "cannot read %s:v2.3.0" % IMAGE),
+    ({"v2.3.0": {"mediaType": "application/vnd.oci.image.manifest.v1+json",
+                 "digest": "sha256:aaa"}},
+     {"indexDigest": "sha256:aaa"}, "not a multi-arch index"),
+])
+def test_an_index_digest_that_is_not_the_registry_one_fails(manifests, extra,
+                                                            message):
+    doc = {"image": IMAGE, "releases": [entry("v2.3.0", **extra)]}
+    errors = checks.graph_errors(doc, registry(manifests))
+    assert len(errors) == 1 and message in errors[0]
+
+
+@pytest.mark.parametrize("doc", [[], {"releases": [entry("v2.3.0")]},
+                                 {"image": IMAGE, "releases": []}])
+def test_a_graph_without_image_or_releases_fails(doc):
+    assert checks.graph_errors(doc, registry({}))
+
+
+def fake_docker(tmp_path, manifests):
+    """A docker whose `buildx imagetools inspect REF --format ...` prints
+    manifests[REF], as the real one prints {{json .Manifest}}."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (tmp_path / "registry.json").write_text(json.dumps(manifests))
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!%s\nimport json, sys\n"
+        "ref = sys.argv[sys.argv.index('inspect') + 1]\n"
+        "registry = json.load(open(%r))\n"
+        "if ref not in registry:\n"
+        "    sys.exit('ERROR: %%s: not found' %% ref)\n"
+        "print(json.dumps(registry[ref]))\n"
+        % (sys.executable, str(tmp_path / "registry.json")))
+    docker.chmod(docker.stat().st_mode | stat.S_IEXEC)
+    return dict(os.environ, PATH="%s%s%s" % (bin_dir, os.pathsep,
+                                             os.environ["PATH"]))
+
+
+def test_the_graph_command_reads_the_registry_with_docker(tmp_path):
+    env = fake_docker(tmp_path, {IMAGE + ":v2.3.0": index("sha256:aaa"),
+                                 IMAGE + ":v2.4.0": index("sha256:bbb")})
+    path = tmp_path / "upgrade-graph.json"
+    path.write_text(json.dumps({"schema": 1, "image": IMAGE, "releases": [
+        entry("v2.3.0", indexDigest="sha256:aaa"),
+        entry("v2.4.0", indexDigest="sha256:bbb")]}))
+    proc = run("graph", str(path), env=env)
+    assert proc.returncode == 0, proc.stderr
+    assert "(2 releases)" in proc.stdout
+
+    path.write_text(json.dumps({"schema": 1, "image": IMAGE, "releases": [
+        entry("v2.3.0", indexDigest="sha256:aaa"),
+        entry("v2.5.0", indexDigest="sha256:ccc", digest="sha256:ccc")]}))
+    proc = run("graph", str(path), env=env)
+    assert proc.returncode == 1
+    assert "v2.5.0 has digest" in proc.stderr
+    assert "cannot read %s:v2.5.0" % IMAGE in proc.stderr
+
+
+def test_the_graph_command_fails_on_a_file_it_cannot_read(tmp_path):
+    proc = run("graph", str(tmp_path / "missing.json"))
+    assert proc.returncode == 1 and "cannot read" in proc.stderr
