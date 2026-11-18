@@ -170,15 +170,28 @@ def test_a_release_reads_index_digest_then_digest(extra, ref):
 SHIPPED_TOOL_TAGS = ["v2.2.4", "v2.3.0", "v2.4.0", "v2.5.0", "v2.6.0"]
 
 
+def in_ci():
+    """True under a CI runner: GitHub Actions sets CI=true."""
+    return os.environ.get("CI", "").lower() not in ("", "0", "false", "no")
+
+
 def shipped_tool(tag, tmp_path):
-    """k4all-upgrade as release ``tag`` ships it, from git."""
+    """k4all-upgrade as release ``tag`` ships it, from git.
+
+    Without the tag the test is skipped, except in CI, where it fails: a
+    checkout without tags (actions/checkout fetches none by default) would
+    otherwise drop the check against the published tools without a word."""
     try:
         text = subprocess.run(
             ["git", "-C", REPO, "show",
              "%s:bootc/overlay/usr/local/bin/k4all-upgrade" % tag],
             capture_output=True, text=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError):
-        pytest.skip("tag %s is not in this checkout" % tag)
+        message = "tag %s is not in this checkout" % tag
+        if in_ci():
+            pytest.fail(message + ": in CI the checkout needs the tags "
+                        "(actions/checkout with fetch-depth: 0)")
+        pytest.skip(message)
     path = tmp_path / ("k4all-upgrade-" + tag)
     path.write_text(text)
     name = "k4all_upgrade_" + tag.replace(".", "_")
@@ -203,6 +216,16 @@ def test_the_shipped_tools_use_tags_with_a_graph_of_index_digests(tag, tmp_path)
     # ...as they would not with "digest", which this test would catch
     rel, = old.load_graph({"releases": [dict(entry, digest="sha256:bbb")]})
     assert rel.image_ref("img") == "img@sha256:bbb"
+
+
+def test_a_missing_tag_fails_in_ci_and_is_skipped_elsewhere(tmp_path,
+                                                            monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(pytest.fail.Exception, match="fetch-depth: 0"):
+        shipped_tool("v0.0.0-missing", tmp_path)
+    monkeypatch.delenv("CI")
+    with pytest.raises(pytest.skip.Exception):
+        shipped_tool("v0.0.0-missing", tmp_path)
 
 
 def test_build_graph_script_rejects_an_invalid_graph(tmp_path):

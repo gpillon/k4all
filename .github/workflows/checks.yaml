@@ -24,6 +24,11 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
+        with:
+          # With the tags: test_graph.py loads k4all-upgrade as each
+          # published release ships it (git show <tag>:...), and fails in CI
+          # when a tag is missing.
+          fetch-depth: 0
 
       - name: Install test dependencies
         run: python3 -m pip install --user pytest pyyaml
