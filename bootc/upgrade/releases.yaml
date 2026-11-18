@@ -76,10 +76,11 @@ releases:
       control plane of an HA cluster), and TopoLVM volumes wait for their
       first consumer. Traefik replaces ingress-nginx, whose last release is
       tested only up to Kubernetes 1.35: the operator uninstalls
-      ingress-nginx, then installs Traefik on the same IP or host ports, and
-      the Ingresses of class nginx keep working through Traefik's
-      Ingress-NGINX provider. Routes are down until Traefik runs, after the
-      first upgrade step of the CNI and of cert-manager and the components
-      ordered before it (minutes). A minor because CRD upgrades cannot be
-      undone with bootc rollback, and because it replaces a platform
-      component.
+      ingress-nginx, then installs Traefik on the same IP or host ports.
+      k4all's own routes (Headlamp, Argo CD) move to the traefik class and
+      spec.ingress.nginx moves to spec.ingress.traefik; Ingresses of class
+      nginx keep working through Traefik's Ingress-NGINX provider until they
+      move. Routes are down until Traefik runs, after the first upgrade step
+      of the CNI and of cert-manager and the components ordered before it
+      (minutes). A minor because CRD upgrades cannot be undone with bootc
+      rollback, and because it replaces a platform component.

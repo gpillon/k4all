@@ -9,10 +9,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_traefik_serves_the_routes_written_for_ingress_nginx():
-    # The routes the image ships (and argocd's) keep ingressClassName nginx
-    # and nginx.ingress.kubernetes.io annotations: Traefik's Ingress-NGINX
-    # provider serves them, but only through an IngressClass "nginx" whose
-    # controller is the ingress-nginx one.
+    # Users' Ingresses (and the route files the image still ships) keep
+    # ingressClassName nginx and nginx.ingress.kubernetes.io annotations:
+    # Traefik's Ingress-NGINX provider serves them, but only through an
+    # IngressClass "nginx" whose controller is the ingress-nginx one. That
+    # class is never the default; k4all's own routes use the traefik class.
     yaml = pytest.importorskip("yaml")
     release_path = PROJECT_ROOT / "bootc/overlay/usr/local/share/k4all-release.yaml"
     components = yaml.safe_load(release_path.read_text())["spec"]["components"]
@@ -23,7 +24,8 @@ def test_traefik_serves_the_routes_written_for_ingress_nginx():
     classes = [obj for obj in traefik["extraObjects"] if obj["kind"] == "IngressClass"]
     assert [(c["metadata"]["name"], c["spec"]["controller"]) for c in classes] == [
         ("nginx", "k8s.io/ingress-nginx")]
-    assert "annotations" not in classes[0]["metadata"]
+    assert classes[0]["metadata"]["annotations"] == {
+        "ingressclass.kubernetes.io/is-default-class": "false"}
     # The operator's Traefik hook owns the service: the chart has no
     # service.type any more (42.3.1).
     assert "type" not in traefik.get("service", {})
