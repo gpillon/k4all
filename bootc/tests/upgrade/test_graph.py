@@ -1,6 +1,8 @@
 """Versioning rules, the graph in the repo, and hop planning."""
 
 import datetime
+import importlib.machinery
+import importlib.util
 import json
 import os
 import subprocess
@@ -69,14 +71,138 @@ def test_agreed_ladder_is_valid(ladder):
     assert ku.validate_graph(ladder) == []
 
 
-def test_build_graph_script_emits_digests(tmp_path):
+def skipped_syncs(releases):
+    """(patch, skipped) pairs: a patch without syncManifest that a node can
+    reach straight from before an earlier patch of its stream that syncs.
+    The sync applies the target image's manifest, so the skipped changes
+    (a new operator, say) would wait for some later release that syncs."""
+    found = []
+    for rel in releases:
+        if rel.kind != "patch" or rel.sync_manifest:
+            continue
+        for other in releases:
+            if other.kind == "patch" and other.sync_manifest \
+                    and stream_of(other) == stream_of(rel) \
+                    and rel.min_from_key < other.key < rel.key:
+                found.append((rel.version, other.version))
+    return found
+
+
+def stream_of(rel):
+    return ku.stream_of(rel.version)
+
+
+def test_repo_graph_never_skips_a_manifest_sync():
+    with open(RELEASES_YAML, encoding="utf-8") as fh:
+        releases = ku.load_graph(yaml.safe_load(fh))
+    assert skipped_syncs(releases) == []
+
+
+def test_a_patch_that_skips_a_sync_is_found():
+    releases = graph([
+        release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+        release("v2.6.1", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+                syncManifest=True),
+        release("v2.6.2", "patch", "v2.6.0", "1.36.7", "1.36", 45),
+    ])
+    assert versions(ku.plan_path(releases, "v2.6.0")) == ["v2.6.2"]
+    assert skipped_syncs(releases) == [("v2.6.2", "v2.6.1")]
+    # a v2.6.2 that only v2.6.1 reaches, or that syncs too, is fine
+    assert skipped_syncs(graph([e.to_dict() for e in releases[:2]] + [
+        release("v2.6.2", "patch", "v2.6.1", "1.36.7", "1.36", 45)])) == []
+
+
+def test_a_patch_may_sync_the_manifest():
+    # v2.6.1: a new operator, nothing else; Kubernetes, CRI-O, Fedora stay.
+    releases = graph([
+        release("v2.5.0", "minor", "v2.4.0", "1.35.10", "1.35", 45),
+        release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+        release("v2.6.1", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+                syncManifest=True),
+    ])
+    assert ku.validate_graph(releases) == []
+    path = ku.plan_path(releases, "v2.6.0")
+    assert versions(path) == ["v2.6.1"] and path[0].sync_manifest
+    assert versions(ku.auto_allowed(path, "v2.6.0", "patch")) == ["v2.6.1"]
+    assert versions(ku.plan_path(releases, "v2.5.0")) == ["v2.6.0", "v2.6.1"]
+
+
+def test_build_graph_script_emits_index_digests(tmp_path):
     out = tmp_path / "graph.json"
     script = os.path.join(REPO, "bootc", "upgrade", "build-graph.py")
     subprocess.run([sys.executable, script, RELEASES_YAML, "-o", str(out),
                     "--digest", "v2.2.4=sha256:feed"], check=True)
     doc = json.loads(out.read_text())
     assert doc["schema"] == 1
-    assert doc["releases"][0]["digest"] == "sha256:feed"
+    assert doc["releases"][0]["indexDigest"] == "sha256:feed"
+    # The tools of v2.2.4 - v2.6.0 stop in HOLD on a release under "digest".
+    assert not [r["version"] for r in doc["releases"] if "digest" in r]
+    assert ku.load_graph(doc)[0].image_ref("img") == "img@sha256:feed"
+
+
+def test_build_graph_script_moves_a_digest_to_index_digest(tmp_path):
+    source = tmp_path / "releases.yaml"
+    source.write_text(yaml.safe_dump({"releases": [
+        release("v2.2.4", "patch", "v2.0.0", "1.35.6", "1.32", 43,
+                digest="sha256:feed")]}))
+    script = os.path.join(REPO, "bootc", "upgrade", "build-graph.py")
+    proc = subprocess.run([sys.executable, script, str(source)],
+                          capture_output=True, text=True, check=True)
+    entry, = json.loads(proc.stdout)["releases"]
+    assert entry["indexDigest"] == "sha256:feed" and "digest" not in entry
+
+
+@pytest.mark.parametrize("extra,ref", [
+    ({"indexDigest": "sha256:aaa"}, "img@sha256:aaa"),
+    ({"digest": "sha256:bbb"}, "img@sha256:bbb"),       # a graph up to v2.6.0
+    ({"indexDigest": "sha256:aaa", "digest": "sha256:bbb"}, "img@sha256:aaa"),
+    ({}, "img:v2.3.0"),
+])
+def test_a_release_reads_index_digest_then_digest(extra, ref):
+    rel, = graph([release("v2.3.0", "minor", "v2.2.4", "1.35.10", "1.35", 43,
+                          **extra)])
+    assert rel.image_ref("img") == ref
+    # what start_next_hop reads back from state.json
+    assert ku.Release(rel.to_dict()).image_ref("img") == ref
+    assert "digest" not in rel.to_dict()
+
+
+SHIPPED_TOOL_TAGS = ["v2.2.4", "v2.3.0", "v2.4.0", "v2.5.0", "v2.6.0"]
+
+
+def shipped_tool(tag, tmp_path):
+    """k4all-upgrade as release ``tag`` ships it, from git."""
+    try:
+        text = subprocess.run(
+            ["git", "-C", REPO, "show",
+             "%s:bootc/overlay/usr/local/bin/k4all-upgrade" % tag],
+            capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("tag %s is not in this checkout" % tag)
+    path = tmp_path / ("k4all-upgrade-" + tag)
+    path.write_text(text)
+    name = "k4all_upgrade_" + tag.replace(".", "_")
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    module = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader(name, loader))
+    loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("tag", SHIPPED_TOOL_TAGS)
+def test_the_shipped_tools_use_tags_with_a_graph_of_index_digests(tag, tmp_path):
+    # Those tools keep their _same_image bug: they must keep switching to
+    # release tags when the graph names the releases by index digest.
+    old = shipped_tool(tag, tmp_path)
+    entry = release("v2.3.0", "minor", "v2.2.4", "1.35.10", "1.35", 43,
+                    indexDigest="sha256:aaa")
+    rel, = old.load_graph({"releases": [entry]})
+    assert rel.image_ref("img") == "img:v2.3.0"
+    assert old.validate_graph(old.load_graph({"releases": [
+        dict(e, indexDigest="sha256:aaa") for e in LADDER]})) == []
+    # ...as they would not with "digest", which this test would catch
+    rel, = old.load_graph({"releases": [dict(entry, digest="sha256:bbb")]})
+    assert rel.image_ref("img") == "img@sha256:bbb"
 
 
 def test_build_graph_script_rejects_an_invalid_graph(tmp_path):
@@ -131,7 +257,7 @@ def versions(path):
 def test_old_release_walks_every_minor(ladder):
     path = ku.plan_path(ladder, "v2.2.4")
     assert versions(path) == ["v2.3.0", "v2.4.0", "v2.5.0", "v2.6.0",
-                              "v2.7.0", "v2.8.0", "v2.9.0"]
+                              "v2.6.1", "v2.7.0", "v2.8.0", "v2.9.0"]
 
 
 def test_plan_stops_at_the_requested_target(ladder):

@@ -9,6 +9,12 @@
 
 The versioning rules live in k4all-upgrade itself; this script imports them,
 so the CI, the image and the node all agree on what a valid graph is.
+
+Each release gets the digest of its multi-arch index as `indexDigest`, never
+as `digest`. The k4all-upgrade of v2.2.4 - v2.6.0 switches to image@digest
+when an entry has `digest`, then cannot match what bootc staged (bootc
+reports the platform manifest's digest) and stops in HOLD at STAGE. Those
+tools ignore keys they do not know, so they keep using the release tags.
 """
 
 import argparse
@@ -44,7 +50,7 @@ def load_yaml(path):
 
 
 def resolve_digest(image, version):
-    """Digest of the multi-arch manifest list for image:version, or ''."""
+    """Digest of the multi-arch index (manifest list) for image:version, or ''."""
     proc = subprocess.run(
         ["docker", "buildx", "imagetools", "inspect", "%s:%s" % (image, version),
          "--format", "{{json .Manifest}}"],
@@ -60,7 +66,8 @@ def main(argv=None):
     parser.add_argument("-o", "--output", default="-")
     parser.add_argument("--image", default="ghcr.io/gpillon/k4all-bootc")
     parser.add_argument("--digest", action="append", default=[],
-                        metavar="VERSION=DIGEST")
+                        metavar="VERSION=DIGEST",
+                        help="index digest of a release (written as indexDigest)")
     parser.add_argument("--resolve-digests", action="store_true",
                         help="look up missing digests in the registry")
     parser.add_argument("--require-digests", action="store_true",
@@ -80,11 +87,12 @@ def main(argv=None):
     out = []
     for rel in releases:
         entry = rel.to_dict()
-        digest = known.get(rel.version) or rel.digest
+        entry.pop("digest", None)       # never: see the module docstring
+        digest = known.get(rel.version) or rel.index_digest
         if not digest and args.resolve_digests:
             digest = resolve_digest(args.image, rel.version)
         if digest:
-            entry["digest"] = digest
+            entry["indexDigest"] = digest
         elif args.require_digests:
             print("graph error: no digest for %s" % rel.version, file=sys.stderr)
             return 1

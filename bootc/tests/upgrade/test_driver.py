@@ -10,7 +10,8 @@ import time
 import pytest
 import yaml
 
-from conftest import READYZ_NOT_READY, Proc, ku, release, run_cli, write_graph
+from conftest import (READYZ_NOT_READY, Proc, index_digest, ku, manifest_digest,
+                      release, run_cli, write_graph)
 
 STREAM_23 = [
     release("v2.2.4", "patch", "v2.0.0-beta1", "1.35.6", "1.32", 43),
@@ -76,6 +77,30 @@ def test_patch_hop_stages_reboots_and_commits(make_host):
     assert st["current"] == "v2.3.1"
     assert st["history"][-1]["result"] == "ok"
     assert ku.ANNOTATION_IN_PROGRESS not in host.annotations
+
+
+# VM 953: after `run --to v2.4.0` the v2.2.4 -> v2.3.0 entry was gone from
+# state.json; the agent already kept it.
+def test_a_new_run_keeps_the_history(make_host):
+    host = make_host(version="v2.2.4", kubernetes="1.35.6")
+    write_graph(host, STREAM_23)
+    assert run_cli(host, "run", "--to", "v2.3.0", "--yes") == 0
+    finish(host)
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    st = finish(host)
+    assert st["current"] == "v2.3.1"
+    assert [(h["from"], h["to"], h["result"]) for h in st["history"]] == [
+        ("v2.2.4", "v2.3.0", "ok"), ("v2.3.0", "v2.3.1", "ok")]
+
+
+def test_the_timer_keeps_the_history(make_host):
+    host = make_host(version="v2.2.4", kubernetes="1.35.6")
+    write_graph(host, STREAM_23)
+    run_cli(host, "run", "--to", "v2.3.0", "--yes")
+    finish(host)
+    assert run_cli(host, "auto") == 0          # the patch, in the window
+    st = finish(host)
+    assert [h["to"] for h in st["history"]] == ["v2.3.0", "v2.3.1"]
 
 
 def test_backup_runs_before_staging(make_host):
@@ -641,6 +666,48 @@ def test_a_failing_pod_stop_does_not_stop_the_reboot(make_host):
     assert any("before the reboot: systemctl stop exited 1" in m for m in host.logs)
 
 
+# VM 953: "before the reboot: sh -c exited 123: ... failed to remove netns
+# path: unlinkat /var/run/netns/...: device or resource busy" on every hop. It
+# is xargs saying that some `crictl stopp` failed; the reboot ends those pods.
+NETNS_BUSY = ('time="2026-11-18T08:20:44Z" level=fatal msg="stopping the pod '
+              'sandbox \\"5eac46e3\\": rpc error: code = Unknown desc = failed '
+              'to remove netns path: unlinkat /var/run/netns/5eac46e3-a8e6-413e-'
+              'bf1a-7e0ad8c19ea8: device or resource busy"')
+
+
+def _pod_stop_answers(host, rc, stderr):
+    real = host._dispatch
+
+    def answer(argv, input_text):
+        if argv[:2] == ["sh", "-c"] and "stopp" in argv[2]:
+            host.pods_stopped += 1
+            return Proc(returncode=rc, stderr=stderr)
+        return real(argv, input_text)
+    host._dispatch = answer
+
+
+def test_pods_that_do_not_stop_cleanly_are_only_a_note(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    _pod_stop_answers(host, 123, NETNS_BUSY)
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert host.reboots == 1
+    note, = [m for m in host.logs if m.startswith("before the reboot:")]
+    assert note.startswith("before the reboot: some pods did not stop cleanly; "
+                           "the reboot ends them (last crictl message: ")
+    assert "device or resource busy" in note and "exited" not in note
+
+
+def test_a_pod_stop_that_cannot_run_still_says_how_it_exited(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    _pod_stop_answers(host, 127, "sh: crictl: command not found")
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert host.reboots == 1
+    assert "before the reboot: sh -c exited 127: sh: crictl: command not found" \
+        in host.logs
+
+
 def test_host_run_turns_a_timeout_into_a_failed_command(monkeypatch):
     def slow(argv, **kwargs):
         raise subprocess.TimeoutExpired(argv, kwargs["timeout"], output="half")
@@ -836,6 +903,26 @@ def test_a_kubeadm_apply_that_times_out_once_is_tried_again(make_host):
         "kubeadm's whole output is kept"
 
 
+def test_the_kubeadm_log_is_named_by_its_start(make_host):
+    # VM 953: the name had the time kubeadm ended, minutes after the
+    # "kubeadm upgrade apply" line of the journal.
+    host = make_host(version="v2.2.4", kubernetes="1.35.6")
+    write_graph(host, STREAM_23)
+    original = host._kubeadm
+    started = []
+
+    def slow(cmd, args):
+        if args[:2] == ["upgrade", "apply"]:
+            started.append(host.clock)
+            host.clock += datetime.timedelta(seconds=113)
+        return original(cmd, args)
+    host._kubeadm = slow
+    assert run_cli(host, "run", "--to", "v2.3.0", "--yes") == 0
+    logs = [n for n in os.listdir(host.path(ku.STATE_DIR + "/logs"))
+            if n.startswith("kubeadm-")]
+    assert logs == ["kubeadm-%s.log" % started[0].strftime("%Y%m%dT%H%M%S")]
+
+
 def _scale_up_fails(host):
     """kubectl scale --replicas>0 of the operator fails, as with the
     apiserver down; returns a function that heals it."""
@@ -947,6 +1034,96 @@ def test_foreign_staged_deployment_blocks_the_hop(make_host):
     assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
     assert "already staged" in state(host)["hold"]["reason"]
     assert not commands(host, ["bootc", "switch"])
+
+
+# --- releases named by digest ---------------------------------------------------
+# VM 953, 18 nov: the published graph named every release by the digest of its
+# multi-arch index. bootc keeps that ref, but reports the digest of the amd64
+# manifest inside the index as imageDigest, and the tool compared only the
+# digests: every hop stopped in HOLD at STAGE ("bootc did not stage ...").
+BOOTC_REPO = "ghcr.io/gpillon/k4all-bootc"
+
+
+def by_index_digest(entries, key="indexDigest"):
+    return [dict(entry, **{key: index_digest(entry["version"])})
+            for entry in entries]
+
+
+@pytest.mark.parametrize("key", ["indexDigest", "digest"])
+def test_a_hop_by_index_digest_is_staged_and_committed(make_host, key):
+    # indexDigest from v2.6.1 on; "digest" in the graphs up to v2.6.0
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, by_index_digest(STREAM_23, key))
+    ref = "%s@%s" % (BOOTC_REPO, index_digest("v2.3.1"))
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert commands(host, ["bootc", "switch", "--download-only"])[0][-1] == ref
+    st = state(host)
+    assert st["phase"] == "REBOOT" and not st.get("hold")
+    st = finish(host)
+    assert st["current"] == "v2.3.1" and st["phase"] == "DONE"
+    assert host.booted["image"] == ref
+    assert host.booted["digest"] == manifest_digest("v2.3.1") != \
+        index_digest("v2.3.1"), "the fake reports what bootc reports"
+
+
+def test_preflight_accepts_the_hops_own_image_staged_by_digest(make_host):
+    # A hop that starts again (a new run after an abandoned one) finds its
+    # own image staged: no "already staged", nothing downloaded twice.
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, by_index_digest(STREAM_23))
+    host.staged = {"version": "v2.3.1", "kubernetes": "1.35.10",
+                   "image": "%s@%s" % (BOOTC_REPO, index_digest("v2.3.1")),
+                   "digest": manifest_digest("v2.3.1")}
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert not commands(host, ["bootc", "switch"])
+    assert finish(host)["current"] == "v2.3.1"
+
+
+def test_another_release_staged_by_digest_still_blocks_the_hop(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, by_index_digest(STREAM_23))
+    host.staged = {"version": "v2.4.0", "kubernetes": "1.35.10",
+                   "image": "%s@%s" % (BOOTC_REPO, index_digest("v2.4.0")),
+                   "digest": manifest_digest("v2.4.0")}
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
+    assert "already staged" in state(host)["hold"]["reason"]
+
+
+# The staged entry of `bootc status --json` on VM 953 in that HOLD (bootc
+# 1.17.1): v2.3.0 staged by the digest of its index.
+VM953_V230_INDEX = ("sha256:34a7ccc8f8d750c7d01dca0cf6154885670fade9e451111810d0"
+                    "2830d789ca61")
+VM953_V230_AMD64 = ("sha256:e16f762286e2a8e5464d4f618967f6a072999be2f4b421b4678"
+                    "502f5611822f3")
+VM953_V240_INDEX = ("sha256:fc557418db89932fde0ba65977069cb92831936ed992042b6194"
+                    "b8b467f6ecac")
+VM953_STAGED = {
+    "image": {"image": {"image": BOOTC_REPO + "@" + VM953_V230_INDEX,
+                        "transport": "registry"},
+              "imageDigest": VM953_V230_AMD64, "version": "v2.3.0",
+              "architecture": "amd64"},
+}
+
+
+@pytest.mark.parametrize("ref,same", [
+    (BOOTC_REPO + "@" + VM953_V230_INDEX, True),     # the ref bootc keeps
+    (BOOTC_REPO + "@" + VM953_V230_AMD64, True),     # its platform manifest
+    (BOOTC_REPO + "@" + VM953_V240_INDEX, False),    # another release
+    (BOOTC_REPO + ":v2.3.0", False),                 # the tag: another ref
+])
+def test_same_image_on_the_bootc_status_of_vm_953(ref, same):
+    assert ku._same_image(VM953_STAGED, ref) is same
+
+
+def test_same_image_by_tag_compares_the_ref():
+    entry = {"image": {"image": {"image": BOOTC_REPO + ":v2.3.1"},
+                       "imageDigest": manifest_digest("v2.3.1")}}
+    assert ku._same_image(entry, BOOTC_REPO + ":v2.3.1")
+    assert not ku._same_image(entry, BOOTC_REPO + ":v2.3.2")
+    assert not ku._same_image({}, BOOTC_REPO + "@" + index_digest("v2.3.1"))
 
 
 def test_run_refuses_while_an_upgrade_is_in_progress(make_host):
@@ -1163,6 +1340,47 @@ def test_run_walks_every_hop_and_syncs_the_manifest_in_two_steps(make_host):
     assert comps["calico"]["management"] == "Unmanaged"
     assert comps["my-extra"] == {"version": "v1"}
     assert "resourceVersion" not in second["metadata"]
+
+
+# v2.6.1: a patch whose only change to the cluster is a new operator.
+STREAM_26 = [
+    release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+    release("v2.6.1", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+            syncManifest=True),
+]
+
+
+def test_a_patch_with_a_sync_runs_in_the_window_and_brings_the_operator(make_host):
+    host = make_host(version="v2.6.0", kubernetes="1.36.6")
+    write_graph(host, STREAM_26)
+    image = json.loads(json.dumps(NEW_MANIFEST))
+    image["spec"]["components"]["k4all-operator"]["version"] = "v0.5.1"
+    host.write(ku.IMAGE_RELEASE_MANIFEST, yaml.safe_dump(image))
+    cluster = json.loads(json.dumps(image))
+    cluster["metadata"]["resourceVersion"] = "9"
+    comps = cluster["spec"]["components"]
+    comps["k4all-operator"]["version"] = "v0.5.0"
+    # uninstalled by the v2.4.0 sync, no longer in the image's manifest
+    comps["ingress-nginx"] = {"type": "helm", "version": "4.15.1",
+                              "management": "Removed"}
+    host.release_manifest = cluster
+    host.operator_running = "v0.5.0"
+
+    # mode auto (the default), inside the Saturday window: patches run alone
+    assert run_cli(host, "auto") == 0
+    st = finish(host)
+    assert st["current"] == "v2.6.1" and st["phase"] == "DONE"
+    assert host.reboots == 1
+    assert not [c for c in host.calls if c[1:3] == ["upgrade", "apply"]]
+    assert host.operator_scale_history == [], "Kubernetes stays: no pause"
+    (kind, ops), = host.rm_patches              # step 1: the operator alone
+    assert kind == "json" and ops[0]["value"]["version"] == "v0.5.1"
+    assert host.operator_running == "v0.5.1"
+    assert host.applied_manifests, "step 2 applied"
+    comps = host.release_manifest["spec"]["components"]
+    assert comps["ingress-nginx"]["management"] == "Removed"
+    assert any("ReleaseManifest sync 1/2: k4all-operator v0.5.1" in m
+               for m in host.logs)
 
 
 def test_sync_loads_the_shipped_images_before_applying(make_host):

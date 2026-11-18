@@ -6,6 +6,7 @@ staging, kubeadm, reboots, rollbacks and the ReleaseManifest sync.
 """
 
 import datetime
+import hashlib
 import importlib.machinery
 import importlib.util
 import json
@@ -49,6 +50,8 @@ LADDER = [
             syncManifest=True),
     release("v2.5.0", "minor", "v2.4.0", "1.35.10", "1.35", 45),
     release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+    release("v2.6.1", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+            syncManifest=True),
     release("v2.7.0", "minor", "v2.6.0", "1.36.6", "1.36", 45),
     release("v2.8.0", "minor", "v2.7.0", "1.36.6", "1.36", 45,
             syncManifest=True),
@@ -70,6 +73,19 @@ READYZ_NOT_READY = (
     'readyz check failed") has prevented the request from succeeding')
 
 
+def index_digest(version):
+    """Digest of the multi-arch index that a release tag points to: the one
+    the upgrade graph lists."""
+    return "sha256:" + hashlib.sha256(("index " + version).encode()).hexdigest()
+
+
+def manifest_digest(version, arch="amd64"):
+    """Digest of one architecture's manifest inside that index. bootc 1.17
+    reports this one as imageDigest, for a tag and for an index digest alike
+    (VM 953, bootc status of a deployment staged by index digest)."""
+    return "sha256:" + hashlib.sha256(("%s %s" % (arch, version)).encode()).hexdigest()
+
+
 class Proc:
     def __init__(self, stdout="", returncode=0, stderr=""):
         self.stdout = stdout
@@ -87,7 +103,8 @@ class FakeHost(ku.Host):
         self.calls = []
         self.logs = []
         self.booted = {"version": version, "kubernetes": kubernetes}
-        self.staged = None          # {"version", "kubernetes", "image"}
+        # {"version", "kubernetes", "image" (the ref), "digest" (imageDigest)}
+        self.staged = None
         self.rollback_target = None
         self.apiserver = kubernetes
         self.cluster_version = kubernetes
@@ -169,8 +186,12 @@ class FakeHost(ku.Host):
 
     # --- the node simulated -------------------------------------------
     def image_for(self, ref):
-        version = ref.rsplit(":", 1)[-1] if "@" not in ref else ref.split("@")[1]
-        version = version.replace("sha256:", "")
+        if "@" in ref:
+            digest = ref.split("@", 1)[1]
+            version = next((v for v in self.images if index_digest(v) == digest),
+                           None)
+        else:
+            version = ref.rsplit(":", 1)[-1]
         meta = self.images.get(version)
         if meta is None:
             raise AssertionError("unknown image %s" % ref)
@@ -182,8 +203,7 @@ class FakeHost(ku.Host):
         self.kubelet_running = True
         if self.staged:
             self.rollback_target = dict(self.booted)
-            self.booted = {"version": self.staged["version"],
-                           "kubernetes": self.staged["kubernetes"]}
+            self.booted = dict(self.staged)
             self.staged = None
             self.write(ku.VERSION_FILE, self.booted["version"] + "\n")
             self.node_is_ready = self.healthy_after_boot
@@ -193,7 +213,7 @@ class FakeHost(ku.Host):
             if not info:
                 return None
             image = info.get("image", "ghcr.io/gpillon/k4all-bootc:%s" % info["version"])
-            digest = info.get("digest", "sha256:" + info["version"])
+            digest = info.get("digest", manifest_digest(info["version"]))
             return {"image": {"image": {"image": image, "transport": "registry"},
                               "imageDigest": digest},
                     "ostree": {"checksum": "c-" + info["version"],
@@ -255,12 +275,10 @@ class FakeHost(ku.Host):
             return Proc(json.dumps(self._status()))
         if args[:2] == ["switch", "--download-only"]:
             version, meta = self.image_for(args[2])
+            # bootc keeps the ref as given; imageDigest is the manifest it
+            # pulled for this architecture, never the index of the ref
             self.staged = {"version": version, "kubernetes": meta["kubernetes"],
-                           "image": args[2].split("@")[0] if "@" in args[2]
-                           else args[2]}
-            if "@" in args[2]:
-                self.staged["digest"] = args[2].split("@")[1]
-                self.staged["image"] = "ghcr.io/gpillon/k4all-bootc"
+                           "image": args[2], "digest": manifest_digest(version)}
             return Proc()
         if args[:3] == ["upgrade", "--from-downloaded", "--apply"]:
             self.reboot_now()
