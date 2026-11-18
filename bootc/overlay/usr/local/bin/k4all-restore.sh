@@ -11,6 +11,7 @@
 
 set -euo pipefail
 
+# shellcheck disable=SC2154 # rc is set inside the trap
 trap 'rc=$?; echo "[k4all-restore ERROR] line $LINENO: $BASH_COMMAND (rc=$rc)" >&2' ERR
 
 RESTORE_DIR="/var/opt/k4all/restore"

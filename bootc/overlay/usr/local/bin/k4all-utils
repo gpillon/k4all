@@ -270,6 +270,7 @@ get_physical_interface_for_ovs_port() {
 # Function to find the original physical interface used in the bridge
 get_original_physical_interface() {
   for port in $(ovs-vsctl list-ports ovs-bridge); do
+    # shellcheck disable=SC2155 # kept: split, a failure here would stop set -e callers
     local physical_interface=$(get_physical_interface_for_ovs_port "$port")
     if [ -n "$physical_interface" ]; then
       echo "$physical_interface"
@@ -281,9 +282,11 @@ get_original_physical_interface() {
 }
 
 get_real_interface() {
+  # shellcheck disable=SC2155 # kept: split, a failure here would stop set -e callers
   local NET_DEV=$(get_network_device)
 
   if [ "$NET_DEV" == "ovs-bridge" ]; then
+    # shellcheck disable=SC2155 # kept: split, a failure here would stop set -e callers
     local PHYS_NET_DEV=$(get_original_physical_interface)
   else
     local PHYS_NET_DEV=$NET_DEV
@@ -366,6 +369,7 @@ cidr_to_mask() {
   local partial_octet=$((cidr % 8))
 
   for ((i=0; i<4; i++)); do
+    # shellcheck disable=SC2324 # appends on purpose: the mask is a string
     if [ $i -lt $full_octets ]; then
       mask+=255
     elif [ $i -eq $full_octets ]; then
@@ -398,6 +402,7 @@ get_architecture() {
 
 # Function to set CLI_ARCH based on the detected architecture
 set_cli_arch() {
+    # shellcheck disable=SC2155 # kept: split, a failure here would stop set -e callers
     local ARCH=$(get_architecture)
     case "${ARCH}" in
         x86_64)

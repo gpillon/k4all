@@ -21,6 +21,7 @@ if [ -f "/opt/k4all/setup-ph3.done" ]; then
   exit 0
 fi
 
+# shellcheck source=SCRIPTDIR/control-plane-utils
 source /var/opt/k4all/bin/control-plane-utils
 source /usr/local/bin/k4all-utils
 

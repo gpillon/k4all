@@ -19,6 +19,7 @@ set_static_hostname() {
 
     if [ -f "/etc/node-type" ]; then
         # Read content, trim spaces/newlines, and append
+        # shellcheck disable=SC2155 # kept: split, a failure here would stop set -e callers
         local content=$(cat /etc/node-type | tr -d ' \n')
         if [[ -n "$content" ]]; then
             node_type_suffix="$content"

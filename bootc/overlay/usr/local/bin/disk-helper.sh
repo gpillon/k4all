@@ -8,6 +8,7 @@ function get_root_disk() {
     # Check if the configuration file exists and if disk.root.disk is specified
     if [[ -f "$config_file" ]]; then
         # Read the disk configuration from the JSON file
+        # shellcheck disable=SC2155 # kept: split, a failure here would stop set -e callers
         local specified_disk=$(jq -r '.disk.root.disk' "$config_file")
 
         # Check if a specific disk is configured

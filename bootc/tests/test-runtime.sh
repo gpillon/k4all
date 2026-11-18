@@ -295,6 +295,7 @@ else
 
     info "5c. Waiting for node Ready (up to 120s)..."
     NODE_READY=false
+    # shellcheck disable=SC2034 # a retry counter
     for i in $(seq 1 24); do
         if exec_in "KUBECONFIG=/root/.kube/config kubectl get nodes --no-headers 2>/dev/null | grep -q ' Ready'"; then
             pass "node is Ready"

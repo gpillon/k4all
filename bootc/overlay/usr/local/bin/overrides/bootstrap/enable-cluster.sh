@@ -10,6 +10,7 @@ check-ip.sh
 if [ $? -eq 0 ]; then
     echo "At least one IP is available. Proceeding with LoadBalancer Service and ConfigMap update..."
 
+    # shellcheck source=SCRIPTDIR/../bootstrap-control/control-plane-utils
     source /var/opt/k4all/bin/control-plane-utils
 
     # Check if the service already exists
@@ -65,7 +66,7 @@ EOF
     echo "ConfigMap kubeadm-config updated with Load Balancer IP and Port"
 
     # Ensure the ClusterConfiguration and apiServer.certSANs exists
-    yq e -i "select(.kind == \"ClusterConfiguration\").apiServer.certSANs |= . // []" $CONFIG_FILE
+    yq e -i "select(.kind == \"ClusterConfiguration\").apiServer.certSANs |= . // []" "$K8S_CONFIG_FILE"
 
     # Add the current and new LB IP to certSANs if they do not exist
     add_ip_if_not_exists "$CURRENT_IP"

@@ -32,46 +32,17 @@ jobs:
   # ------------------------------------------------------------------
   # 0. Unit and contract tests — gate every build
   # ------------------------------------------------------------------
+  # The same job as on pull requests: checks.yaml.
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@v4
-
-      - name: Install test dependencies
-        run: python3 -m pip install --user pytest pyyaml
-
-      - name: Install yq (the version the image ships)
-        # test_ingress_scripts.py runs the node scripts with mikefarah yq v4;
-        # without it those tests are skipped.
-        run: |
-          YQ_VERSION="$(sed -n 's/^ARG YQ_VERSION=//p' bootc/Containerfile)"
-          curl -fsSL -o "$RUNNER_TEMP/yq" \
-            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-          chmod +x "$RUNNER_TEMP/yq"
-          echo "K4ALL_TEST_YQ=$RUNNER_TEMP/yq" >> "$GITHUB_ENV"
-
-      - name: Upgrade tool, graph and image contract tests
-        run: python3 -m pytest -q bootc/tests/upgrade
-
-      - name: Anaconda addon tests
-        # From the addon directory: the tests import com_k4all_installer
-        # from there.
-        working-directory: k4all-anaconda-addon
-        run: python3 -m pytest -q tests
+    uses: ./.github/workflows/checks.yaml
 
   # ------------------------------------------------------------------
-  # 1. Build the bootc OCI image (per arch) — always runs
+  # 0. The version of the build, for every job after it
   # ------------------------------------------------------------------
-  build-image:
-    needs: test
+  version:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-    strategy:
-      matrix:
-        arch: [amd64, arm64]
     outputs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
@@ -82,9 +53,11 @@ jobs:
 
       - name: Extract version
         id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+          if [ -n "${INPUT_VERSION}" ]; then
+            VERSION="${INPUT_VERSION}"
           elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME}"
           else
@@ -103,6 +76,34 @@ jobs:
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Refuse to rebuild a released version
+        # A dispatch with the version of a tag (the version input, or a run
+        # on the tag itself) would push that release's images again, over
+        # the ones nodes follow by tag. Only the push of a tag builds it.
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git ls-remote --tags --refs origin \
+            | python3 bootc/upgrade/release-checks.py new-version "$VERSION"
+
+  # ------------------------------------------------------------------
+  # 1. Build the bootc OCI image (per arch) — always runs
+  # ------------------------------------------------------------------
+  build-image:
+    needs: [test, version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -124,7 +125,7 @@ jobs:
 
       - name: Stamp version in k4all-release.yaml
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.version.outputs.version }}"
           RELEASE_FILE="bootc/overlay/usr/local/share/k4all-release.yaml"
           yq eval ".spec.osImage.imageTag = \"${VERSION}\"" -i "${RELEASE_FILE}"
           # k4all-operator keeps the version committed in the file: each k4all
@@ -137,11 +138,11 @@ jobs:
           file: bootc/Containerfile
           platforms: linux/${{ matrix.arch }}
           build-args: |
-            K4ALL_VERSION=${{ steps.version.outputs.version }}
+            K4ALL_VERSION=${{ needs.version.outputs.version }}
           push: true
           provenance: false
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-${{ matrix.arch }}
+            ${{ env.IMAGE_NAME }}:${{ needs.version.outputs.version }}-${{ matrix.arch }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
@@ -149,7 +150,7 @@ jobs:
   # 2. Create multi-arch manifest — always runs
   # ------------------------------------------------------------------
   push-manifest:
-    needs: build-image
+    needs: [version, build-image]
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -163,14 +164,14 @@ jobs:
 
       - name: Create multi-arch manifest
         run: |
-          VERSION="${{ needs.build-image.outputs.version }}"
+          VERSION="${{ needs.version.outputs.version }}"
           docker manifest create "${{ env.IMAGE_NAME }}:${VERSION}" \
             "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
             "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
           docker manifest push "${{ env.IMAGE_NAME }}:${VERSION}"
 
           # :latest moves only to the pinned bridge release (see LATEST_PIN)
-          if [ "${{ needs.build-image.outputs.is_tag }}" = "true" ] && [ "${VERSION}" = "${LATEST_PIN}" ]; then
+          if [ "${{ needs.version.outputs.is_tag }}" = "true" ] && [ "${VERSION}" = "${LATEST_PIN}" ]; then
             docker manifest create "${{ env.IMAGE_NAME }}:latest" \
               "${{ env.IMAGE_NAME }}:${VERSION}-amd64" \
               "${{ env.IMAGE_NAME }}:${VERSION}-arm64"
@@ -181,8 +182,8 @@ jobs:
   # 3. Build ISOs — only on tags or manual request
   # ------------------------------------------------------------------
   build-iso:
-    needs: [build-image, push-manifest]
-    if: needs.build-image.outputs.is_tag == 'true' || github.event.inputs.build_iso == 'true'
+    needs: [version, build-image, push-manifest]
+    if: needs.version.outputs.is_tag == 'true' || github.event.inputs.build_iso == 'true'
     permissions:
       contents: write
       packages: read
@@ -211,7 +212,7 @@ jobs:
             suffix: worker
     runs-on: ${{ matrix.runner }}
     env:
-      VERSION: ${{ needs.build-image.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
@@ -317,14 +318,34 @@ jobs:
   # 4. Create GitHub Release — only on tags
   # ------------------------------------------------------------------
   release:
-    needs: [build-image, build-iso]
-    if: needs.build-image.outputs.is_tag == 'true'
+    needs: [version, build-image, build-iso]
+    if: needs.version.outputs.is_tag == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
+
+      - name: Is the release already published?
+        # A rerun of this job for a published release (not a draft) keeps
+        # its upgrade-graph.json and k4all-bridge.sh, its notes and its
+        # Latest flag: built again, the graph would carry what the registry
+        # and the code say today, not what nodes were offered. It uploads
+        # the ISOs again (what a failed upload leaves missing), nothing else.
+        id: published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          PUBLISHED=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 \
+              --json tagName,isDraft \
+            | python3 bootc/upgrade/release-checks.py published "$VERSION")
+          echo "published=${PUBLISHED}" >> "$GITHUB_OUTPUT"
+          if [ "$PUBLISHED" = true ]; then
+            echo "::notice::${VERSION} is already published: its upgrade-graph.json, k4all-bridge.sh, notes and Latest flag stay as they are; only the ISOs are uploaded again."
+          fi
 
       - name: Download all ISO artifacts
         uses: actions/download-artifact@v4
@@ -341,6 +362,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build upgrade graph and bridge script
+        if: steps.published.outputs.published == 'false'
         run: |
           python3 -m pip install --user pyyaml
           # every listed release must already be in the registry
@@ -357,22 +379,47 @@ jobs:
           sed "s|@@BRIDGE_DIGEST@@|${BRIDGE_DIGEST}|" bootc/scripts/k4all-bridge.sh > isos/k4all-bridge.sh
           chmod +x isos/k4all-bridge.sh
 
+      - name: Check the upgrade graph against the registry
+        # The file about to be uploaded: no entry with digest (the tools of
+        # v2.2.4 - v2.6.0 stop in HOLD at STAGE on it), and each indexDigest
+        # is the multi-arch index its tag points to now. The bridge script
+        # takes the v2.2.4 one.
+        if: steps.published.outputs.published == 'false'
+        run: python3 bootc/upgrade/release-checks.py graph isos/upgrade-graph.json
+
       - name: List release assets
         run: ls -lh isos/
 
+      - name: Is this the highest release?
+        # softprops makes Latest whichever release it writes last: on
+        # 18 Nov v2.3.0, whose release job finished last, took it from
+        # v2.6.0. Latest goes only to the highest v* release tag.
+        id: latest
+        if: steps.published.outputs.published == 'false'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          LATEST=$(git ls-remote --tags --refs origin \
+            | python3 bootc/upgrade/release-checks.py latest "$VERSION")
+          echo "make_latest=${LATEST}" >> "$GITHUB_OUTPUT"
+          echo "${VERSION} becomes Latest: ${LATEST}"
+
       - name: Create GitHub Release
+        if: steps.published.outputs.published == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.build-image.outputs.version }}
-          name: "K4All ${{ needs.build-image.outputs.version }}"
-          prerelease: ${{ needs.build-image.outputs.prerelease }}
+          tag_name: ${{ needs.version.outputs.version }}
+          name: "K4All ${{ needs.version.outputs.version }}"
+          prerelease: ${{ needs.version.outputs.prerelease }}
+          make_latest: ${{ steps.latest.outputs.make_latest }}
           generate_release_notes: true
           body: |
-            ## K4All ${{ needs.build-image.outputs.version }}
+            ## K4All ${{ needs.version.outputs.version }}
 
             ### Bootc OCI Image
             ```
-            ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.build-image.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.version.outputs.version }}
             ```
 
             ### ISO Downloads
@@ -390,7 +437,7 @@ jobs:
             If the ISO was split (x86_64), reassemble first: `cat <file>.iso.zst.part-* > <file>.iso.zst`
 
             #### Windows
-            - combine the ISOs using the following command: `copy /b k4all-attended-${{ needs.build-image.outputs.version }}-x86_64.iso.zst.part-* k4all-attended-${{ needs.build-image.outputs.version }}-x86_64.iso.zst`
+            - combine the ISOs using the following command: `copy /b k4all-attended-${{ needs.version.outputs.version }}-x86_64.iso.zst.part-* k4all-attended-${{ needs.version.outputs.version }}-x86_64.iso.zst`
             - Extract the ISOs from zst using Winrar > 6.10
 
             ### Update existing systems
@@ -417,3 +464,11 @@ jobs:
             isos/upgrade-graph.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload the ISOs again to the published release
+        # isos/ holds only the ISOs here: no graph and no bridge were built.
+        if: steps.published.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: gh release upload "$VERSION" isos/k4all-* --clobber --repo "$GITHUB_REPOSITORY"

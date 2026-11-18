@@ -11,7 +11,6 @@ import importlib.machinery
 import importlib.util
 import json
 import os
-import subprocess
 
 import pytest
 

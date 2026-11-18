@@ -32,6 +32,7 @@ if [ ! -f "$UPDATES_IMG" ]; then
 fi
 
 WORK_DIR=$(mktemp -d)
+# shellcheck disable=SC2064 # WORK_DIR is meant to expand now
 trap "rm -rf ${WORK_DIR}" EXIT
 
 echo "=== Remastering K4All ISO ==="
@@ -75,6 +76,7 @@ fi
 # Modify GRUB configs — kernel command lines + branding
 for grub_cfg in "${WORK_DIR}/iso/EFI/BOOT/grub.cfg" "${WORK_DIR}/iso/boot/grub2/grub.cfg"; do
     if [ -f "$grub_cfg" ]; then
+        # shellcheck disable=SC2046 # a fixed path without spaces
         echo "Modifying GRUB config: $(basename $(dirname "$grub_cfg"))/$(basename "$grub_cfg")"
         if [ -n "$UPDATES_PARAM" ]; then
             sed -i "/^[[:space:]]*linux\(efi\)\{0,1\} /{/inst.updates/!s|$| ${UPDATES_PARAM}|}" "$grub_cfg"

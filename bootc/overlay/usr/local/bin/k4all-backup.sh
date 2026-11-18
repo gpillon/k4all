@@ -17,6 +17,7 @@
 
 set -euo pipefail
 
+# shellcheck disable=SC2154 # rc is set inside the trap
 trap 'rc=$?; echo "[k4all-backup ERROR] line $LINENO: $BASH_COMMAND (rc=$rc)" >&2' ERR
 
 BACKUP_MARKER="K4ALL_BACKUP_V2"

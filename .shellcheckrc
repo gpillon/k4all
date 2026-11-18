@@ -1,0 +1,13 @@
+# ShellCheck settings of the repository. pre-commit and the checks job run
+# shellcheck --severity=warning from the repository root (see
+# .pre-commit-config.yaml): errors and warnings fail, info and style do not.
+
+# The scripts source the paths they have on a node: /usr/local/bin/k4all-utils
+# is bootc/overlay/usr/local/bin/k4all-utils here. Relative to the
+# repository root.
+source-path=bootc/overlay
+external-sources=true
+
+# An unset UPPERCASE variable is a bug too: enable-cluster.sh used an
+# undefined $CONFIG_FILE. ShellCheck skips them unless asked.
+enable=check-unassigned-uppercase

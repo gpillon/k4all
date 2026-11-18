@@ -1,0 +1,8 @@
+# ruff check: the pyflakes rules (F) on the Python of the repository.
+# Run by pre-commit and the checks job (.pre-commit-config.yaml).
+
+# k4all-upgrade has no .py extension.
+extend-include = ["bootc/overlay/usr/local/bin/k4all-upgrade"]
+
+[lint]
+select = ["F"]

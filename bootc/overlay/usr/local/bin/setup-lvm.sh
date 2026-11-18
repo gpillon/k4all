@@ -34,6 +34,7 @@ else
     echo "Root disk detected: $disk_name"
 
     # Check the partition naming convention dynamically
+    # shellcheck disable=SC2010 # device names: no globbing surprises
     if ls /dev/${disk_name}* 2>/dev/null | grep -q "${disk_name}p"; then
         partition_suffix="p"
     elif ls /dev/${disk_name}* 2>/dev/null | grep -q "${disk_name}[0-9]"; then

@@ -8,7 +8,7 @@
 import sys
 import types
 import argparse
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
 # =============================================================================
 # Mock: dasbus

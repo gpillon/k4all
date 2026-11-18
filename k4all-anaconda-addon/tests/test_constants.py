@@ -11,7 +11,7 @@ class TestConstants:
     """Test that constants and config defaults are correctly defined."""
 
     def test_import(self):
-        from com_k4all_installer.constants import (
+        from com_k4all_installer.constants import (  # noqa: F401 (the import is the test)
             K4ALL, K4ALL_CONFIG_PATH, K4ALL_NODE_TYPE_PATH,
             VALID_ROLES, VALID_CNI_TYPES, VALID_HA_TYPES,
             DEFAULT_CLUSTER_CONFIG, DEFAULT_INSTALL_CONFIG,

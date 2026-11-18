@@ -15,6 +15,7 @@ set -euo pipefail
 # K4ALL_ROOT: the tests run the script against a fake root.
 ROOT="${K4ALL_ROOT:-}"
 
+# shellcheck source=SCRIPTDIR/overrides/bootstrap-control/control-plane-utils
 source "$ROOT/opt/k4all/bin/control-plane-utils"
 
 LOGIN_DATA="$ROOT/etc/login_data"

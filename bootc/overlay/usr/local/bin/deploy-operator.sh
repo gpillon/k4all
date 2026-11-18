@@ -7,6 +7,7 @@ set -euo pipefail
 source /usr/local/bin/k4all-utils
 
 DONE_FILE="/opt/k4all/operator-deployed.done"
+# shellcheck disable=SC2034 # unused, kept
 DEFAULT_CONFIG="/usr/local/share/k4all-config.yaml.default"
 
 if [ -f "$DONE_FILE" ]; then

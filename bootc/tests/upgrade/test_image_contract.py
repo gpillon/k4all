@@ -9,7 +9,6 @@ nodes, kubeadm configs that a newer kubeadm rejects.
 import os
 import re
 
-import pytest
 import yaml
 
 from conftest import REPO, ku

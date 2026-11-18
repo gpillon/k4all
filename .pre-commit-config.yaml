@@ -1,0 +1,29 @@
+# Linters for the shell scripts and the Python of the repository.
+# The checks job (.github/workflows/checks.yaml) runs them on every pull
+# request and before every build:
+#     pre-commit run --all-files
+# Locally, `pre-commit install` runs them on each commit.
+#
+# shellcheck: errors and warnings fail (.shellcheckrc has the settings).
+#   A finding that is not a bug gets `# shellcheck disable=SCxxxx # why`
+#   on the line above it.
+# ruff: the pyflakes rules (ruff.toml), k4all-upgrade included.
+
+repos:
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]
+      - id: shellcheck
+        name: shellcheck (sourced, not executable)
+        # Without the executable bit identify does not read the shebang,
+        # so these are not tagged "shell".
+        types: [file]
+        files: ^bootc/overlay/usr/local/bin/overrides/bootstrap-control/control-plane-utils$
+        args: [--severity=warning]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5
+    hooks:
+      - id: ruff-check

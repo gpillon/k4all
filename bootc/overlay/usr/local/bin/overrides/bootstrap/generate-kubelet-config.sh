@@ -19,6 +19,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Set the Kubernetes version
+# shellcheck disable=SC2034 # unused, but set -e still stops on a failing kubectl version
 KUBE_VERSION=$(kubectl version | grep Server | awk '{print $3}')
 
 # Extract cluster DNS and Domain from the CoreDNS ConfigMap (common default settings)

@@ -6,7 +6,6 @@
 
 import logging
 import os
-import glob
 import shutil
 import subprocess
 from os.path import normpath, join as joinpath, dirname
@@ -229,8 +228,6 @@ class K4AllInstallationTask(Task):
 
     def _find_vgdata_partition(self, disk):
         """Find a suitable partition for vg_data on the given disk."""
-        disk_name = disk.replace("/dev/", "")
-
         try:
             result = subprocess.run(
                 ["lsblk", "-lno", "NAME,TYPE,MOUNTPOINT", disk],
