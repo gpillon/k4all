@@ -110,6 +110,17 @@ def test_the_bridge_digest_comes_from_index_digest():
     assert 'sha256:*) ;;' in workflow, "an empty digest fails the release job"
 
 
+def test_the_pinned_operator_comes_with_a_sync():
+    # Clusters get a new operator only through a ReleaseManifest sync (a
+    # patch may carry one: v2.6.1). The newest release that syncs names the
+    # operator the image pins; a pin bumped without a sync fails here.
+    graph = ku.load_graph(yaml.safe_load(read(BOOTC, "upgrade", "releases.yaml")))
+    last_sync = [r for r in graph if r.sync_manifest][-1]
+    pinned = release_components()["k4all-operator"]["version"]
+    assert "operator %s" % pinned in " ".join(last_sync.notes.split()), \
+        (last_sync.version, pinned)
+
+
 def test_release_manifest_pins_every_component():
     # A floating version moves clusters outside any k4all release, and
     # upgradePath steps only make sense between fixed versions.

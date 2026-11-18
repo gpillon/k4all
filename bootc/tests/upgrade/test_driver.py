@@ -1256,6 +1256,47 @@ def test_run_walks_every_hop_and_syncs_the_manifest_in_two_steps(make_host):
     assert "resourceVersion" not in second["metadata"]
 
 
+# v2.6.1: a patch whose only change to the cluster is a new operator.
+STREAM_26 = [
+    release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+    release("v2.6.1", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+            syncManifest=True),
+]
+
+
+def test_a_patch_with_a_sync_runs_in_the_window_and_brings_the_operator(make_host):
+    host = make_host(version="v2.6.0", kubernetes="1.36.6")
+    write_graph(host, STREAM_26)
+    image = json.loads(json.dumps(NEW_MANIFEST))
+    image["spec"]["components"]["k4all-operator"]["version"] = "v0.5.1"
+    host.write(ku.IMAGE_RELEASE_MANIFEST, yaml.safe_dump(image))
+    cluster = json.loads(json.dumps(image))
+    cluster["metadata"]["resourceVersion"] = "9"
+    comps = cluster["spec"]["components"]
+    comps["k4all-operator"]["version"] = "v0.5.0"
+    # uninstalled by the v2.4.0 sync, no longer in the image's manifest
+    comps["ingress-nginx"] = {"type": "helm", "version": "4.15.1",
+                              "management": "Removed"}
+    host.release_manifest = cluster
+    host.operator_running = "v0.5.0"
+
+    # mode auto (the default), inside the Saturday window: patches run alone
+    assert run_cli(host, "auto") == 0
+    st = finish(host)
+    assert st["current"] == "v2.6.1" and st["phase"] == "DONE"
+    assert host.reboots == 1
+    assert not [c for c in host.calls if c[1:3] == ["upgrade", "apply"]]
+    assert host.operator_scale_history == [], "Kubernetes stays: no pause"
+    (kind, ops), = host.rm_patches              # step 1: the operator alone
+    assert kind == "json" and ops[0]["value"]["version"] == "v0.5.1"
+    assert host.operator_running == "v0.5.1"
+    assert host.applied_manifests, "step 2 applied"
+    comps = host.release_manifest["spec"]["components"]
+    assert comps["ingress-nginx"]["management"] == "Removed"
+    assert any("ReleaseManifest sync 1/2: k4all-operator v0.5.1" in m
+               for m in host.logs)
+
+
 def test_sync_loads_the_shipped_images_before_applying(make_host):
     host = make_host(version="v2.3.1", kubernetes="1.35.10")
     write_graph(host, STREAM_23)

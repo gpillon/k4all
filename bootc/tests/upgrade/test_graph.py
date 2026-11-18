@@ -71,6 +71,62 @@ def test_agreed_ladder_is_valid(ladder):
     assert ku.validate_graph(ladder) == []
 
 
+def skipped_syncs(releases):
+    """(patch, skipped) pairs: a patch without syncManifest that a node can
+    reach straight from before an earlier patch of its stream that syncs.
+    The sync applies the target image's manifest, so the skipped changes
+    (a new operator, say) would wait for some later release that syncs."""
+    found = []
+    for rel in releases:
+        if rel.kind != "patch" or rel.sync_manifest:
+            continue
+        for other in releases:
+            if other.kind == "patch" and other.sync_manifest \
+                    and stream_of(other) == stream_of(rel) \
+                    and rel.min_from_key < other.key < rel.key:
+                found.append((rel.version, other.version))
+    return found
+
+
+def stream_of(rel):
+    return ku.stream_of(rel.version)
+
+
+def test_repo_graph_never_skips_a_manifest_sync():
+    with open(RELEASES_YAML, encoding="utf-8") as fh:
+        releases = ku.load_graph(yaml.safe_load(fh))
+    assert skipped_syncs(releases) == []
+
+
+def test_a_patch_that_skips_a_sync_is_found():
+    releases = graph([
+        release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+        release("v2.6.1", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+                syncManifest=True),
+        release("v2.6.2", "patch", "v2.6.0", "1.36.7", "1.36", 45),
+    ])
+    assert versions(ku.plan_path(releases, "v2.6.0")) == ["v2.6.2"]
+    assert skipped_syncs(releases) == [("v2.6.2", "v2.6.1")]
+    # a v2.6.2 that only v2.6.1 reaches, or that syncs too, is fine
+    assert skipped_syncs(graph([e.to_dict() for e in releases[:2]] + [
+        release("v2.6.2", "patch", "v2.6.1", "1.36.7", "1.36", 45)])) == []
+
+
+def test_a_patch_may_sync_the_manifest():
+    # v2.6.1: a new operator, nothing else; Kubernetes, CRI-O, Fedora stay.
+    releases = graph([
+        release("v2.5.0", "minor", "v2.4.0", "1.35.10", "1.35", 45),
+        release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+        release("v2.6.1", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+                syncManifest=True),
+    ])
+    assert ku.validate_graph(releases) == []
+    path = ku.plan_path(releases, "v2.6.0")
+    assert versions(path) == ["v2.6.1"] and path[0].sync_manifest
+    assert versions(ku.auto_allowed(path, "v2.6.0", "patch")) == ["v2.6.1"]
+    assert versions(ku.plan_path(releases, "v2.5.0")) == ["v2.6.0", "v2.6.1"]
+
+
 def test_build_graph_script_emits_index_digests(tmp_path):
     out = tmp_path / "graph.json"
     script = os.path.join(REPO, "bootc", "upgrade", "build-graph.py")
@@ -201,7 +257,7 @@ def versions(path):
 def test_old_release_walks_every_minor(ladder):
     path = ku.plan_path(ladder, "v2.2.4")
     assert versions(path) == ["v2.3.0", "v2.4.0", "v2.5.0", "v2.6.0",
-                              "v2.7.0", "v2.8.0", "v2.9.0"]
+                              "v2.6.1", "v2.7.0", "v2.8.0", "v2.9.0"]
 
 
 def test_plan_stops_at_the_requested_target(ladder):

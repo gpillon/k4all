@@ -51,6 +51,7 @@ The 2.x upgrade path:
 | v2.4.0 | first ReleaseManifest sync: k4all-operator v0.5.0 (ClusterUpgrade: from here every upgrade can run from the Headlamp plugin), the k4all Headlamp plugin, then every cluster component pinned and updated (intermediate versions where upstream needs them); kube-vip is the host's; Traefik replaces ingress-nginx, and k4all's routes and `spec.ingress` move to Traefik |
 | v2.5.0 | Fedora 45 |
 | v2.6.0 | Kubernetes 1.36; ingress-nginx leaves the release manifest (v2.4.0 removed it from every cluster) |
+| v2.6.1 | patch with a ReleaseManifest sync: k4all-operator v0.5.1, which fixes the cleanup of the ingress-nginx namespace; `k4all-upgrade` matches an image staged by its index digest (`indexDigest` in the graph) |
 | v2.7.0 | unattended join: `kubeadm init` and `join` become declarative (Kubernetes unchanged) |
 | v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
 | v2.9.0 | Kubernetes 1.37 |
@@ -72,7 +73,8 @@ window:
 - `mode: auto`: `k4all-upgrade.timer` checks every 15 minutes, and inside the
   window it runs the hops that `autoAllow` permits. With the default
   (`patch`), minor releases wait for `k4all-upgrade run`. Set `autoAllow: minor`
-  to run everything automatically.
+  to run everything automatically. A patch can also sync the ReleaseManifest
+  (v2.6.1 brings a new k4all-operator): that runs in the window too.
 - `mode: manual`: nothing happens until you run `k4all-upgrade run`.
 - `mode: managed`: the timer does nothing. Hops start only when the
   k4all-operator asks for one (see

@@ -14,7 +14,9 @@
 #          `bootc rollback` cannot undo. Minor releases are X.Y.0 and are
 #          mandatory stops.
 #   patch: everything else, inside one X.Y stream. A patch has
-#          minFrom >= X.Y.0, so it never crosses a minor.
+#          minFrom >= X.Y.0, so it never crosses a minor. A patch may sync
+#          its ReleaseManifest (a component patch, a new operator); a later
+#          patch whose minFrom lets it skip that one syncs too.
 #
 # Fields:
 #   version       release tag
@@ -113,3 +115,18 @@ releases:
       controller manager). The components of v2.4.0, Traefik included,
       already support 1.36. ingress-nginx, which v2.4.0 removed from every
       cluster, leaves the release manifest.
+
+  - version: v2.6.1
+    kind: patch
+    minFrom: v2.6.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    syncManifest: true
+    notes: >-
+      k4all-operator v0.5.1 (from v0.5.0), through a ReleaseManifest sync
+      (no other component changes): it fixes the cleanup of the ingress-nginx
+      namespace. k4all-upgrade matches an image staged by its index digest,
+      which the graph now lists as indexDigest; the tools of v2.2.4 - v2.6.0
+      ignore that key and keep using the tags. Kubernetes, CRI-O and Fedora
+      are unchanged. A patch: in mode auto it runs in the maintenance window.
