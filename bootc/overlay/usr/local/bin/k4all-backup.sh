@@ -298,6 +298,71 @@ if [ -f /etc/keepalived/keepalived.conf ]; then
 fi
 
 # ============================================================================
+# Node customizations
+# ============================================================================
+# What the user added to /etc around k4all: mounts of extra volumes, dispatcher
+# scripts, drop-ins, sysctl. k4all-restore.sh puts back the mounts (and
+# enables them), the dispatcher scripts, the drop-ins and the sysctl files; the
+# list of every changed /etc file is kept for a manual review.
+
+log "Backing up node customizations..."
+NODE_ETC="$WORK_DIR/node/etc"
+mkdir -p "$NODE_ETC"
+
+save_etc_file() {
+    local rel="$1"
+    mkdir -p "$NODE_ETC/$(dirname "$rel")"
+    cp -a "/etc/$rel" "$NODE_ETC/$rel"
+    log "  + /etc/$rel"
+}
+
+# k4all's own units and drop-ins come with the image; not saved.
+is_k4all_unit() {
+    case "$1" in
+        fck8s-*|k4all-*|kubelet.service.d|crio.service.d|cri-o.service.d) return 0 ;;
+    esac
+    return 1
+}
+
+: > "$WORK_DIR/node/enabled-units.txt"
+for unit in /etc/systemd/system/*.mount /etc/systemd/system/*.automount; do
+    [ -f "$unit" ] || continue
+    name="$(basename "$unit")"
+    save_etc_file "systemd/system/$name"
+    for wants in /etc/systemd/system/*.wants/"$name"; do
+        [ -L "$wants" ] && [ -e "$wants" ] || continue
+        echo "$(basename "$(dirname "$wants")") $name" >> "$WORK_DIR/node/enabled-units.txt"
+    done
+done
+
+for dropin in /etc/systemd/system/*.d/*.conf; do
+    [ -f "$dropin" ] || continue
+    dir="$(basename "$(dirname "$dropin")")"
+    is_k4all_unit "$dir" && continue
+    save_etc_file "systemd/system/$dir/$(basename "$dropin")"
+done
+
+for script in /etc/NetworkManager/dispatcher.d/*; do
+    [ -f "$script" ] || continue
+    save_etc_file "NetworkManager/dispatcher.d/$(basename "$script")"
+done
+
+for conf in /etc/sysctl.d/*.conf; do
+    [ -f "$conf" ] || continue
+    [ "$(basename "$conf")" = "k8s.conf" ] && continue
+    save_etc_file "sysctl.d/$(basename "$conf")"
+done
+[ -f /etc/sysctl.conf ] && save_etc_file sysctl.conf
+# v2.x keeps extra mounts in /etc/fstab; FCOS (v1.x) has no fstab.
+[ -f /etc/fstab ] && save_etc_file fstab
+
+# Every /etc file that differs from the OS defaults, for a manual review.
+if command -v ostree >/dev/null 2>&1; then
+    ostree admin config-diff 2>/dev/null | sort > "$WORK_DIR/node/etc-config-diff.txt" || true
+    log "  + node/etc-config-diff.txt"
+fi
+
+# ============================================================================
 # Helm inventory
 # ============================================================================
 

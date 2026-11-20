@@ -3,7 +3,9 @@
 # Creates or verifies the vg_data volume group for TopoLVM
 set -euo pipefail
 
-DONE_FILE="/opt/k4all/lvm-setup.done"
+# K4ALL_ROOT: the tests run the script against a fake root.
+ROOT="${K4ALL_ROOT:-}"
+DONE_FILE="$ROOT/opt/k4all/lvm-setup.done"
 
 if [ -f "$DONE_FILE" ] && lvdisplay vg_data/thin-pool &>/dev/null; then
     echo "LVM setup already done and vg_data/thin-pool exists. Exiting."
@@ -18,8 +20,8 @@ if vgdisplay vg_data &>/dev/null; then
     echo "Volume group vg_data already exists."
 else
     # Check if vg_data is disabled in a legacy install config.
-    if [ -f /etc/k4all-config.json ]; then
-        VG_ENABLED=$(jq -r '.storage.vg_data.enabled // "true"' /etc/k4all-config.json)
+    if [ -f "$ROOT/etc/k4all-config.json" ]; then
+        VG_ENABLED=$(jq -r '.storage.vg_data.enabled // "true"' "$ROOT/etc/k4all-config.json")
         if [ "$VG_ENABLED" = "false" ]; then
             echo "vg_data is disabled in config."
             touch "$DONE_FILE"
@@ -59,7 +61,7 @@ else
     if [ -z "$partition_name" ]; then
         echo "WARNING: No partition available for vg_data - skipping LVM setup"
         echo "To use TopoLVM storage, create a partition and rerun this service"
-        mkdir -p /opt/k4all
+        mkdir -p "$ROOT/opt/k4all"
         touch "$DONE_FILE"
         exit 0
     fi
@@ -79,7 +81,16 @@ fi
 # Anaconda addon already created vg_data during installation.
 if ! lvdisplay vg_data/thin-pool &>/dev/null; then
     existing_lvs=$(lvs --noheadings -o lv_name vg_data 2>/dev/null | wc -w)
-    if [ "$existing_lvs" -gt 0 ]; then
+    other_pools=$(lvs --noheadings -o lv_name,segtype vg_data 2>/dev/null \
+        | awk '$2 == "thin-pool" {print $1}')
+    if [ "$(printf '%s' "$other_pools" | grep -c .)" -eq 1 ]; then
+        # A kept vg_data (reinstall, v1.x node) whose thin pool was made by
+        # hand under another name: TopoLVM's release manifest wants
+        # vg_data/thin-pool. Renaming changes LVM metadata only; the thin
+        # volumes stay on the pool, mounted ones included.
+        echo "Renaming thin pool vg_data/${other_pools} to vg_data/thin-pool..."
+        lvrename vg_data "$other_pools" thin-pool
+    elif [ "$existing_lvs" -gt 0 ]; then
         # Clusters installed before the thin pool existed keep their thick
         # TopoLVM volumes; a thin pool over 100%FREE would starve them.
         echo "WARNING: vg_data holds $existing_lvs volume(s) and no thin pool;"
@@ -93,6 +104,6 @@ else
 fi
 
 # Mark setup complete
-mkdir -p /opt/k4all
+mkdir -p "$ROOT/opt/k4all"
 touch "$DONE_FILE"
 echo "LVM setup completed."
