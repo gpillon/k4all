@@ -302,6 +302,13 @@ if [ -d /etc/NetworkManager/system-connections ]; then
     log "  + /etc/NetworkManager/system-connections"
 fi
 
+# What was active, so the restore can keep a profile that was not from taking
+# a NIC back (UUID:DEVICE per line).
+if command -v nmcli >/dev/null 2>&1; then
+    nmcli -t -f UUID,DEVICE connection show --active > "$WORK_DIR/network/active-connections.txt" 2>/dev/null || true
+    log "  + network/active-connections.txt"
+fi
+
 if [ -f /etc/keepalived/keepalived.conf ]; then
     cp -f /etc/keepalived/keepalived.conf "$WORK_DIR/network/"
     log "  + /etc/keepalived/keepalived.conf"

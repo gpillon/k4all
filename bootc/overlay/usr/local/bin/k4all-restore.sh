@@ -185,25 +185,58 @@ prepare_etcd_image() {
     echo "$wanted"
 }
 
-# The installer writes its own profiles (DHCP on every NIC), and NM makes an
-# in-memory "Wired connection" for a NIC no profile names. A restored profile
-# that takes the same NIC (the OVS bridge's port, for one) would lose: move
-# the other profiles for that NIC aside, so the node comes back with the
-# network it had.
+# The node must come back with the connections it had. Two kinds of profile
+# can take a NIC from them:
+# - the installer's own (DHCP on every NIC);
+# - profiles of the old node that were not active there, for a NIC an active
+#   one used (a v1 node keeps eno1.nmconnection.disabled, its static profile
+#   from before the OVS bridge). NetworkManager loads keyfiles whatever their
+#   extension, so on a new boot such a profile can win the NIC.
+# Both are moved out of system-connections, into $RESTORE_DIR/nm-set-aside.
+# active-connections.txt (UUID:DEVICE, from k4all-backup.sh) says what was
+# active; without it (older backups) only the installer's profiles move.
+keyfile_value() {
+    sed -n "s/^$2=//p" "$1" | head -n 1
+}
+
 disable_conflicting_nm_profiles() {
-    local restored_dir="$1" nm_dir="$2" f iface other
-    for f in "$restored_dir"/*.nmconnection; do
+    local restored_dir="$1" nm_dir="$2" active_file="${3:-}" aside="${4:-$RESTORE_DIR/nm-set-aside}"
+    local f other name iface uuid kept_ifaces="" restored_names=""
+    for f in "$restored_dir"/*; do
+        [ -f "$f" ] && restored_names+="$(basename "$f")"$'\n'
+    done
+
+    # Interfaces the restored profiles that will stay use.
+    for f in "$restored_dir"/*; do
         [ -f "$f" ] || continue
-        iface="$(sed -n 's/^interface-name=//p' "$f" | head -n 1)"
+        iface="$(keyfile_value "$f" interface-name)"
         [ -n "$iface" ] || continue
-        for other in "$nm_dir"/*.nmconnection; do
-            [ -f "$other" ] || continue
-            [ -e "$restored_dir/$(basename "$other")" ] && continue
-            if grep -qx "interface-name=$iface" "$other"; then
-                mv -f "$other" "$other.k4all-replaced"
-                log "  - $(basename "$other") set aside: the restored profiles use $iface"
-            fi
-        done
+        if [ -s "$active_file" ]; then
+            uuid="$(keyfile_value "$f" uuid)"
+            grep -q "^${uuid}:" "$active_file" 2>/dev/null || continue
+        fi
+        kept_ifaces+="$iface"$'\n'
+    done
+    [ -n "$kept_ifaces" ] || return 0
+
+    for other in "$nm_dir"/*; do
+        [ -f "$other" ] || continue
+        name="$(basename "$other")"
+        iface="$(keyfile_value "$other" interface-name)"
+        [ -n "$iface" ] && grep -qxF "$iface" <<<"$kept_ifaces" || continue
+        if grep -qxF "$name" <<<"$restored_names"; then
+            # A profile of the old node: it stays if it was active there.
+            [ -s "$active_file" ] || continue
+            uuid="$(keyfile_value "$other" uuid)"
+            grep -q "^${uuid}:" "$active_file" && continue
+            mkdir -p "$aside"
+            mv -f "$other" "$aside/$name"
+            log "  - $name set aside: inactive on the old node, its NIC $iface is used by an active profile"
+        else
+            mkdir -p "$aside"
+            mv -f "$other" "$aside/$name"
+            log "  - $name set aside: the installer's profile for $iface, which the restored profiles use"
+        fi
     done
 }
 
@@ -472,7 +505,7 @@ if [ -d "$WORK_DIR/network/nm-connections" ]; then
     cp -a "$WORK_DIR/network/nm-connections/." /etc/NetworkManager/system-connections/
     log "  + NetworkManager connections"
     disable_conflicting_nm_profiles "$WORK_DIR/network/nm-connections" \
-        /etc/NetworkManager/system-connections
+        /etc/NetworkManager/system-connections "$WORK_DIR/network/active-connections.txt"
 fi
 
 if [ -f "$WORK_DIR/network/keepalived.conf" ]; then

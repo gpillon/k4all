@@ -60,29 +60,51 @@ def run_restore_function(function, env):
                           env=env, capture_output=True, text=True, check=False)
 
 
-def keyfile(path, iface):
-    path.write_text("[connection]\nid=%s\ninterface-name=%s\n" % (path.stem, iface))
+def keyfile(path, iface, uuid=None):
+    path.write_text("[connection]\nid=%s\nuuid=%s\ninterface-name=%s\n"
+                    % (path.stem, uuid or path.stem, iface))
 
 
-# --- network -------------------------------------------------------------
-def test_installer_profiles_for_a_restored_nic_are_set_aside(tmp_path):
-    restored, nm = tmp_path / "restored", tmp_path / "nm"
+@pytest.fixture
+def nm(tmp_path):
+    """The restored profiles, as k4all-restore.sh has copied them to nm/."""
+    restored, nm_dir, aside = tmp_path / "restored", tmp_path / "nm", tmp_path / "aside"
     restored.mkdir()
-    nm.mkdir()
-    keyfile(restored / "ovs-port-eth-int.nmconnection", "ens18")
-    keyfile(restored / "ovs-bridge.nmconnection", "ovs-bridge")
+    nm_dir.mkdir()
+    keyfile(restored / "ovs-port-eth-int.nmconnection", "ens18", "u-port")
+    keyfile(restored / "ovs-bridge.nmconnection", "ovs-bridge", "u-bridge")
+    # A v1 node's static profile from before the bridge, inactive there.
+    keyfile(restored / "ens18.nmconnection.disabled", "ens18", "u-old")
     for f in restored.iterdir():
-        (nm / f.name).write_text(f.read_text())
-    keyfile(nm / "ens18.nmconnection", "ens18")      # the installer's DHCP
-    keyfile(nm / "ens20.nmconnection", "ens20")      # a NIC the backup has no profile for
+        (nm_dir / f.name).write_text(f.read_text())
+    keyfile(nm_dir / "ens18.nmconnection", "ens18", "u-installer")   # the installer's DHCP
+    keyfile(nm_dir / "ens20.nmconnection", "ens20", "u-ens20")       # a NIC the backup does not have
 
-    proc = run_restore_function('disable_conflicting_nm_profiles "%s" "%s"' % (restored, nm),
-                                dict(os.environ))
+    def run(active=None):
+        active_file = tmp_path / "active-connections.txt"
+        if active is not None:
+            active_file.write_text("".join("%s:dev\n" % u for u in active))
+        proc = run_restore_function('disable_conflicting_nm_profiles "%s" "%s" "%s" "%s"'
+                                    % (restored, nm_dir, active_file, aside), dict(os.environ))
+        assert proc.returncode == 0, proc.stderr
+        return (sorted(os.listdir(nm_dir)),
+                sorted(os.listdir(aside)) if aside.exists() else [])
 
-    assert proc.returncode == 0, proc.stderr
-    assert sorted(os.listdir(nm)) == [
-        "ens18.nmconnection.k4all-replaced", "ens20.nmconnection",
-        "ovs-bridge.nmconnection", "ovs-port-eth-int.nmconnection"]
+    return run
+
+
+def test_what_was_active_on_the_old_node_keeps_the_nic(nm):
+    kept, aside = nm(active=["u-port", "u-bridge"])
+    assert kept == ["ens20.nmconnection", "ovs-bridge.nmconnection",
+                    "ovs-port-eth-int.nmconnection"]
+    # Out of system-connections: NetworkManager loads keyfiles whatever their name.
+    assert aside == ["ens18.nmconnection", "ens18.nmconnection.disabled"]
+
+
+def test_without_the_active_list_only_the_installer_profiles_move(nm):
+    kept, aside = nm(active=None)
+    assert "ens18.nmconnection.disabled" in kept
+    assert aside == ["ens18.nmconnection"]
 
 
 def test_the_restore_runs_before_networkmanager_and_set_hostname():
