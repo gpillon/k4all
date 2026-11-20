@@ -309,8 +309,21 @@ log "Backing up node customizations..."
 NODE_ETC="$WORK_DIR/node/etc"
 mkdir -p "$NODE_ETC"
 
+# On ostree (FCOS for v1.x, bootc for v2.x) only what the node changed: the
+# OS's own files (FCOS dispatcher scripts, the 99-sysctl.conf link) are not
+# the user's and may not fit the new OS.
+CHANGED_ETC=""
+HAVE_ETC_DIFF=0
+if command -v ostree >/dev/null 2>&1 && CHANGED_ETC="$(ostree admin config-diff 2>/dev/null)"; then
+    HAVE_ETC_DIFF=1
+    CHANGED_ETC="$(awk '$1 == "A" || $1 == "M" {print $2}' <<<"$CHANGED_ETC")"
+fi
+
 save_etc_file() {
     local rel="$1"
+    if [ "$HAVE_ETC_DIFF" = 1 ] && ! grep -qxF "$rel" <<<"$CHANGED_ETC"; then
+        return 1
+    fi
     mkdir -p "$NODE_ETC/$(dirname "$rel")"
     cp -a "/etc/$rel" "$NODE_ETC/$rel"
     log "  + /etc/$rel"
@@ -328,7 +341,7 @@ is_k4all_unit() {
 for unit in /etc/systemd/system/*.mount /etc/systemd/system/*.automount; do
     [ -f "$unit" ] || continue
     name="$(basename "$unit")"
-    save_etc_file "systemd/system/$name"
+    save_etc_file "systemd/system/$name" || continue
     for wants in /etc/systemd/system/*.wants/"$name"; do
         [ -L "$wants" ] && [ -e "$wants" ] || continue
         echo "$(basename "$(dirname "$wants")") $name" >> "$WORK_DIR/node/enabled-units.txt"
@@ -339,22 +352,22 @@ for dropin in /etc/systemd/system/*.d/*.conf; do
     [ -f "$dropin" ] || continue
     dir="$(basename "$(dirname "$dropin")")"
     is_k4all_unit "$dir" && continue
-    save_etc_file "systemd/system/$dir/$(basename "$dropin")"
+    save_etc_file "systemd/system/$dir/$(basename "$dropin")" || true
 done
 
 for script in /etc/NetworkManager/dispatcher.d/*; do
     [ -f "$script" ] || continue
-    save_etc_file "NetworkManager/dispatcher.d/$(basename "$script")"
+    save_etc_file "NetworkManager/dispatcher.d/$(basename "$script")" || true
 done
 
 for conf in /etc/sysctl.d/*.conf; do
     [ -f "$conf" ] || continue
     [ "$(basename "$conf")" = "k8s.conf" ] && continue
-    save_etc_file "sysctl.d/$(basename "$conf")"
+    save_etc_file "sysctl.d/$(basename "$conf")" || true
 done
-[ -f /etc/sysctl.conf ] && save_etc_file sysctl.conf
+[ -f /etc/sysctl.conf ] && { save_etc_file sysctl.conf || true; }
 # v2.x keeps extra mounts in /etc/fstab; FCOS (v1.x) has no fstab.
-[ -f /etc/fstab ] && save_etc_file fstab
+[ -f /etc/fstab ] && { save_etc_file fstab || true; }
 
 # Every /etc file that differs from the OS defaults, for a manual review.
 if command -v ostree >/dev/null 2>&1; then
