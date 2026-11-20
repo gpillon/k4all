@@ -185,8 +185,8 @@ def deploy(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "yq").symlink_to(YQ)
-    # Present: the helm releases cilium and argocd, KubeVirt's workloads and
-    # multus. Missing: everything else.
+    # Present: the helm releases cilium and argocd, KubeVirt's workloads,
+    # multus and ovs-cni (arm64). Missing: everything else.
     fake(bin_dir, "helm", """\
         [ "$1" = status ] && case "$2" in cilium|argocd) exit 0 ;; esac
         exit 1
@@ -195,6 +195,7 @@ def deploy(tmp_path):
         case "$*" in
           "-n kubevirt get deploy,ds,sts -o name") echo deployment.apps/virt-operator ;;
           "-n kube-system get ds kube-multus-ds") exit 0 ;;
+          "-n kube-system get ds -o name") echo daemonset.apps/ovs-cni-arm64 ;;
           *) exit 1 ;;
         esac
     """)
@@ -225,7 +226,8 @@ def deploy(tmp_path):
 
 
 def test_a_cluster_restored_from_1x_keeps_what_it_runs(deploy):
-    assert deploy("1.8.0") == ["argocd", "cilium", "kube-vip", "kubevirt", "multus-cni"]
+    assert deploy("1.8.0") == ["argocd", "cilium", "kube-vip", "kubevirt", "multus-cni",
+                              "ovs-cni"]
 
 
 def test_a_new_cluster_or_a_2x_restore_changes_nothing(deploy):

@@ -70,7 +70,8 @@ component_present() {
                 gateway-api) kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1 ;;
                 metrics-server) kubectl -n kube-system get deploy metrics-server >/dev/null 2>&1 ;;
                 multus-cni) kubectl -n kube-system get ds kube-multus-ds >/dev/null 2>&1 ;;
-                ovs-cni) kubectl -n kube-system get ds ovs-cni-amd64 >/dev/null 2>&1 ;;
+                # The upstream manifest names the DaemonSet after the arch.
+                ovs-cni) kubectl -n kube-system get ds -o name 2>/dev/null | grep -q "^daemonset.apps/ovs-cni" ;;
                 *)
                     [ -n "$ns" ] && [ "$ns" != "kube-system" ] &&
                         [ -n "$(kubectl -n "$ns" get deploy,ds,sts -o name 2>/dev/null)" ] ;;
