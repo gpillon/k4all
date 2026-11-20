@@ -104,6 +104,37 @@ mark_restored_components_unmanaged() {
         [.key, .value.type, (.value.namespace // ""), (.value.management // "")] | @tsv' "$RELEASE_MANIFEST")
 }
 
+POOL_RENAMED_FILE="${POOL_RENAMED_FILE:-/opt/k4all/thin-pool-renamed-from}"
+
+# setup-lvm.sh renamed a thin pool to vg_data/thin-pool (a kept vg_data from a
+# v1.x node). An lvmd already in the cluster still names the old pool and
+# could not find it: point its ConfigMaps at the new name and restart
+# TopoLVM's node pods. The rest of TopoLVM is left as it is.
+update_topolvm_after_pool_rename() {
+    local old cm ns yaml changed=0
+    old="$(cat "$POOL_RENAMED_FILE" 2>/dev/null || true)"
+    [ -n "$old" ] || return 0
+    while read -r ns cm; do
+        [ -n "$cm" ] || continue
+        yaml="$(kubectl -n "$ns" get cm "$cm" -o jsonpath='{.data.lvmd\.yaml}' 2>/dev/null || true)"
+        grep -Eq "name: (vg_data/)?${old}\$" <<<"$yaml" || continue
+        sed -E "s#name: (vg_data/)?${old}\$#name: thin-pool#" <<<"$yaml" > /tmp/k4all-lvmd.yaml
+        kubectl -n "$ns" create cm "$cm" --from-file=lvmd.yaml=/tmp/k4all-lvmd.yaml \
+            --dry-run=client -o yaml | kubectl apply -f -
+        echo "  ${ns}/${cm}: thin pool ${old} -> thin-pool"
+        changed=1
+    done < <(kubectl get cm -A -o jsonpath='{range .items[?(@.data.lvmd\.yaml)]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' 2>/dev/null)
+    rm -f /tmp/k4all-lvmd.yaml
+    if [ "$changed" = 1 ]; then
+        kubectl get pods -A -l app.kubernetes.io/name=topolvm --no-headers \
+            -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name 2>/dev/null \
+            | while read -r ns pod; do
+                case "$pod" in *lvmd*|*node*) kubectl -n "$ns" delete pod "$pod" --wait=false ;; esac
+            done
+    fi
+    mv -f "$POOL_RENAMED_FILE" "${POOL_RENAMED_FILE}.done"
+}
+
 create_release_manifest_cr() {
     echo "Creating ReleaseManifest CR ..."
     if [ ! -f "$RELEASE_MANIFEST" ]; then
@@ -189,6 +220,7 @@ deploy_operator
 # Now apply the CRs
 apply_cluster_config
 mark_restored_components_unmanaged
+update_topolvm_after_pool_rename
 create_release_manifest_cr
 
 echo "=== K4All Operator Deployment Complete ==="

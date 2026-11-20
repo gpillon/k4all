@@ -15,6 +15,8 @@ set -euo pipefail
 trap 'rc=$?; echo "[k4all-restore ERROR] line $LINENO: $BASH_COMMAND (rc=$rc)" >&2' ERR
 
 RESTORE_DIR="/var/opt/k4all/restore"
+# Files restore_node_customizations wrote, for restore_selinux_contexts.
+RESTORED_PATHS=()
 RESTORE_DONE="/opt/k4all/restore.done"
 RESTORE_MARKER="K4ALL_BACKUP_V2"
 
@@ -147,6 +149,8 @@ restore_selinux_contexts() {
         /root
         /etc/login_data
         /var/lib/etcd
+        /etc/fstab
+        "${RESTORED_PATHS[@]}"
     )
 
     local existing=()
@@ -203,6 +207,21 @@ disable_conflicting_nm_profiles() {
     done
 }
 
+# A node with more than one address (a second bridge, say) keeps the IP it
+# had in the cluster: without --node-ip, kubelet may pick another one at the
+# first boot of the new system, and the restored node's InternalIP changes.
+pin_node_ip() {
+    local flags_file="$1" node_ip="$2"
+    [ -n "$node_ip" ] && [ -f "$flags_file" ] || return 0
+    grep -q -- "--node-ip" "$flags_file" && return 0
+    if grep -q '^KUBELET_KUBEADM_ARGS="' "$flags_file"; then
+        sed -i "s#^KUBELET_KUBEADM_ARGS=\"#KUBELET_KUBEADM_ARGS=\"--node-ip=${node_ip} #" "$flags_file"
+    else
+        echo "KUBELET_KUBEADM_ARGS=\"--node-ip=${node_ip}\"" >> "$flags_file"
+    fi
+    log "  + kubelet --node-ip=${node_ip} (the node's InternalIP in the backup)"
+}
+
 # Mount units, drop-ins, dispatcher scripts, sysctl and extra fstab lines
 # saved by k4all-backup.sh (node/). A file the new system already has stays
 # (sysctl.conf excepted, the image's one only has comments). Restored mount
@@ -219,7 +238,10 @@ restore_node_customizations() {
             continue
         fi
         mkdir -p "$etc_dir/$(dirname "$rel")"
-        cp -a "$node_dir/etc/$rel" "$etc_dir/$rel"
+        # Not -a: the archive was unpacked in /tmp and its SELinux label
+        # (tmp_t) would come along; systemd and sysctl may not read tmp_t.
+        cp --preserve=mode,ownership,timestamps "$node_dir/etc/$rel" "$etc_dir/$rel"
+        RESTORED_PATHS+=("$etc_dir/$rel")
         log "  + /etc/$rel"
     done < <(cd "$node_dir/etc" && find . -type f | sort)
 
@@ -485,6 +507,9 @@ if [ -d "$WORK_DIR/kubelet" ]; then
         cp -a "$WORK_DIR/kubelet/pki" /var/lib/kubelet/
         log "  + /var/lib/kubelet/pki"
     fi
+
+    pin_node_ip /var/lib/kubelet/kubeadm-flags.env \
+        "$(jq -r '.node_ip // ""' "$WORK_DIR/metadata/backup-info.json" 2>/dev/null || true)"
 fi
 
 # --- Restore user data ---

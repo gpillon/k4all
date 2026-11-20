@@ -131,6 +131,15 @@ mkdir -p "$WORK_DIR/metadata"
 
 K4ALL_VERSION="$(jq -r '.version // "unknown"' /etc/k4all-config.json 2>/dev/null || echo 'unknown')"
 KUBELET_VERSION="$(kubelet --version 2>/dev/null | awk '{print $2}' || echo 'unknown')"
+# The node's InternalIP: the restore pins kubelet to it (--node-ip).
+NODE_IP=""
+if [ -f /etc/kubernetes/admin.conf ] || [ -f /etc/kubernetes/kubelet.conf ]; then
+    KCFG=/etc/kubernetes/admin.conf
+    [ -f "$KCFG" ] || KCFG=/etc/kubernetes/kubelet.conf
+    NODE_IP="$(kubectl --kubeconfig="$KCFG" get node "$HOSTNAME_VAL" \
+        -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null \
+        | awk '{print $1}' || true)"
+fi
 
 cat > "$WORK_DIR/metadata/backup-info.json" <<EOF
 {
@@ -139,7 +148,8 @@ cat > "$WORK_DIR/metadata/backup-info.json" <<EOF
   "hostname": "${HOSTNAME_VAL}",
   "node_type": "${NODE_TYPE}",
   "k4all_version": "${K4ALL_VERSION}",
-  "kubernetes_version": "${KUBELET_VERSION}"
+  "kubernetes_version": "${KUBELET_VERSION}",
+  "node_ip": "${NODE_IP}"
 }
 EOF
 

@@ -286,3 +286,93 @@ def test_one_domain_when_two_links_have_dhcp(tmp_path):
                           env=dict(os.environ, PATH="%s:%s" % (bin_dir, os.environ["PATH"])),
                           capture_output=True, text=True, check=False)
     assert proc.stdout == "example.lan\n"
+
+
+# --- found on the second run (A2) ------------------------------------------
+@pytest.mark.parametrize("before, after", [
+    ('KUBELET_KUBEADM_ARGS="--volume-plugin-dir=/x"\n',
+     'KUBELET_KUBEADM_ARGS="--node-ip=10.0.0.5 --volume-plugin-dir=/x"\n'),
+    ('KUBELET_KUBEADM_ARGS="--node-ip=10.0.0.9"\n',
+     'KUBELET_KUBEADM_ARGS="--node-ip=10.0.0.9"\n'),
+])
+def test_the_restored_node_keeps_its_ip(tmp_path, before, after):
+    flags = tmp_path / "kubeadm-flags.env"
+    flags.write_text(before)
+    proc = run_restore_function('pin_node_ip "%s" 10.0.0.5' % flags, dict(os.environ))
+    assert proc.returncode == 0, proc.stderr
+    assert flags.read_text() == after
+
+
+def test_the_backup_records_the_node_ip():
+    script = read(BIN, "k4all-backup.sh")
+    assert '"node_ip": "${NODE_IP}"' in script
+    assert "pin_node_ip /var/lib/kubelet/kubeadm-flags.env" in read(RESTORE)
+
+
+def test_restored_node_files_get_their_selinux_label(tmp_path):
+    node, etc = tmp_path / "node", tmp_path / "etc"
+    (node / "etc").mkdir(parents=True)
+    (node / "etc/sysctl.conf").write_text("fs.file-max = 1\n")
+    etc.mkdir()
+    proc = run_restore_function(
+        'restore_node_customizations "%s" "%s"; printf "%%s\\n" "${RESTORED_PATHS[@]}"'
+        % (node, etc), dict(os.environ))
+    assert proc.returncode == 0, proc.stderr
+    assert str(etc / "sysctl.conf") in proc.stdout.split()
+    script = read(RESTORE)
+    # cp -a would keep the tmp_t label of the unpacked archive.
+    assert 'cp --preserve=mode,ownership,timestamps "$node_dir/etc/$rel"' in script
+    assert '"${RESTORED_PATHS[@]}"' in script[script.index("restore_selinux_contexts() {"):]
+
+
+def test_a_renamed_pool_is_recorded(lvm, tmp_path):
+    lvm("  pool0 thin-pool")
+    assert (tmp_path / "root/opt/k4all/thin-pool-renamed-from").read_text() == "pool0\n"
+
+
+def test_lvmd_follows_the_renamed_pool(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "kubectl.log"
+    lvmd = "device-classes:\n  - name: default\n    thin-pool:\n      name: pool0\n"
+    (tmp_path / "lvmd.yaml").write_text(lvmd)
+    fake(bin_dir, "kubectl", """\
+        echo "$*" >> "%s"
+        case "$*" in
+          "get cm -A -o jsonpath="*) echo "topolvm-system topolvm-lvmd-0" ;;
+          "-n topolvm-system get cm topolvm-lvmd-0 -o jsonpath="*) cat "%s" ;;
+          *"create cm topolvm-lvmd-0 --from-file=lvmd.yaml="*)
+            for a in "$@"; do
+              case "$a" in --from-file=lvmd.yaml=*) cp "${a#--from-file=lvmd.yaml=}" "%s/applied.yaml" ;; esac
+            done ;;
+          "get pods -A -l app.kubernetes.io/name=topolvm"*)
+            echo "topolvm-system topolvm-controller-1"
+            echo "topolvm-system topolvm-lvmd-0-abc"
+            echo "topolvm-system topolvm-node-def" ;;
+        esac
+    """ % (log, tmp_path / "lvmd.yaml", tmp_path))
+    marker = tmp_path / "thin-pool-renamed-from"
+    marker.write_text("pool0\n")
+    script = read(DEPLOY_OPERATOR)
+    functions = tmp_path / "functions.sh"
+    functions.write_text(script[script.index("POOL_RENAMED_FILE="):
+                                script.index("create_release_manifest_cr() {")])
+    env = dict(os.environ, PATH="%s:%s" % (bin_dir, os.environ["PATH"]),
+               POOL_RENAMED_FILE=str(marker))
+    proc = subprocess.run(["bash", "-c", 'source "$1"; update_topolvm_after_pool_rename',
+                           "bash", str(functions)], env=env, capture_output=True,
+                          text=True, check=False)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "name: thin-pool" in (tmp_path / "applied.yaml").read_text()
+    deleted = [c for c in log.read_text().splitlines() if " delete pod " in c]
+    assert deleted == ["-n topolvm-system delete pod topolvm-lvmd-0-abc --wait=false",
+                       "-n topolvm-system delete pod topolvm-node-def --wait=false"]
+    assert not marker.exists() and (tmp_path / "thin-pool-renamed-from.done").exists()
+
+
+def test_ovs_transient_ports_wait_for_the_database():
+    dropin = read(BOOTC, "overlay", "usr", "lib", "systemd", "system",
+                  "ovs-delete-transient-ports.service.d", "10-k4all-after-ovsdb.conf")
+    assert "After=ovsdb-server.service" in dropin
+    assert "TimeoutStartSec=" in dropin
+    assert "/usr/lib/systemd/system/ovs-delete-transient-ports.service.d/" in read(BOOTC, "Containerfile")

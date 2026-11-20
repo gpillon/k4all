@@ -90,6 +90,10 @@ if ! lvdisplay vg_data/thin-pool &>/dev/null; then
         # volumes stay on the pool, mounted ones included.
         echo "Renaming thin pool vg_data/${other_pools} to vg_data/thin-pool..."
         lvrename vg_data "$other_pools" thin-pool
+        # The cluster's own TopoLVM (restored, still Unmanaged) names the
+        # old pool: deploy-operator.sh points its lvmd at the new name.
+        mkdir -p "$ROOT/opt/k4all"
+        echo "$other_pools" > "$ROOT/opt/k4all/thin-pool-renamed-from"
     elif [ "$existing_lvs" -gt 0 ]; then
         # Clusters installed before the thin pool existed keep their thick
         # TopoLVM volumes; a thin pool over 100%FREE would starve them.
