@@ -7,9 +7,6 @@
 import logging
 import os
 import shutil
-import json as _json
-import subprocess
-import tarfile
 import threading
 
 from gi.repository import GLib, Gtk
@@ -20,6 +17,7 @@ from pyanaconda.modules.common.constants.services import STORAGE
 from pyanaconda.modules.common.constants.objects import DEVICE_TREE, DISK_SELECTION
 
 from com_k4all_installer.categories.k4all import K4AllCategory
+from com_k4all_installer import backup_scan
 from com_k4all_installer.constants import K4ALL
 from com_k4all_installer.storage_layout import (
     StorageLayoutError, build_kickstart_layout,
@@ -58,6 +56,7 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalSpoke):
         self._k4all_module = None
         self._storage_proxy = None
         self._dt_proxy = None
+        self._auto_scanned = False
         self._ds_proxy = None
         self._found_backups = []
         self._existing_vgs = []
@@ -122,7 +121,6 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalSpoke):
         if self._disk_combo:
             self._disk_combo.connect("changed", self._on_disk_changed)
 
-        self._auto_scan_backups()
 
     # ------------------------------------------------------------------ #
     #  Spoke lifecycle                                                    #
@@ -131,6 +129,12 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalSpoke):
     def refresh(self):
         self._populate_disks()
         self._detect_existing_vgs()
+        # First scan when the spoke is shown, not at initialize(): by then
+        # the storage module has populated the device tree (before, only
+        # the CD is there).
+        if not self._auto_scanned:
+            self._auto_scanned = True
+            self._auto_scan_backups()
 
     def apply(self):
         if not self._k4all_module:
@@ -208,121 +212,14 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalSpoke):
         thread = threading.Thread(target=self._scan_worker, daemon=True)
         thread.start()
 
-    def _get_all_mountable_devices(self):
-        devices = []
-        if not self._dt_proxy:
-            return devices
-        try:
-            for dev_name in self._dt_proxy.GetDevices():
-                try:
-                    fdata = self._dt_proxy.GetFormatData(dev_name)
-                    mountable = _unpack(fdata.get("mountable", False))
-                    ftype = _unpack(fdata.get("type", ""))
-                    if mountable and ftype not in ("", "biosboot", "lvmpv",
-                                                    "swap"):
-                        devices.append(dev_name)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        try:
-            for dev in self._dt_proxy.FindOpticalMedia():
-                if dev not in devices:
-                    devices.append(dev)
-        except Exception:
-            pass
-        return devices
-
     def _scan_worker(self):
-        found = []
-        os.makedirs(SCAN_MOUNT_BASE, exist_ok=True)
-
-        for dev_name in self._get_all_mountable_devices():
-            safe_name = dev_name.replace("/", "_")
-            mount_point = os.path.join(SCAN_MOUNT_BASE, safe_name)
-            os.makedirs(mount_point, exist_ok=True)
-            mounted = False
-            dbus_mount = False
-
-            try:
-                self._dt_proxy.MountDevice(dev_name, mount_point, "")
-                mounted = True
-                dbus_mount = True
-            except Exception:
-                pass
-
-            if not mounted:
-                try:
-                    data = self._dt_proxy.GetDeviceData(dev_name)
-                    dtype = _unpack(data.get("type", ""))
-                    dpath = _unpack(data.get("path", ""))
-                    if dtype == "lvmlv" and dpath:
-                        parents = _unpack(data.get("parents", []))
-                        for parent in parents:
-                            try:
-                                subprocess.run(
-                                    ["vgchange", "-ay", parent],
-                                    capture_output=True, timeout=10)
-                            except Exception:
-                                pass
-                        r = subprocess.run(
-                            ["mount", "-o", "ro", dpath, mount_point],
-                            capture_output=True, timeout=15)
-                        if r.returncode == 0:
-                            mounted = True
-                except Exception:
-                    pass
-
-            if mounted:
-                try:
-                    self._search_dir_for_backups(
-                        mount_point, dev_name, found)
-                finally:
-                    try:
-                        if dbus_mount:
-                            self._dt_proxy.UnmountDevice(
-                                dev_name, mount_point)
-                        else:
-                            subprocess.run(
-                                ["umount", mount_point],
-                                capture_output=True, timeout=10)
-                    except Exception:
-                        pass
-
-        for static_dir in ["/mnt/sysimage", "/run/media", "/mnt", "/tmp"]:
-            if os.path.isdir(static_dir):
-                self._search_dir_for_backups(static_dir, static_dir, found)
-
-        seen = set()
-        unique = []
-        for b in found:
-            if b["path"] not in seen:
-                seen.add(b["path"])
-                unique.append(b)
-
-        GLib.idle_add(self._scan_complete, unique)
-
-    def _search_dir_for_backups(self, base_dir, source_label, results):
         try:
-            for root, dirs, files in os.walk(base_dir):
-                depth = root.count(os.sep) - base_dir.count(os.sep)
-                if depth > 5:
-                    dirs.clear()
-                    continue
-                for fname in files:
-                    if (fname.startswith("k4all-backup-")
-                            and fname.endswith(".tar.gz")):
-                        full = os.path.join(root, fname)
-                        info = self._validate_backup(full)
-                        if info:
-                            persisted = self._persist_backup(full)
-                            results.append({
-                                "path": persisted,
-                                "info": info,
-                                "source": source_label
-                            })
+            found = backup_scan.scan(self._dt_proxy, SCAN_MOUNT_BASE,
+                                     self._persist_backup)
         except Exception:
-            pass
+            log.error("K4AllStorage spoke: backup scan failed", exc_info=True)
+            found = []
+        GLib.idle_add(self._scan_complete, found)
 
     @staticmethod
     def _persist_backup(archive_path):
@@ -337,25 +234,6 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalSpoke):
             return dst
         except Exception:
             return archive_path
-
-    @staticmethod
-    def _validate_backup(archive_path):
-        try:
-            with tarfile.open(archive_path, "r:gz") as tf:
-                info_member = next(
-                    (m for m in tf.getmembers()
-                     if m.name.lstrip("./") == "metadata/backup-info.json"),
-                    None)
-                if info_member is None:
-                    return None
-                f = tf.extractfile(info_member)
-                if f:
-                    data = _json.loads(f.read())
-                    if data.get("marker") == "K4ALL_BACKUP_V2":
-                        return data
-        except Exception:
-            pass
-        return None
 
     def _scan_complete(self, found):
         self._found_backups = found

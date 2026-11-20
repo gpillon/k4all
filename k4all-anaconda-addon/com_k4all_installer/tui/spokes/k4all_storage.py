@@ -7,9 +7,6 @@
 import logging
 import os
 import shutil
-import json as _json
-import subprocess
-import tarfile
 
 from simpleline.render.prompt import Prompt
 from simpleline.render.screen import InputState
@@ -22,6 +19,7 @@ from pyanaconda.modules.common.constants.services import STORAGE
 from pyanaconda.modules.common.constants.objects import DEVICE_TREE, DISK_SELECTION
 
 from com_k4all_installer.categories.k4all import K4AllCategory
+from com_k4all_installer import backup_scan
 from com_k4all_installer.constants import K4ALL
 from com_k4all_installer.storage_layout import (
     StorageLayoutError, build_kickstart_layout,
@@ -365,121 +363,15 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
                     pass
         return False
 
-    def _get_all_mountable_devices(self):
-        devices = []
-        if not self._dt_proxy:
-            return devices
-        try:
-            for dev_name in self._dt_proxy.GetDevices():
-                try:
-                    fdata = self._dt_proxy.GetFormatData(dev_name)
-                    mountable = _unpack(fdata.get("mountable", False))
-                    ftype = _unpack(fdata.get("type", ""))
-                    if mountable and ftype not in ("", "biosboot", "lvmpv",
-                                                    "swap"):
-                        devices.append(dev_name)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        try:
-            for dev in self._dt_proxy.FindOpticalMedia():
-                if dev not in devices:
-                    devices.append(dev)
-        except Exception:
-            pass
-        return devices
-
     def _scan_for_backups(self):
-        self._found_backups = []
-        os.makedirs(SCAN_MOUNT_BASE, exist_ok=True)
-
-        mountable_devices = self._get_all_mountable_devices()
-
-        for dev_name in mountable_devices:
-            safe_name = dev_name.replace("/", "_")
-            mp = os.path.join(SCAN_MOUNT_BASE, safe_name)
-            os.makedirs(mp, exist_ok=True)
-            mounted = False
-            dbus_mount = False
-
-            try:
-                self._dt_proxy.MountDevice(dev_name, mp, "")
-                mounted = True
-                dbus_mount = True
-            except Exception:
-                pass
-
-            if not mounted:
-                try:
-                    data = self._dt_proxy.GetDeviceData(dev_name)
-                    dtype = _unpack(data.get("type", ""))
-                    dpath = _unpack(data.get("path", ""))
-                    if dtype == "lvmlv" and dpath:
-                        parents = _unpack(data.get("parents", []))
-                        for parent in parents:
-                            try:
-                                subprocess.run(
-                                    ["vgchange", "-ay", parent],
-                                    capture_output=True, timeout=10)
-                            except Exception:
-                                pass
-                        r = subprocess.run(
-                            ["mount", "-o", "ro", dpath, mp],
-                            capture_output=True, timeout=15)
-                        if r.returncode == 0:
-                            mounted = True
-                except Exception:
-                    pass
-
-            if mounted:
-                try:
-                    self._search_dir(mp, dev_name)
-                finally:
-                    try:
-                        if dbus_mount:
-                            self._dt_proxy.UnmountDevice(dev_name, mp)
-                        else:
-                            subprocess.run(["umount", mp],
-                                           capture_output=True, timeout=10)
-                    except Exception:
-                        pass
-
-        for d in ["/mnt/sysimage", "/run/media", "/mnt", "/tmp"]:
-            if os.path.isdir(d):
-                self._search_dir(d, d)
-
-        seen = set()
-        unique = []
-        for b in self._found_backups:
-            if b["path"] not in seen:
-                seen.add(b["path"])
-                unique.append(b)
-        self._found_backups = unique
+        try:
+            self._found_backups = backup_scan.scan(
+                self._dt_proxy, SCAN_MOUNT_BASE, self._persist_backup)
+        except Exception:
+            log.error("K4AllStorage TUI: backup scan failed", exc_info=True)
+            self._found_backups = []
         if self._found_backups and self._selected_backup_idx < 0:
             self._selected_backup_idx = 0
-
-    def _search_dir(self, base, source):
-        try:
-            for root, dirs, files in os.walk(base):
-                depth = root.count(os.sep) - base.count(os.sep)
-                if depth > 5:
-                    dirs.clear()
-                    continue
-                for f in files:
-                    if (f.startswith("k4all-backup-")
-                            and f.endswith(".tar.gz")):
-                        full = os.path.join(root, f)
-                        info = self._validate_backup(full)
-                        if info:
-                            persisted = self._persist_backup(full)
-                            self._found_backups.append({
-                                "path": persisted,
-                                "info": info,
-                                "source": source
-                            })
-        except Exception:
-            pass
 
     @staticmethod
     def _persist_backup(archive_path):
@@ -495,25 +387,6 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
             return dst
         except Exception:
             return archive_path
-
-    @staticmethod
-    def _validate_backup(path):
-        try:
-            with tarfile.open(path, "r:gz") as tf:
-                member = next(
-                    (m for m in tf.getmembers()
-                     if m.name.lstrip("./") == "metadata/backup-info.json"),
-                    None)
-                if not member:
-                    return None
-                f = tf.extractfile(member)
-                if f:
-                    data = _json.loads(f.read())
-                    if data.get("marker") == "K4ALL_BACKUP_V2":
-                        return data
-        except Exception:
-            pass
-        return None
 
     def _copy_backup_to_safe(self):
         """Set _safe_backup_path. Backups are already persisted during scan."""
