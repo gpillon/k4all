@@ -6,6 +6,11 @@ Before=fck8s-k8s-setup-ph2.service
 Before=fck8s-k8s-setup-ph3.service
 Before=fck8s-k8s-setup-init.service
 Before=kubelet.service
+# Before the network: the restored NetworkManager profiles must be in place
+# when NetworkManager starts. etcd is restored from the local etcd image.
+Before=NetworkManager.service
+# The restored hostname stays (the restore writes setup-hostname.done).
+Before=fck8s-set-hostname.service
 After=fck8s-first-boot.service
 After=local-fs.target
 ConditionPathExists=!/opt/k4all/restore.done

@@ -130,3 +130,22 @@ releases:
       which the graph now lists as indexDigest; the tools of v2.2.4 - v2.6.0
       ignore that key and keep using the tags. Kubernetes, CRI-O and Fedora
       are unchanged. A patch: in mode auto it runs in the maintenance window.
+
+  - version: v2.6.2
+    kind: patch
+    minFrom: v2.6.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    syncManifest: true
+    notes: >-
+      A 1.x node moves to 2.x with k4all-backup.sh and the installer's
+      Restore: the installer finds backups on LVM volumes, the restore brings
+      back etcd without network, the hostname, the node IP, the network
+      connections that were active, the node's own /etc changes (mount units,
+      drop-ins, dispatcher scripts, sysctl), renames a hand-made thin pool to
+      thin-pool, and leaves the restored cluster's components Unmanaged. On
+      every node, ovs-delete-transient-ports waits for ovsdb-server (Fedora
+      45's Open vSwitch could hang the first boot). Same components as
+      v2.6.1, k4all-operator v0.5.1; the manifest sync is there for nodes
+      that come from v2.6.0. Kubernetes, CRI-O and Fedora are unchanged.

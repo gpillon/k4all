@@ -106,6 +106,8 @@ if systemctl is-enabled --quiet firewalld; then
   firewall-cmd --reload
 fi
 
+# A restored node may already have its own version (with more bridges): keep it.
+if [ ! -e /etc/NetworkManager/dispatcher.d/90-ovs-arp.sh ]; then
 cat <<'EOF' > /etc/NetworkManager/dispatcher.d/90-ovs-arp.sh
 #!/bin/bash
 case "$1" in
@@ -118,6 +120,7 @@ case "$1" in
 esac
 EOF
 chmod +x /etc/NetworkManager/dispatcher.d/90-ovs-arp.sh
+fi
 
 systemctl restart NetworkManager
 

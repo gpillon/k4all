@@ -57,6 +57,84 @@ apply_cluster_config() {
 # =========================================================================
 # Create the ReleaseManifest CR from /etc/k4all-release.yaml
 # =========================================================================
+RESTORED_FROM_FILE="${RESTORED_FROM_FILE:-/opt/k4all/restored-from-version}"
+
+# component_present NAME TYPE NAMESPACE: is the component already running?
+component_present() {
+    local name="$1" type="$2" ns="$3"
+    case "$type" in
+        helm|helm-oci)
+            helm status "$name" -n "$ns" >/dev/null 2>&1 ;;
+        manifest)
+            case "$name" in
+                gateway-api) kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1 ;;
+                metrics-server) kubectl -n kube-system get deploy metrics-server >/dev/null 2>&1 ;;
+                multus-cni) kubectl -n kube-system get ds kube-multus-ds >/dev/null 2>&1 ;;
+                # The upstream manifest names the DaemonSet after the arch.
+                ovs-cni) kubectl -n kube-system get ds -o name 2>/dev/null | grep -q "^daemonset.apps/ovs-cni" ;;
+                *)
+                    [ -n "$ns" ] && [ "$ns" != "kube-system" ] &&
+                        [ -n "$(kubectl -n "$ns" get deploy,ds,sts -o name 2>/dev/null)" ] ;;
+            esac ;;
+        *)
+            return 1 ;;
+    esac
+}
+
+# A cluster restored from a k4all 1.x backup was not made by this release:
+# what it already runs keeps running as it is (management: Unmanaged), and
+# the user hands each component to the operator when its values are in the
+# ClusterConfig. Components with a management in the manifest (the operator,
+# kube-vip) keep it; missing ones are installed as usual.
+mark_restored_components_unmanaged() {
+    local from name type ns management
+    from="$(cat "$RESTORED_FROM_FILE" 2>/dev/null || true)"
+    case "$from" in
+        1.*) ;;
+        *) return 0 ;;
+    esac
+    echo "Cluster restored from a k4all ${from} backup: components already there stay Unmanaged"
+    while IFS=$'\t' read -r name type ns management; do
+        [ -n "$management" ] && continue
+        if component_present "$name" "$type" "$ns"; then
+            NAME="$name" yq -i '.spec.components[strenv(NAME)].management = "Unmanaged"' "$RELEASE_MANIFEST"
+            echo "  ${name}: already in the cluster, management Unmanaged"
+        fi
+    done < <(yq -r '.spec.components | to_entries | .[] |
+        [.key, .value.type, (.value.namespace // ""), (.value.management // "")] | @tsv' "$RELEASE_MANIFEST")
+}
+
+POOL_RENAMED_FILE="${POOL_RENAMED_FILE:-/opt/k4all/thin-pool-renamed-from}"
+
+# setup-lvm.sh renamed a thin pool to vg_data/thin-pool (a kept vg_data from a
+# v1.x node). An lvmd already in the cluster still names the old pool and
+# could not find it: point its ConfigMaps at the new name and restart
+# TopoLVM's node pods. The rest of TopoLVM is left as it is.
+update_topolvm_after_pool_rename() {
+    local old cm ns yaml changed=0
+    old="$(cat "$POOL_RENAMED_FILE" 2>/dev/null || true)"
+    [ -n "$old" ] || return 0
+    while read -r ns cm; do
+        [ -n "$cm" ] || continue
+        yaml="$(kubectl -n "$ns" get cm "$cm" -o jsonpath='{.data.lvmd\.yaml}' 2>/dev/null || true)"
+        grep -Eq "name: (vg_data/)?${old}\$" <<<"$yaml" || continue
+        sed -E "s#name: (vg_data/)?${old}\$#name: thin-pool#" <<<"$yaml" > /tmp/k4all-lvmd.yaml
+        kubectl -n "$ns" create cm "$cm" --from-file=lvmd.yaml=/tmp/k4all-lvmd.yaml \
+            --dry-run=client -o yaml | kubectl apply -f -
+        echo "  ${ns}/${cm}: thin pool ${old} -> thin-pool"
+        changed=1
+    done < <(kubectl get cm -A -o jsonpath='{range .items[?(@.data.lvmd\.yaml)]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' 2>/dev/null)
+    rm -f /tmp/k4all-lvmd.yaml
+    if [ "$changed" = 1 ]; then
+        kubectl get pods -A -l app.kubernetes.io/name=topolvm --no-headers \
+            -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name 2>/dev/null \
+            | while read -r ns pod; do
+                case "$pod" in *lvmd*|*node*) kubectl -n "$ns" delete pod "$pod" --wait=false ;; esac
+            done
+    fi
+    mv -f "$POOL_RENAMED_FILE" "${POOL_RENAMED_FILE}.done"
+}
+
 create_release_manifest_cr() {
     echo "Creating ReleaseManifest CR ..."
     if [ ! -f "$RELEASE_MANIFEST" ]; then
@@ -141,6 +219,8 @@ deploy_operator
 
 # Now apply the CRs
 apply_cluster_config
+mark_restored_components_unmanaged
+update_topolvm_after_pool_rename
 create_release_manifest_cr
 
 echo "=== K4All Operator Deployment Complete ==="

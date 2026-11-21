@@ -142,6 +142,8 @@ RUN mkdir -p /usr/local/share/k4all-upgrade && \
 COPY systemd/*.service /etc/systemd/system/
 COPY systemd/*.timer /etc/systemd/system/
 COPY overlay/etc/systemd/system/kubelet.service.d/ /etc/systemd/system/kubelet.service.d/
+COPY overlay/usr/lib/systemd/system/ovs-delete-transient-ports.service.d/ \
+     /usr/lib/systemd/system/ovs-delete-transient-ports.service.d/
 
 # Enable services that should start at boot
 RUN systemctl enable crio.service && \

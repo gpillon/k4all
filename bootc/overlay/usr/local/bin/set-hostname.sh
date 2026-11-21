@@ -40,8 +40,9 @@ function get_domain() {
     local sleep_interval=5  # Wait time between retries in seconds
 
     while [[ $retry_count -lt $max_retries ]]; do
-        # Capture the output of systemd-resolve
-        domain=$(systemd-resolve --status 2>/dev/null | grep "DNS Domain:" | awk '{print $3}' || echo "")
+        # The first domain only: with two links on DHCP every link lists
+        # it, and a name with a newline in it is refused by hostnamectl.
+        domain=$(systemd-resolve --status 2>/dev/null | grep "DNS Domain:" | awk '{print $3}' | head -n 1 || echo "")
 
         if [[ -n "$domain" ]]; then
             echo "$domain"

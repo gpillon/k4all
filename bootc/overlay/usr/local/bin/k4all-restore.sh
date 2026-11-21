@@ -15,6 +15,8 @@ set -euo pipefail
 trap 'rc=$?; echo "[k4all-restore ERROR] line $LINENO: $BASH_COMMAND (rc=$rc)" >&2' ERR
 
 RESTORE_DIR="/var/opt/k4all/restore"
+# Files restore_node_customizations wrote, for restore_selinux_contexts.
+RESTORED_PATHS=()
 RESTORE_DONE="/opt/k4all/restore.done"
 RESTORE_MARKER="K4ALL_BACKUP_V2"
 
@@ -147,6 +149,8 @@ restore_selinux_contexts() {
         /root
         /etc/login_data
         /var/lib/etcd
+        /etc/fstab
+        "${RESTORED_PATHS[@]}"
     )
 
     local existing=()
@@ -156,6 +160,151 @@ restore_selinux_contexts() {
     done
 
     [ ${#existing[@]} -gt 0 ] && restorecon -RF "${existing[@]}" 2>/dev/null || true
+}
+
+# etcdutl is not on the host: restoring etcd runs it from the etcd image.
+# The restore runs before the network at first boot, so the image must be
+# local. Use the manifest's image if it is in local storage, otherwise the
+# etcd image k4all ships for kubeadm (an etcdutl restores the snapshots of
+# older etcd releases), and pull only as a last resort.
+K4ALL_IMAGES_DIR="${K4ALL_IMAGES_DIR:-/usr/local/share/k4all-images}"
+prepare_etcd_image() {
+    local wanted="$1" archive loaded
+    if [ -n "$wanted" ] && podman image exists "$wanted" 2>/dev/null; then
+        echo "$wanted"
+        return 0
+    fi
+    for archive in "$K4ALL_IMAGES_DIR"/registry.k8s.io_etcd_*.tar; do
+        [ -f "$archive" ] || continue
+        loaded="$(podman load -q -i "$archive" 2>/dev/null | sed -n 's/^Loaded image[^:]*: *//p' | tail -n 1)"
+        if [ -n "$loaded" ]; then
+            echo "$loaded"
+            return 0
+        fi
+    done
+    echo "$wanted"
+}
+
+# The node must come back with the connections it had. Two kinds of profile
+# can take a NIC from them:
+# - the installer's own (DHCP on every NIC);
+# - profiles of the old node that were not active there, for a NIC an active
+#   one used (a v1 node keeps eno1.nmconnection.disabled, its static profile
+#   from before the OVS bridge). NetworkManager loads keyfiles whatever their
+#   extension, so on a new boot such a profile can win the NIC.
+# Both are moved out of system-connections, into $RESTORE_DIR/nm-set-aside.
+# active-connections.txt (UUID:DEVICE, from k4all-backup.sh) says what was
+# active; without it (older backups) only the installer's profiles move.
+keyfile_value() {
+    sed -n "s/^$2=//p" "$1" | head -n 1
+}
+
+disable_conflicting_nm_profiles() {
+    local restored_dir="$1" nm_dir="$2" active_file="${3:-}" aside="${4:-$RESTORE_DIR/nm-set-aside}"
+    local f other name iface uuid kept_ifaces="" restored_names=""
+    for f in "$restored_dir"/*; do
+        [ -f "$f" ] && restored_names+="$(basename "$f")"$'\n'
+    done
+
+    # Interfaces the restored profiles that will stay use.
+    for f in "$restored_dir"/*; do
+        [ -f "$f" ] || continue
+        iface="$(keyfile_value "$f" interface-name)"
+        [ -n "$iface" ] || continue
+        if [ -s "$active_file" ]; then
+            uuid="$(keyfile_value "$f" uuid)"
+            grep -q "^${uuid}:" "$active_file" 2>/dev/null || continue
+        fi
+        kept_ifaces+="$iface"$'\n'
+    done
+    [ -n "$kept_ifaces" ] || return 0
+
+    for other in "$nm_dir"/*; do
+        [ -f "$other" ] || continue
+        name="$(basename "$other")"
+        iface="$(keyfile_value "$other" interface-name)"
+        [ -n "$iface" ] && grep -qxF "$iface" <<<"$kept_ifaces" || continue
+        if grep -qxF "$name" <<<"$restored_names"; then
+            # A profile of the old node: it stays if it was active there.
+            [ -s "$active_file" ] || continue
+            uuid="$(keyfile_value "$other" uuid)"
+            grep -q "^${uuid}:" "$active_file" && continue
+            mkdir -p "$aside"
+            mv -f "$other" "$aside/$name"
+            log "  - $name set aside: inactive on the old node, its NIC $iface is used by an active profile"
+        else
+            mkdir -p "$aside"
+            mv -f "$other" "$aside/$name"
+            log "  - $name set aside: the installer's profile for $iface, which the restored profiles use"
+        fi
+    done
+}
+
+# A node with more than one address (a second bridge, say) keeps the IP it
+# had in the cluster: without --node-ip, kubelet may pick another one at the
+# first boot of the new system, and the restored node's InternalIP changes.
+pin_node_ip() {
+    local flags_file="$1" node_ip="$2"
+    [ -n "$node_ip" ] && [ -f "$flags_file" ] || return 0
+    grep -q -- "--node-ip" "$flags_file" && return 0
+    if grep -q '^KUBELET_KUBEADM_ARGS="' "$flags_file"; then
+        sed -i "s#^KUBELET_KUBEADM_ARGS=\"#KUBELET_KUBEADM_ARGS=\"--node-ip=${node_ip} #" "$flags_file"
+    else
+        echo "KUBELET_KUBEADM_ARGS=\"--node-ip=${node_ip}\"" >> "$flags_file"
+    fi
+    log "  + kubelet --node-ip=${node_ip} (the node's InternalIP in the backup)"
+}
+
+# Mount units, drop-ins, dispatcher scripts, sysctl and extra fstab lines
+# saved by k4all-backup.sh (node/). A file the new system already has stays
+# (sysctl.conf excepted, the image's one only has comments). Restored mount
+# units are enabled as they were; they mount at the next boot.
+restore_node_customizations() {
+    local node_dir="$1" etc_dir="$2" rel target unit
+    [ -d "$node_dir/etc" ] || return 0
+    log "Restoring node customizations..."
+    while IFS= read -r rel; do
+        rel="${rel#./}"
+        [ "$rel" = "fstab" ] && continue
+        if [ -e "$etc_dir/$rel" ] && [ "$rel" != "sysctl.conf" ]; then
+            warn "  kept the new system's /etc/$rel"
+            continue
+        fi
+        mkdir -p "$etc_dir/$(dirname "$rel")"
+        # Not -a: the archive was unpacked in /tmp and its SELinux label
+        # (tmp_t) would come along; systemd and sysctl may not read tmp_t.
+        cp --preserve=mode,ownership,timestamps "$node_dir/etc/$rel" "$etc_dir/$rel"
+        RESTORED_PATHS+=("$etc_dir/$rel")
+        log "  + /etc/$rel"
+    done < <(cd "$node_dir/etc" && find . -type f | sort)
+
+    if [ -f "$node_dir/enabled-units.txt" ]; then
+        while read -r target unit; do
+            [ -n "$unit" ] && [ -f "$etc_dir/systemd/system/$unit" ] || continue
+            mkdir -p "$etc_dir/systemd/system/$target"
+            ln -sfn "/etc/systemd/system/$unit" "$etc_dir/systemd/system/$target/$unit"
+            log "  + $unit enabled ($target)"
+        done < "$node_dir/enabled-units.txt"
+    fi
+
+    if [ -f "$node_dir/etc/fstab" ]; then
+        touch "$etc_dir/fstab"
+        awk 'NR == FNR { if ($0 !~ /^[[:space:]]*#/ && NF >= 2) have[$2] = 1; next }
+             $0 ~ /^[[:space:]]*#/ || NF < 3 { next }
+             $2 == "/" || $2 == "/boot" || $2 == "/boot/efi" || $3 == "swap" { next }
+             !($2 in have) { print }' "$etc_dir/fstab" "$node_dir/etc/fstab" > "$etc_dir/fstab.k4all-restore"
+        if [ -s "$etc_dir/fstab.k4all-restore" ]; then
+            cat "$etc_dir/fstab.k4all-restore" >> "$etc_dir/fstab"
+            log "  + /etc/fstab: $(wc -l < "$etc_dir/fstab.k4all-restore") line(s) for extra volumes"
+        fi
+        rm -f "$etc_dir/fstab.k4all-restore"
+    fi
+
+    if [ -f "$node_dir/etc-config-diff.txt" ]; then
+        mkdir -p "$RESTORE_DIR"
+        cp -f "$node_dir/etc-config-diff.txt" "$RESTORE_DIR/"
+        log "  + every /etc change of the old node listed in $RESTORE_DIR/etc-config-diff.txt"
+    fi
 }
 
 # ========================================================================
@@ -208,7 +357,9 @@ restore_bootstrap() {
 
         if restore_etcd_snapshot_host "$WORK_DIR/etcd/snapshot.db" "$restore_dir" "${extra_args[@]}"; then
             log "  + etcd snapshot restored using host tools"
-        elif command -v podman >/dev/null 2>&1 && [ -n "$etcd_image" ]; then
+        elif command -v podman >/dev/null 2>&1 \
+                && etcd_image="$(prepare_etcd_image "$etcd_image")" \
+                && [ -n "$etcd_image" ]; then
             log "  Host etcdutl/etcdctl unavailable or failed, trying podman image: $etcd_image"
             restore_etcd_snapshot_podman "$WORK_DIR/etcd/snapshot.db" "$restore_dir" "$etcd_image" "${extra_args[@]}"
             log "  + etcd snapshot restored using podman"
@@ -289,6 +440,11 @@ restore_worker() {
 # Main
 # ========================================================================
 
+# Sourced (by the tests): the functions only.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    return 0
+fi
+
 if [ -f "$RESTORE_DONE" ]; then
     exit 0
 fi
@@ -333,7 +489,11 @@ if [ -d "$WORK_DIR/config" ]; then
 
     if [ -f "$WORK_DIR/config/hostname" ]; then
         cp -f "$WORK_DIR/config/hostname" /etc/hostname
-        hostnamectl set-hostname "$(cat /etc/hostname)" 2>/dev/null || true
+        hostnamectl set-hostname "$(cat /etc/hostname)" 2>/dev/null \
+            || hostname "$(cat /etc/hostname)" 2>/dev/null || true
+        # The node keeps its name: fck8s-set-hostname must not make a new one.
+        mkdir -p /opt/k4all
+        touch /opt/k4all/setup-hostname.done
         log "  + hostname restored: $(cat /etc/hostname)"
     fi
 fi
@@ -344,6 +504,8 @@ if [ -d "$WORK_DIR/network/nm-connections" ]; then
     mkdir -p /etc/NetworkManager/system-connections
     cp -a "$WORK_DIR/network/nm-connections/." /etc/NetworkManager/system-connections/
     log "  + NetworkManager connections"
+    disable_conflicting_nm_profiles "$WORK_DIR/network/nm-connections" \
+        /etc/NetworkManager/system-connections "$WORK_DIR/network/active-connections.txt"
 fi
 
 if [ -f "$WORK_DIR/network/keepalived.conf" ]; then
@@ -378,6 +540,9 @@ if [ -d "$WORK_DIR/kubelet" ]; then
         cp -a "$WORK_DIR/kubelet/pki" /var/lib/kubelet/
         log "  + /var/lib/kubelet/pki"
     fi
+
+    pin_node_ip /var/lib/kubelet/kubeadm-flags.env \
+        "$(jq -r '.node_ip // ""' "$WORK_DIR/metadata/backup-info.json" 2>/dev/null || true)"
 fi
 
 # --- Restore user data ---
@@ -391,6 +556,9 @@ if [ -d "$WORK_DIR/user" ]; then
         esac
     done
 fi
+
+# --- Restore the node's own /etc changes ---
+restore_node_customizations "$WORK_DIR/node" /etc
 
 # --- Run node-type-specific restore ---
 NODE_TYPE="$(cat /etc/node-type 2>/dev/null || echo "$BACKUP_NODE_TYPE")"
@@ -407,5 +575,7 @@ restore_selinux_contexts
 
 mkdir -p /opt/k4all
 echo "$ARCHIVE" > /opt/k4all/restore-source.txt
+# deploy-operator.sh reads it: a cluster restored from 1.x keeps its components.
+echo "$BACKUP_VERSION" > /opt/k4all/restored-from-version
 touch "$RESTORE_DONE"
 log "Restore completed successfully from: $ARCHIVE"
