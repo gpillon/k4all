@@ -22,7 +22,8 @@ from com_k4all_installer.categories.k4all import K4AllCategory
 from com_k4all_installer import backup_scan
 from com_k4all_installer.constants import K4ALL
 from com_k4all_installer.storage_layout import (
-    StorageLayoutError, build_kickstart_layout,
+    LayoutNotApplied, StorageLayoutError, apply_layout,
+    build_kickstart_layout, existing_biosboot_partitions,
 )
 
 log = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
         self._keep_vgs = {}
 
         self._disk_layout_applied = False
+        self._layout_error = ""
         self._os_pct = 20
 
         try:
@@ -155,6 +157,10 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
         if self._disk_layout_applied:
             self._container.add(
                 TextWidget("  [Layout APPLIED]"), callback=None)
+        elif self._layout_error:
+            self._container.add(
+                TextWidget("  [Layout NOT applied: %s]" % self._layout_error),
+                callback=None)
 
         self.window.add_with_separator(self._container)
 
@@ -191,6 +197,8 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
         parts = []
         if self._disk_layout_applied:
             parts.append("Layout applied")
+        elif self._layout_error:
+            parts.append("Layout NOT applied")
         if self._restore_enabled:
             parts.append("Restore enabled")
         if self._found_backups:
@@ -267,6 +275,8 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
                 self._dt_proxy.GetDeviceData(disk_name).get("children", []))
         except Exception:
             disk_partitions = []
+        biosboot_partitions = existing_biosboot_partitions(
+            self._dt_proxy, disk_partitions)
 
         try:
             self._storage_proxy.ResetPartitioning()
@@ -282,37 +292,33 @@ class K4AllStorageSpoke(FirstbootSpokeMixIn, NormalTUISpoke):
                 disk_partitions=disk_partitions,
                 preserved_vgs=preserved_vgs,
                 pv_parent_disks=pv_parent_disks,
+                biosboot_partitions=biosboot_partitions,
             )
-        except StorageLayoutError as error:
-            log.error("Cannot apply K4All storage layout: %s", error)
+            log.info("K4AllStorage TUI: applying KS:\n%s", ks_text)
+            from pyanaconda.modules.common.task import sync_run_task
+            apply_layout(self._storage_proxy, ks_text,
+                         STORAGE.get_proxy, sync_run_task)
+        except (StorageLayoutError, LayoutNotApplied) as error:
+            log.error("K4All storage layout not applied: %s", error)
+            self._set_layout_result(False, "", str(error))
             return
-        try:
-            self._storage_proxy.ReadKickstart(ks_text)
-            partitionings = self._storage_proxy.CreatedPartitioning
-            if partitionings:
-                latest = partitionings[-1]
-                try:
-                    p_proxy = STORAGE.get_proxy(latest)
-                    task_path = p_proxy.ConfigureWithTask()
-                    task_proxy = STORAGE.get_proxy(task_path)
-                    from pyanaconda.modules.common.task import sync_run_task
-                    sync_run_task(task_proxy)
-                    try:
-                        self._storage_proxy.ApplyPartitioning(latest)
-                    except Exception:
-                        log.info("Partitioning created; ApplyPartitioning "
-                                 "may succeed during actual install")
-                except Exception:
-                    log.info("ConfigureWithTask: partitioning saved")
-            self._disk_layout_applied = True
-            if self._k4all_module:
-                try:
-                    self._k4all_module.SetDiskLayoutApplied(True)
-                    self._k4all_module.SetDiskLayoutKickstart(ks_text)
-                except Exception:
-                    pass
-        except Exception:
+        except Exception as error:
             log.error("Failed to apply disk layout", exc_info=True)
+            self._set_layout_result(False, "", str(error) or "see the logs")
+            return
+        self._set_layout_result(True, ks_text, "")
+
+    def _set_layout_result(self, applied, ks_text, error):
+        """Record whether the layout took; a failed one is never APPLIED."""
+        self._disk_layout_applied = applied
+        self._layout_error = error
+        if self._k4all_module:
+            try:
+                self._k4all_module.SetDiskLayoutApplied(applied)
+                self._k4all_module.SetDiskLayoutKickstart(ks_text)
+            except Exception:
+                log.error("K4AllStorage TUI: cannot record the layout",
+                          exc_info=True)
 
     # --- Helpers ---
 
