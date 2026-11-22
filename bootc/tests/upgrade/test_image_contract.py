@@ -315,10 +315,23 @@ def test_kubeadm_configs_are_v1beta4_without_flexvolume_flag():
         docs = list(yaml.safe_load_all(read(BIN, "overrides", role,
                                             "k8s-config-%s.yaml" % role)))
         for doc in docs:
+            if doc["apiVersion"].startswith("kubelet.config.k8s.io/"):
+                continue
             assert doc["apiVersion"] == "kubeadm.k8s.io/v1beta4", role
             cm = doc.get("controllerManager") or {}
             names = [a["name"] for a in cm.get("extraArgs") or []]
             assert "flex-volume-plugin-dir" not in names, role
+
+
+def test_bootstrap_kubelet_config_allows_250_pods():
+    # kubeadm init stores it in kube-system/kubelet-config, which the nodes
+    # that join later download; kubeadm refuses the same kind twice.
+    docs = list(yaml.safe_load_all(read(BIN, "overrides", "bootstrap",
+                                        "k8s-config-bootstrap.yaml")))
+    kubelet = [d for d in docs if d["kind"] == "KubeletConfiguration"]
+    assert len(kubelet) == 1
+    assert kubelet[0]["apiVersion"] == "kubelet.config.k8s.io/v1beta1"
+    assert kubelet[0]["maxPods"] == 250
 
 
 def test_bootstrap_init_pins_the_control_plane_to_the_kubelet():

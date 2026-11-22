@@ -222,13 +222,9 @@ run_svc fck8s-k8s-setup-ph3.service "k8s-setup-ph3" 60 || true
 info "Preparing kubeadm config (swap tolerance + ignore-preflight-errors)"
 if exec_in "test -f /etc/k8s-config.yaml"; then
     pass "/etc/k8s-config.yaml exists (from role-dispatcher + ph3)"
-    exec_in "cat >> /etc/k8s-config.yaml <<'KC'
----
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-failSwapOn: false
-cgroupDriver: systemd
-KC"
+    # The template already has a KubeletConfiguration (maxPods) and kubeadm
+    # refuses a kind twice: the swap settings go into that document.
+    exec_in "yq e -i '(select(.kind == \"KubeletConfiguration\") | .failSwapOn) = false | (select(.kind == \"KubeletConfiguration\") | .cgroupDriver) = \"systemd\"' /etc/k8s-config.yaml"
 else
     fail "/etc/k8s-config.yaml missing — role-dispatcher did not copy k8s-config-bootstrap.yaml"
 fi
@@ -260,6 +256,14 @@ if $KUBEADM_OK; then
         pass "kube-proxy Running (conntrack sysctl patched)"
     else
         warn "kube-proxy state: $KP_STATE (may need more time)"
+    fi
+
+    MAX_PODS=$(exec_in "KUBECONFIG=/root/.kube/config kubectl get node -o jsonpath='{.items[0].status.capacity.pods}'" || true)
+    CM_MAX_PODS=$(exec_in "KUBECONFIG=/root/.kube/config kubectl -n kube-system get cm kubelet-config -o jsonpath='{.data.kubelet}' | yq e '.maxPods' -" || true)
+    if [ "$MAX_PODS" = "250" ] && [ "$CM_MAX_PODS" = "250" ]; then
+        pass "maxPods 250 (node capacity and kube-system/kubelet-config)"
+    else
+        fail "maxPods: node capacity '$MAX_PODS', kubelet-config '$CM_MAX_PODS' (want 250)"
     fi
 
     PODS=$(exec_in "KUBECONFIG=/root/.kube/config kubectl get pods -n kube-system --no-headers 2>/dev/null | grep Running | wc -l" || echo 0)
