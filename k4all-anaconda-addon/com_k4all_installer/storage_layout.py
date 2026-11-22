@@ -2,7 +2,7 @@
 # Copyright (C) 2024 K4All Project
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""Build the K4All Kickstart storage layout.
+"""Build the K4All Kickstart storage layout, and apply it in the installer.
 
 The graphical/TUI spokes and unattended ``%pre`` scripts use this module as
 their single source of truth.  Existing ``vg_data`` physical volumes are
@@ -22,10 +22,16 @@ BOOT_MIB = 1024
 EFI_MIB = 600
 BIOSBOOT_MIB = 1
 LAYOUT_MARGIN_MIB = 100
+# GPT partition type of a BIOS boot partition, as lsblk prints it.
+BIOSBOOT_PARTTYPE = "21686148-6449-6e6f-744e-656564454649"
 
 
 class StorageLayoutError(RuntimeError):
     """Raised when a safe automatic layout cannot be produced."""
+
+
+class LayoutNotApplied(RuntimeError):
+    """Raised when the installer cannot allocate a layout; says why."""
 
 
 def _device_name(value):
@@ -47,13 +53,18 @@ def _unique(values):
 
 def build_kickstart_layout(
         disk_name, disk_mib, is_efi=False, os_percent=DEFAULT_OS_PERCENT,
-        disk_partitions=(), preserved_vgs=None, pv_parent_disks=None):
+        disk_partitions=(), preserved_vgs=None, pv_parent_disks=None,
+        biosboot_partitions=()):
     """Return Kickstart commands for the K4All disk layout.
 
     ``preserved_vgs`` maps existing VG names to their PV device names.
     Partitions backing those PVs are excluded from selective clearing.  If a
     preserved PV is on the target disk, all other target partitions are
     cleared explicitly; the disk label itself is left untouched.
+
+    ``biosboot_partitions`` names the BIOS boot partitions already on the
+    target disk.  When the label is kept and the node boots in BIOS mode,
+    the first of them is reused instead of allocating a new one.
     """
     disk_name = _device_name(disk_name)
     if not disk_name:
@@ -76,6 +87,7 @@ def build_kickstart_layout(
         for pv, parent in (pv_parent_disks or {}).items()
     }
     target_partitions = _unique(disk_partitions)
+    biosboot_partitions = _unique(biosboot_partitions)
     preserved_pvs = {
         pv for pvs in preserved_vgs.values() for pv in pvs
     }
@@ -102,11 +114,25 @@ def build_kickstart_layout(
         "ignoredisk --only-use=%s" % ",".join(visible_disks),
     ]
 
+    reused_biosboot = ""
     if target_preserved_pvs:
         deletable = [
             part for part in target_partitions
             if part not in target_preserved_pvs
         ]
+        # The kept label is often the one of a Fedora CoreOS image (k4all
+        # 1.x): its usable area starts at sector 2048, while parted reports
+        # free space from sector 34.  On a disk whose optimal I/O size does
+        # not divide 1 MiB (a Smart Array P420 reports 1.5 MiB), blivet
+        # aligns a new 1 MiB biosboot to the minimum I/O size, places it
+        # before sector 2048 and parted refuses it (gpillon/k4all#52).  The
+        # BIOS boot partition already there is where GRUB needs it.
+        if not is_efi:
+            reused_biosboot = next(
+                (part for part in biosboot_partitions if part in deletable),
+                "")
+            if reused_biosboot:
+                deletable.remove(reused_biosboot)
         if deletable:
             lines.append("clearpart --list=%s" % ",".join(deletable))
     else:
@@ -123,6 +149,10 @@ def build_kickstart_layout(
             "part /boot/efi --fstype=efi --size=%d --ondisk=%s" %
             (EFI_MIB, disk_name))
         platform_mib = EFI_MIB
+    elif reused_biosboot:
+        lines.append(
+            "part biosboot --fstype=biosboot --onpart=%s" % reused_biosboot)
+        platform_mib = BIOSBOOT_MIB
     else:
         lines.append(
             "part biosboot --fstype=biosboot --size=%d --ondisk=%s" %
@@ -168,6 +198,63 @@ def build_kickstart_layout(
     return "\n".join(lines) + "\n"
 
 
+def _messages(report):
+    messages = []
+    for item in report or []:
+        item = _unpack(item)
+        if isinstance(item, dict):
+            item = _unpack(item.get("message", item))
+        messages.append(str(item))
+    return messages
+
+
+def _unpack(value):
+    return value.unpack() if hasattr(value, "unpack") else value
+
+
+def existing_biosboot_partitions(device_tree, partitions):
+    """Return the partitions the installer's device tree knows as biosboot."""
+    found = []
+    for part in partitions:
+        try:
+            data = device_tree.GetFormatData(part)
+        except Exception:
+            continue
+        if _unpack(_unpack(data).get("type", "")) == "biosboot":
+            found.append(part)
+    return found
+
+
+def apply_layout(storage, ks_text, get_proxy, run_task):
+    """Apply ``ks_text`` to the installer's storage, in memory.
+
+    ``storage`` is the Storage module proxy, ``get_proxy`` resolves the
+    object paths it returns (``STORAGE.get_proxy``) and ``run_task`` runs a
+    task proxy to the end (``sync_run_task``).  ReadKickstart only parses
+    the layout: the partitions are allocated by ConfigureWithTask, which can
+    still fail on a real disk.  Nothing is written to the disks until the
+    installation begins.  Raises LayoutNotApplied with the reason unless
+    the layout was both configured and applied.
+    """
+    report = _unpack(storage.ReadKickstart(ks_text)) or {}
+    errors = _messages(_unpack(report.get("error-messages", [])))
+    if errors:
+        raise LayoutNotApplied("kickstart error: %s" % "; ".join(errors))
+
+    partitionings = list(storage.CreatedPartitioning or [])
+    if not partitionings:
+        raise LayoutNotApplied("the installer created no partitioning")
+    latest = partitionings[-1]
+    try:
+        run_task(get_proxy(get_proxy(latest).ConfigureWithTask()))
+    except Exception as error:
+        raise LayoutNotApplied(str(error) or type(error).__name__) from error
+    try:
+        storage.ApplyPartitioning(latest)
+    except Exception as error:
+        raise LayoutNotApplied(str(error) or type(error).__name__) from error
+
+
 def _run_json(command):
     result = subprocess.run(
         command, check=True, stdout=subprocess.PIPE,
@@ -189,7 +276,8 @@ def _flatten_lsblk(nodes, parent=None):
 def _block_inventory():
     data = _run_json([
         "lsblk", "--json", "--bytes",
-        "--output", "NAME,KNAME,PATH,TYPE,SIZE,PKNAME,RM,RO,MOUNTPOINT",
+        "--output",
+        "NAME,KNAME,PATH,TYPE,SIZE,PKNAME,RM,RO,MOUNTPOINT,PARTTYPE",
     ])
     return _flatten_lsblk(data.get("blockdevices", []))
 
@@ -274,12 +362,15 @@ def discover_unattended_layout(disk_name=""):
         pv_parent_disks[_device_name(pv)] = parent
 
     partitions = []
+    biosboot = []
     for node in inventory:
         if node.get("type") != "part":
             continue
         name = _device_name(node.get("kname") or node.get("name"))
         if _root_disk_name(inventory, name) == target:
             partitions.append(name)
+            if str(node.get("parttype") or "").lower() == BIOSBOOT_PARTTYPE:
+                biosboot.append(name)
 
     return {
         "disk_name": target,
@@ -287,6 +378,7 @@ def discover_unattended_layout(disk_name=""):
         "disk_partitions": partitions,
         "preserved_vgs": {"vg_data": vg_data_pvs} if vg_data_pvs else {},
         "pv_parent_disks": pv_parent_disks,
+        "biosboot_partitions": biosboot,
     }
 
 
