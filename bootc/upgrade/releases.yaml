@@ -168,3 +168,19 @@ releases:
       same components as v2.6.2, k4all-operator v0.5.1; the manifest sync is
       there for nodes that come from v2.6.0. Kubernetes, CRI-O and Fedora are
       unchanged.
+
+  - version: v2.6.4
+    kind: patch
+    minFrom: v2.6.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    syncManifest: true
+    notes: >-
+      k4all-operator v0.5.2: a component switched from Unmanaged to Managed
+      (a cluster restored from 1.x) follows its upgradePath from the version
+      it runs, read from its Helm release or, for KubeVirt and CDI, from
+      their CR, instead of jumping to the release's version; manifest steps
+      wait until the component runs them, and a component newer than the
+      release is not downgraded. Same components as v2.6.3. Kubernetes,
+      CRI-O and Fedora are unchanged.

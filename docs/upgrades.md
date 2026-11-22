@@ -54,6 +54,7 @@ The 2.x upgrade path:
 | v2.6.1 | patch with a ReleaseManifest sync: k4all-operator v0.5.1, which fixes the cleanup of the ingress-nginx namespace; `k4all-upgrade` matches an image staged by its index digest (`indexDigest` in the graph) |
 | v2.6.2 | patch: a 1.x node moves to 2.x by reinstalling with a backup (`k4all-backup.sh`, the installer's Restore), and the restored cluster keeps its components (Unmanaged); the first boot no longer hangs on Open vSwitch; same components as v2.6.1 |
 | v2.6.3 | patch: the installer's layout fits RAID controllers with a large optimal I/O size (a kept disk label reuses its BIOS boot partition), and the storage spoke shows when the layout could not be applied; same components as v2.6.2 |
+| v2.6.4 | patch with a ReleaseManifest sync: k4all-operator v0.5.2, so a component switched from Unmanaged to Managed (a restored 1.x cluster) follows its upgrade path from the version it runs, and manifest steps wait until they run; same components as v2.6.3 |
 | v2.7.0 | unattended join: `kubeadm init` and `join` become declarative (Kubernetes unchanged) |
 | v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
 | v2.9.0 | Kubernetes 1.37 |

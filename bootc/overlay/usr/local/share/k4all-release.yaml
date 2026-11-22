@@ -526,7 +526,10 @@ spec:
       # needs on existing clusters.
       # v0.5.1 (k4all v2.6.1): the cleanup of the ingress-nginx namespace
       # after its uninstall.
-      version: "v0.5.1"
+      # v0.5.2: a component switched from Unmanaged to Managed follows its
+      # upgradePath from the version it runs, and manifest steps wait until
+      # the step runs (#55).
+      version: "v0.5.2"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system
