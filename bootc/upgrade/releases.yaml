@@ -149,3 +149,22 @@ releases:
       45's Open vSwitch could hang the first boot). Same components as
       v2.6.1, k4all-operator v0.5.1; the manifest sync is there for nodes
       that come from v2.6.0. Kubernetes, CRI-O and Fedora are unchanged.
+
+  - version: v2.6.3
+    kind: patch
+    minFrom: v2.6.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    syncManifest: true
+    notes: >-
+      The installer's K4All layout fits disks whose optimal I/O size is larger
+      than the BIOS boot partition (RAID controllers such as the HP Smart
+      Array P420): when the disk label stays for a kept volume group and the
+      node boots with BIOS, the layout reuses the existing BIOS boot
+      partition, so a 1.x node can be reinstalled on such a controller. The
+      storage spoke says "Layout APPLIED" only when the partitioning
+      succeeded, and shows the error otherwise. Only the installer changes:
+      same components as v2.6.2, k4all-operator v0.5.1; the manifest sync is
+      there for nodes that come from v2.6.0. Kubernetes, CRI-O and Fedora are
+      unchanged.
