@@ -228,5 +228,8 @@ releases:
       ports after the hop), and the worker and control ISOs no longer write
       a CNI in the node's configuration (#63). New clusters accept 250 pods
       per node; existing clusters keep their kubelet-config. reinstall.sh no
-      longer makes the next boot restore a backup kept on the node. Same
-      components otherwise. Kubernetes, CRI-O and Fedora are unchanged.
+      longer makes the next boot restore a backup kept on the node;
+      --kubernetes refuses on 2.x and says what to do instead, and a base
+      reinstall no longer re-applies the node's files over the cluster's
+      ClusterConfig and ReleaseManifest (#68). Same components otherwise.
+      Kubernetes, CRI-O and Fedora are unchanged.
