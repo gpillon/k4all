@@ -199,3 +199,34 @@ releases:
       cluster's only control plane can end (its PodDisruptionBudgets left
       nothing to move). firewalld opens Cilium's VXLAN port. Same components
       otherwise. Kubernetes, CRI-O and Fedora are unchanged.
+
+  - version: v2.6.5
+    kind: patch
+    minFrom: v2.6.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    # The sync brings k4all-operator v0.5.4 and re-applies TopoLVM with the
+    # wait-for-lvmd init container (#61).
+    syncManifest: true
+    notes: >-
+      k4all-operator v0.5.4 (through the manifest sync): KubeVirt's emulation
+      "auto" (the default) now decides from the nodes, so the KubeVirt CR
+      gets useEmulation false once a node offers KVM; up to v2.6.4 the
+      operator looked for /dev/kvm in its own pod and always turned software
+      emulation on (#57). useEmulation follows features.virt.emulation: a
+      manual edit of the KubeVirt CR is reverted. With no KVM node, emulation
+      turns on 10 minutes after virt-handler starts. Running VMs stay as they
+      are; VMs started or restarted afterwards use KVM. TopoLVM's
+      topolvm-node waits for lvmd's socket (an init container) instead of
+      crash-looping on a node that joins or boots (#61); the sync restarts
+      topolvm-node once on every node, lvmd is not restarted. A node whose
+      first boot has no network waits for it, then takes its name with the
+      DHCP domain and finishes its setup in the same boot (#62). With
+      firewalld on, every node opens the ports of the CNI that runs on it
+      (k4all-cni-firewalld.path; existing nodes get their CNI's missing
+      ports after the hop), and the worker and control ISOs no longer write
+      a CNI in the node's configuration (#63). New clusters accept 250 pods
+      per node; existing clusters keep their kubelet-config. reinstall.sh no
+      longer makes the next boot restore a backup kept on the node. Same
+      components otherwise. Kubernetes, CRI-O and Fedora are unchanged.

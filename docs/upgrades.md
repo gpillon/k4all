@@ -54,7 +54,8 @@ The 2.x upgrade path:
 | v2.6.1 | patch with a ReleaseManifest sync: k4all-operator v0.5.1, which fixes the cleanup of the ingress-nginx namespace; `k4all-upgrade` matches an image staged by its index digest (`indexDigest` in the graph) |
 | v2.6.2 | patch: a 1.x node moves to 2.x by reinstalling with a backup (`k4all-backup.sh`, the installer's Restore), and the restored cluster keeps its components (Unmanaged); the first boot no longer hangs on Open vSwitch; same components as v2.6.1 |
 | v2.6.3 | patch: the installer's layout fits RAID controllers with a large optimal I/O size (a kept disk label reuses its BIOS boot partition), and the storage spoke shows when the layout could not be applied; same components as v2.6.2 |
-| v2.6.4; KubeVirt's operator and infra prefer control planes (the drain of a cluster's only control plane can end) | patch with a ReleaseManifest sync: every node pins the kubelet's `--node-ip` to its own address (no pod-network InternalIP after ovs-bridge); k4all-operator v0.5.3: with the OVS bridge Cilium 1.20 names `ovs-bridge` in its devices (its agents start again at every boot), with KubeVirt VMs on the pod network reach ClusterIPs and DNS, with Multus secondary networks attach; it includes v0.5.2 (a component switched from Unmanaged to Managed follows its upgrade path from the version it runs); KubeVirt's operator and infra prefer control planes (the drain of a cluster's only control plane can end) |
+| v2.6.4 | patch with a ReleaseManifest sync: every node pins the kubelet's `--node-ip` to its own address (no pod-network InternalIP after ovs-bridge); k4all-operator v0.5.3: with the OVS bridge Cilium 1.20 names `ovs-bridge` in its devices (its agents start again at every boot), with KubeVirt VMs on the pod network reach ClusterIPs and DNS, with Multus secondary networks attach; it includes v0.5.2 (a component switched from Unmanaged to Managed follows its upgrade path from the version it runs); KubeVirt's operator and infra prefer control planes (the drain of a cluster's only control plane can end) |
+| v2.6.5 | patch with a ReleaseManifest sync: k4all-operator v0.5.4, whose KubeVirt emulation `auto` uses KVM on the nodes that have it (before, every cluster ran its VMs in software emulation); TopoLVM's `topolvm-node` waits for lvmd's socket instead of crash-looping on a new node; a first boot without network waits for it and keeps the DHCP domain; with firewalld on, each node opens the ports of the CNI it runs (`k4all-cni-firewalld`); new clusters accept 250 pods per node |
 | v2.7.0 | unattended join: `kubeadm init` and `join` become declarative (Kubernetes unchanged) |
 | v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
 | v2.9.0 | Kubernetes 1.37 |
@@ -517,6 +518,40 @@ sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
     -p '{"data":{"devices":"ovs-bridge","force-device-detection":"true"}}'
   kubectl -n kube-system delete pod -l k8s-app=cilium
   ```
+- From v2.6.5 (k4all-operator v0.5.4) the KubeVirt CR's `useEmulation`
+  follows `features.virt.emulation`. `auto` (the default) decides from the
+  nodes where virt-handler runs: `false` once a node offers KVM
+  (`devices.kubevirt.io/kvm` allocatable) for 30 seconds, `true` once no node
+  has offered KVM for 10 minutes. `"true"` and `"false"` apply at once. A
+  manual edit of `useEmulation` in the KubeVirt CR is reverted at the next
+  reconcile: change `features.virt.emulation` in the ClusterConfig instead.
+  Up to v2.6.4 `auto` always turned emulation on, because the operator looked
+  for `/dev/kvm` in its own pod. Running VMs keep running as they are; VMs
+  started or restarted after the change use KVM, so they run only on nodes
+  with KVM. To run VMs on the nodes without KVM too (software emulation), set
+  `features.virt.emulation: "true"`.
+- On a cluster with no KVM node, emulation turns on 10 minutes after
+  virt-handler starts. A VM started in those minutes stays Pending on
+  `devices.kubevirt.io/kvm` until it is restarted.
+- From v2.6.5 TopoLVM's `topolvm-node` waits for lvmd's socket (init
+  container `wait-for-lvmd`) instead of crash-looping on a node that joins or
+  boots. The v2.6.5 manifest sync re-applies TopoLVM with the same chart:
+  `topolvm-node` restarts once on every node, one node at a time; lvmd does
+  not restart. A `componentOverrides.topolvm` that sets
+  `node.lvmdEmbedded: true` must also set `node.initContainers: []`.
+- From v2.6.5 `k4all-cni-firewalld.path` watches `/etc/cni/net.d`. When
+  firewalld runs, it opens the missing ports of the CNI that runs on the node
+  (Cilium, Calico or Flannel), runtime and permanent; it never closes a port
+  and never reloads firewalld. Without firewalld it only logs. Existing nodes
+  get their CNI's missing ports when the CNI rewrites its configuration, at
+  the hop's reboot (for example 8472/udp on a Cilium node installed before
+  v2.6.4).
+- Clusters installed from v2.6.5 accept 250 pods per node (`maxPods` in
+  `kube-system/kubelet-config`; the kubelet's default is 110). Existing
+  clusters keep their `kubelet-config`. To raise the limit on one, add
+  `maxPods: 250` to the `kubelet-config` ConfigMap, then on every node run
+  `sudo kubeadm upgrade node phase kubelet-config` and
+  `sudo systemctl restart kubelet`.
 
 ## Ingress: Traefik (v2.4.0)
 

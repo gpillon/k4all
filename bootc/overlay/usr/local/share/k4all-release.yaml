@@ -604,7 +604,11 @@ spec:
       # skips the OVS bridge and its agents stopped at every boot), keeps the
       # socket load balancer in the host namespace with KubeVirt, and leaves
       # Multus' CNI config alone.
-      version: "v0.5.3"
+      # v0.5.4 (k4all v2.6.5): KubeVirt's emulation "auto" follows the nodes
+      # (KVM on a node -> useEmulation false), not the operator pod, which
+      # never sees /dev/kvm; Unmanaged and Skipped components keep their
+      # transition time.
+      version: "v0.5.4"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system
