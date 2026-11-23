@@ -22,6 +22,7 @@ from com_k4all_installer.constants import (
     VALID_ROLES, VALID_CNI_TYPES, VALID_HA_TYPES,
     VALID_EMULATION_VALUES,
     DEFAULT_CLUSTER_CONFIG, DEFAULT_INSTALL_CONFIG,
+    JOINING_ROLES, node_cluster_config,
 )
 
 log = logging.getLogger(__name__)
@@ -251,7 +252,9 @@ class K4AllData(AddonData):
             section += f" --role={self.role}"
 
         cfg = self.cluster_config
-        section += f" --cni={cfg['networking']['cni']['type']}"
+        # A node that joins does not choose the cluster's CNI (issue #63).
+        if self.role not in JOINING_ROLES:
+            section += f" --cni={cfg['networking']['cni']['type']}"
         section += f" --ha={cfg['cluster']['ha']['type']}"
 
         if cfg["features"]["virt"]["enabled"]:
@@ -308,10 +311,11 @@ class K4AllData(AddonData):
 
         # Body: dump the cluster config as YAML
         section += "\n"
+        body = node_cluster_config(self.role, cfg)
         if yaml is not None:
-            section += yaml.safe_dump(cfg, default_flow_style=False, sort_keys=False)
+            section += yaml.safe_dump(body, default_flow_style=False, sort_keys=False)
         else:
-            section += json.dumps(cfg, indent=2)
+            section += json.dumps(body, indent=2)
             section += "\n"
         section += "%end\n"
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=K4All - Watch the CNI configuration for its firewalld ports
+Documentation=https://github.com/gpillon/k4all
+
+# A CNI's pod (re)writes its configuration here when it starts on the node:
+# after a join, at every boot, after a CNI switch.
+[Path]
+PathChanged=/etc/cni/net.d
+Unit=k4all-cni-firewalld.service
+
+[Install]
+WantedBy=paths.target

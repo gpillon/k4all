@@ -6,9 +6,12 @@ ConditionPathExists=!/opt/k4all/setup-hostname.done
 
 [Service]
 Type=oneshot
+# Without network at first boot the script waits for it, as long as it
+# takes (set-hostname.sh), and the setup steps ordered after this unit wait
+# with it: no start timeout.
+TimeoutStartSec=infinity
 ExecStart=/usr/local/bin/set-hostname.sh
 RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
-

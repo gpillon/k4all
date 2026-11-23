@@ -89,3 +89,12 @@ nodeRegistration:
 #   serviceSubnet: 10.96.0.0/16
 # proxy: {}
 # scheduler: {}
+
+---
+# kubeadm stores this in kube-system/kubelet-config: every node that joins
+# later gets it too. 250 pods instead of the kubelet's 110, because a k4all
+# node often runs the whole platform plus the workloads (single node,
+# KubeVirt); it still fits the /24 Cilium gives each node.
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+maxPods: 250

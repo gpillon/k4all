@@ -24,10 +24,10 @@ services --enabled=sshd
 # Apply the same K4All storage policy used by the addon's dedicated spoke.
 %include /tmp/part-include
 
-%addon com_k4all_installer --role=worker --cni=calico
+# No CNI: the node joins the cluster's own (the bootstrap node chose it).
+%addon com_k4all_installer --role=worker
 {
   "networking": {
-    "cni": { "type": "calico" },
     "firewalld": { "enabled": false }
   },
   "componentOverrides": {}
