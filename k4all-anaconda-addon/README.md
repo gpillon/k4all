@@ -45,11 +45,11 @@ Add the following to your kickstart file:
 | Option | Values | Default | Description |
 |--------|--------|---------|-------------|
 | `--role` | bootstrap, control, worker | bootstrap | Node role in the cluster |
-| `--cni` | calico, cilium | calico | CNI plugin to use |
+| `--cni` | calico, cilium | calico | The cluster's CNI: a bootstrap node only. A control plane or a worker joins the cluster's CNI and keeps none in its `/etc/k4all-config.yaml` |
 | `--ha` | none, keepalived, kubevip | none | High availability type |
 | `--virt` | flag | off | Enable KubeVirt virtualization |
 | `--argocd` | flag | off | Enable ArgoCD GitOps |
-| `--firewalld` | flag | off | Enable firewalld |
+| `--firewalld` | flag | off | Enable firewalld (the CNI's ports open once the CNI runs on the node: `k4all-cni-firewalld`) |
 
 The JSON body allows fine-grained configuration that will be merged with defaults.
 
