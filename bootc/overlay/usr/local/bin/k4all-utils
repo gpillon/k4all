@@ -125,6 +125,77 @@ handover_crio_bridge() {
     drop_crio_cni
 }
 
+# --- firewalld and the CNI --------------------------------------------------
+# cni_firewalld_ports CNI: the ports CNI needs open on every node, one per
+# line (firewalld syntax). Nothing for a CNI k4all does not know.
+cni_firewalld_ports() {
+    awk -v cni="$1" '$1 == cni {print $2}' <<'EOF'
+calico  179/tcp    BGP
+calico  4789/udp   VXLAN
+calico  5473/tcp   Typha
+calico  51820/udp  IPv4 WireGuard
+calico  51821/udp  IPv6 WireGuard
+cilium  8472/udp   VXLAN (Cilium's tunnel, routingMode tunnel)
+cilium  4240/tcp   Cilium health checks
+cilium  4244/tcp   Hubble server
+cilium  4245/tcp   Hubble Relay
+cilium  4250/tcp   Mutual Authentication port
+cilium  4251/tcp   Spire Agent health check port
+cilium  6060/tcp   cilium-agent pprof server
+cilium  6061/tcp   cilium-operator pprof server
+cilium  6062/tcp   Hubble Relay pprof server
+cilium  9878/tcp   cilium-envoy health listener
+cilium  9879/tcp   cilium-agent health status API
+cilium  9890/tcp   cilium-agent gops server
+cilium  9891/tcp   operator gops server
+cilium  9893/tcp   Hubble Relay gops server
+cilium  9901/tcp   cilium-envoy Admin API
+cilium  9962/tcp   cilium-agent Prometheus metrics
+cilium  9963/tcp   cilium-operator Prometheus metrics
+cilium  9964/tcp   cilium-envoy Prometheus metrics
+cilium  51871/udp  WireGuard encryption tunnel endpoint
+flannel 8472/udp   VXLAN
+EOF
+}
+
+# running_cnis: the CNIs whose configuration is in /etc/cni/net.d (written
+# by the CNI's own pod once it runs on the node), one per line. CRI-O's
+# networks, which a new bootstrap node borrows, do not count.
+running_cnis() {
+    local cni type f
+    for cni in calico cilium flannel; do
+        case "$cni" in
+            cilium) type=cilium-cni ;;
+            *) type=$cni ;;
+        esac
+        for f in "$CNI_NET_DIR"/*.conf "$CNI_NET_DIR"/*.conflist; do
+            [ -e "$f" ] || continue
+            [ -e "$K4ALL_CNI_SHARE/$(basename "$f")" ] && continue
+            if grep -Eq "\"type\"[[:space:]]*:[[:space:]]*\"$type\"" "$f"; then
+                echo "$cni"
+                break
+            fi
+        done
+    done
+}
+
+# open_firewalld_ports PORT...: open each port in the running firewall and
+# in the permanent configuration, without a reload (a reload on a running
+# node rebuilds every firewalld rule). Ports already open stay as they are.
+open_firewalld_ports() {
+    local port
+    for port in "$@"; do
+        if ! firewall-cmd --permanent --query-port="$port" >/dev/null 2>&1; then
+            firewall-cmd --permanent --add-port="$port" >/dev/null
+            echo "firewalld: $port opened (permanent)"
+        fi
+        if ! firewall-cmd --query-port="$port" >/dev/null 2>&1; then
+            firewall-cmd --add-port="$port" >/dev/null
+            echo "firewalld: $port opened"
+        fi
+    done
+}
+
 get_component_version() {
     local component="$1"
     local rf
@@ -609,75 +680,4 @@ pin_kubelet_node_ip() {
     else
         echo "kubelet node IP: pinned to $ip"
     fi
-}
-
-# --- firewalld and the CNI --------------------------------------------------
-# cni_firewalld_ports CNI: the ports CNI needs open on every node, one per
-# line (firewalld syntax). Nothing for a CNI k4all does not know.
-cni_firewalld_ports() {
-    awk -v cni="$1" '$1 == cni {print $2}' <<'EOF'
-calico  179/tcp    BGP
-calico  4789/udp   VXLAN
-calico  5473/tcp   Typha
-calico  51820/udp  IPv4 WireGuard
-calico  51821/udp  IPv6 WireGuard
-cilium  8472/udp   VXLAN (Cilium's tunnel, routingMode tunnel)
-cilium  4240/tcp   Cilium health checks
-cilium  4244/tcp   Hubble server
-cilium  4245/tcp   Hubble Relay
-cilium  4250/tcp   Mutual Authentication port
-cilium  4251/tcp   Spire Agent health check port
-cilium  6060/tcp   cilium-agent pprof server
-cilium  6061/tcp   cilium-operator pprof server
-cilium  6062/tcp   Hubble Relay pprof server
-cilium  9878/tcp   cilium-envoy health listener
-cilium  9879/tcp   cilium-agent health status API
-cilium  9890/tcp   cilium-agent gops server
-cilium  9891/tcp   operator gops server
-cilium  9893/tcp   Hubble Relay gops server
-cilium  9901/tcp   cilium-envoy Admin API
-cilium  9962/tcp   cilium-agent Prometheus metrics
-cilium  9963/tcp   cilium-operator Prometheus metrics
-cilium  9964/tcp   cilium-envoy Prometheus metrics
-cilium  51871/udp  WireGuard encryption tunnel endpoint
-flannel 8472/udp   VXLAN
-EOF
-}
-
-# running_cnis: the CNIs whose configuration is in /etc/cni/net.d (written
-# by the CNI's own pod once it runs on the node), one per line. CRI-O's
-# networks, which a new bootstrap node borrows, do not count.
-running_cnis() {
-    local cni type f
-    for cni in calico cilium flannel; do
-        case "$cni" in
-            cilium) type=cilium-cni ;;
-            *) type=$cni ;;
-        esac
-        for f in "$CNI_NET_DIR"/*.conf "$CNI_NET_DIR"/*.conflist; do
-            [ -e "$f" ] || continue
-            [ -e "$K4ALL_CNI_SHARE/$(basename "$f")" ] && continue
-            if grep -Eq "\"type\"[[:space:]]*:[[:space:]]*\"$type\"" "$f"; then
-                echo "$cni"
-                break
-            fi
-        done
-    done
-}
-
-# open_firewalld_ports PORT...: open each port in the running firewall and
-# in the permanent configuration, without a reload (a reload on a running
-# node rebuilds every firewalld rule). Ports already open stay as they are.
-open_firewalld_ports() {
-    local port
-    for port in "$@"; do
-        if ! firewall-cmd --permanent --query-port="$port" >/dev/null 2>&1; then
-            firewall-cmd --permanent --add-port="$port" >/dev/null
-            echo "firewalld: $port opened (permanent)"
-        fi
-        if ! firewall-cmd --query-port="$port" >/dev/null 2>&1; then
-            firewall-cmd --add-port="$port" >/dev/null
-            echo "firewalld: $port opened"
-        fi
-    done
 }
