@@ -120,6 +120,9 @@ class FakeHost(ku.Host):
         self.readyz_calls = 0
         self.nodes_not_ready = 0    # `get nodes` answers with this node NotReady
         self.unschedulable = False  # this Node is cordoned
+        self.labels = {}            # labels of this Node
+        self.pdbs = []              # PodDisruptionBudgets; None: the list fails
+        self.pods = []              # pods of the cluster, with spec.nodeName
         self.extra_nodes = []       # more Node objects for `get nodes`
         self.kubelet_running = True
         self.k4all_config = None    # the ClusterConfig CR, None: none listed
@@ -145,6 +148,9 @@ class FakeHost(ku.Host):
         # first write: the CR was created by a client-side `kubectl apply`.
         self.rm_owners = None
         self.components_after_sync = "Installed"
+        # component -> reason: k4all-operator (v0.5.7 on) refuses its
+        # uninstall and keeps it Installed at an older version
+        self.refused = {}
         self.images = {}            # version -> {"kubernetes": ...}
         self.reboots = 0
         self.operator_replicas = 1
@@ -316,6 +322,7 @@ class FakeHost(ku.Host):
     def _node(self):
         return {"metadata": {"name": self.node_name(),
                              "resourceVersion": str(self.node_rv),
+                             "labels": dict(self.labels),
                              "annotations": dict(self.annotations)},
                 "spec": {"unschedulable": True} if self.unschedulable else {},
                 "status": {"conditions": [{"type": "Ready", "status":
@@ -338,8 +345,8 @@ class FakeHost(ku.Host):
                         'at the cluster scope: node \'%s\' cannot read all '
                         'nodes, only its own Node object'
                         % (self.node_name(), self.node_name()))
-        if args[:2] in (["get", "node"], ["patch", "node"], ["annotate", "node"]) \
-                and args[2] != self.node_name():
+        if args[:2] in (["get", "node"], ["patch", "node"], ["annotate", "node"],
+                        ["label", "node"]) and args[2] != self.node_name():
             return Proc(returncode=1, stderr='nodes "%s" not found' % args[2])
         if args[:2] == ["patch", "node"]:
             if self.forbid_patch:
@@ -440,6 +447,36 @@ class FakeHost(ku.Host):
             self.rm_patches.append((kind, body))
             self._update_manifest(kind, body)
             return Proc()
+        if args[:2] == ["label", "node"]:
+            for arg in args[3:]:
+                if arg.startswith("-"):
+                    continue
+                if arg.endswith("-"):
+                    self.labels.pop(arg[:-1], None)
+                else:
+                    key, value = arg.split("=", 1)
+                    self.labels[key] = value
+            self.node_rv += 1
+            return Proc()
+        if args[:3] == ["get", "poddisruptionbudgets", "-A"]:
+            if self.pdbs is None:
+                return Proc(returncode=1, stderr="Error from server "
+                            "(ServiceUnavailable): the server is currently "
+                            "unable to handle the request")
+            return Proc(json.dumps({"items": self.pdbs}))
+        if args[:3] == ["get", "pods", "-A"]:
+            items = self.pods
+            for i, arg in enumerate(args):
+                if arg == "--field-selector":
+                    key, value = args[i + 1].split("=", 1)
+                    assert key == "spec.nodeName"
+                    items = [p for p in items if p["spec"].get("nodeName") == value]
+                if arg == "-l":
+                    for term in args[i + 1].split(","):
+                        key, value = term.split("=", 1)
+                        items = [p for p in items if (p["metadata"].get(
+                            "labels") or {}).get(key) == value]
+            return Proc(json.dumps({"items": items}))
         if args[:1] in (["drain"], ["uncordon"]):
             self.unschedulable = args[0] == "drain"
             return Proc()
@@ -529,6 +566,11 @@ def _refresh_status(self):
                                           self.components_after_sync),
                "installedVersion": spec.get("version", "")}
         for name, spec in comps.items()}}
+    for name, reason in self.refused.items():
+        if name in comps:
+            self.release_manifest["status"]["components"][name] = {
+                "state": "Installed", "installedVersion": "v0.0.1",
+                "message": "uninstall refused: " + reason}
     op = self.release_manifest["status"]["components"].get("k4all-operator")
     if op is not None and op["state"] != "Unmanaged":
         # the operator is installed by step 1 whatever the other components
