@@ -149,6 +149,21 @@ the k4all-operator paused (annotation `upgrade-in-progress`). A HOLD before
 the reboot leaves the cluster as it was: the operator runs again, and the
 hop pauses it once more if it goes on.
 
+A hop abandoned after its reboot leaves the node on the new release. When
+that release syncs its ReleaseManifest and the node is the bootstrap node,
+the sync has not run (or not to the end), and the next plan would start from
+the new release without it. So the node remembers it: `status` shows a
+`Sync:` line, `upgrade-message` says it, and `run`, the timer and the agent
+start no hop, not even an `upgrade-done` for that release, until the sync is
+done:
+
+```bash
+sudo k4all-upgrade sync-manifest
+```
+
+When the manifest reached the cluster some other way, `sudo k4all-upgrade
+clear-hold --sync-done` forgets the sync instead.
+
 ## Multi-node clusters
 
 From v2.4.0 a [ClusterUpgrade](#operator-driven-upgrades-from-v240) is the way
@@ -449,7 +464,9 @@ starts. A corrected target is picked up at the next minute.
 A HOLD during the hop works as described above: after `clear-hold` and
 `resume`, the operator goes on by itself. `clear-hold --abandon` also removes
 `upgrade-target` and writes `upgrade-phase: ABANDONED`. The node then does not
-retry on its own: retry from the operator.
+retry on its own: retry from the operator. After a hop abandoned in SYNC on
+the bootstrap node, the retry is refused (`TargetRejected`) until
+`sync-manifest` has run on that node (see the HOLD section).
 
 To see what a node reports:
 

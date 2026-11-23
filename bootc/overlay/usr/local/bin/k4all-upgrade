@@ -1111,6 +1111,39 @@ def short_message(text):
     return text
 
 
+def sync_left_behind(state, booted, role):
+    """The release whose manifest sync an abandoned hop leaves undone: a hop
+    to a sync release, past its reboot (REBOOT or SYNC), on the bootstrap
+    node that boots that release. None otherwise. The next plan starts from
+    the release the node boots, so nothing else would sync it. ``booted``
+    None: bootc could not say; SYNC comes only after post_boot saw the new
+    release boot."""
+    hop = (state or {}).get("hop") or {}
+    if not hop.get("syncManifest") or role != "bootstrap" \
+            or state.get("phase") not in ("REBOOT", "SYNC"):
+        return None
+    if booted is None:
+        return hop["to"] if state["phase"] == "SYNC" else None
+    if parse_version(booted) != parse_version(hop["to"]):
+        return None
+    return hop["to"]
+
+
+def sync_pending_message(pending):
+    return ("the ReleaseManifest of %s is not synced: its hop was abandoned "
+            "after the reboot. Run `sudo k4all-upgrade sync-manifest` on this "
+            "node, or `k4all-upgrade clear-hold --sync-done` once it was "
+            "synced otherwise" % pending["release"])
+
+
+def refuse_while_sync_pending(state):
+    """No new hop while a sync is pending: it would start from a release
+    whose manifest the cluster does not run."""
+    pending = (state or {}).get("syncPending")
+    if pending:
+        raise UpgradeError(sync_pending_message(pending))
+
+
 def abandoned_message(abandoned):
     text = "hop %s->%s abandoned with `k4all-upgrade clear-hold --abandon`" % (
         abandoned.get("from") or "?", abandoned.get("target") or "?")
@@ -1156,13 +1189,20 @@ def node_report(state, role=None, release=None, problem=None, target=None):
     elif state.get("abandoned"):
         want[ANNOTATION_PHASE] = PHASE_ABANDONED
         want[ANNOTATION_MESSAGE] = abandoned_message(state["abandoned"])
+    if state.get("syncPending") and not state.get("hop") and not problem:
+        # next to ABANDONED, or alone after a plan of the node
+        pending = sync_pending_message(state["syncPending"])
+        want[ANNOTATION_MESSAGE] = short_message(
+            pending if not want[ANNOTATION_MESSAGE]
+            else "%s; %s" % (pending, want[ANNOTATION_MESSAGE]))
     # upgrade-done answers the upgrade-target on the Node: it names the
     # target once the node has committed it (in the same patch as release),
     # and goes away with the target. A different target leaves it alone.
     if target is None or not str(target).strip():
         want[ANNOTATION_DONE] = None
     elif release and not state.get("hop") and same_target(target, release):
-        want[ANNOTATION_DONE] = release
+        # a release whose manifest sync is missing is not done
+        want[ANNOTATION_DONE] = None if state.get("syncPending") else release
     return want
 
 
@@ -3040,7 +3080,10 @@ def cmd_status(host, cfg, args):
         print("Upgrade:   none in progress (the last plan, to %s, is over)"
               % state.get("target"))
         committed = state.get("current")
-        if committed and is_version(version) and is_version(committed) \
+        pending = state.get("syncPending")
+        if pending:
+            print("Sync:      %s" % sync_pending_message(pending))
+        elif committed and is_version(version) and is_version(committed) \
                 and parse_version(version) != parse_version(committed):
             print("Rollback:  the last hop committed %s, the node runs %s (a "
                   "rollback by hand?); plan and run start from %s"
@@ -3086,6 +3129,9 @@ def cmd_plan(host, cfg, args, upgrader):
               % (cur, rel.version, hop_kind(cur, rel.version), rel.kubernetes,
                  rel.crio, rel.fedora))
         cur = rel.version
+    pending = (load_state(host) or {}).get("syncPending")
+    if pending:
+        print("Not yet:   %s" % sync_pending_message(pending))
     return 0
 
 
@@ -3094,6 +3140,7 @@ def cmd_run(host, cfg, args, upgrader):
     if _active(state):
         raise UpgradeError("an upgrade is already in progress (phase %s); use "
                            "`k4all-upgrade resume` or `clear-hold`" % state["phase"])
+    refuse_while_sync_pending(state)
     current, path = _plan(host, cfg, args, upgrader)
     if not path:
         host.log("%s is already the latest reachable release" % current)
@@ -3140,6 +3187,10 @@ def cmd_auto(host, cfg, args, upgrader):
             upgrader.drive(state)
         return 0
     if not in_window(host.now(), cfg["window"]):
+        return 0
+    if (state or {}).get("syncPending"):
+        host.log("auto: no new plan: %s"
+                 % sync_pending_message(state["syncPending"]))
         return 0
     current, path = _plan(host, cfg, args, upgrader)
     path = auto_allowed(path, current, cfg["autoAllow"])
@@ -3209,6 +3260,15 @@ def cmd_clear_hold(host, cfg, args, upgrader):
     state = load_state(host)
     if not state:
         return 0
+    if args.sync_done:
+        pending = state.pop("syncPending", None)
+        if pending:
+            host.log("the sync of %s is marked done by hand: the next plan "
+                     "starts from it" % pending["release"])
+            save_state(host, state)
+            upgrader.report(state)
+        if not args.abandon:
+            return 0
     if args.abandon:
         by_operator = operator_driven(state) and _active(state)
         target = (state.get("hop") or {}).get("to") or state.get("target")
@@ -3216,6 +3276,20 @@ def cmd_clear_hold(host, cfg, args, upgrader):
                                  "to": (state.get("hop") or {}).get("to"),
                                  "result": "abandoned",
                                  "at": host.now().isoformat(timespec="seconds")})
+        try:
+            booted = current_version(host)
+        except UpgradeError:
+            booted = None
+        try:
+            role = upgrader._role()
+        except UpgradeError:
+            role = None             # the sync would not have run either
+        pending = sync_left_behind(state, booted, role)
+        if pending:
+            state["syncPending"] = {
+                "release": pending,
+                "at": host.now().isoformat(timespec="seconds")}
+            host.log("WARNING: %s" % sync_pending_message(state["syncPending"]))
         if by_operator:
             # The operator retries by writing upgrade-target again; until
             # then the agent must not pick the abandoned target up.
@@ -3339,6 +3413,9 @@ def cmd_agent(host, cfg, args, upgrader):
     if raw is not None and str(raw).strip() and _agent_may_start(state):
         try:
             target = parse_target(raw)
+            # Not even upgrade-done for the release the node boots: the
+            # operator would take its hop as finished.
+            refuse_while_sync_pending(state)
             current = current_version(host)
             if parse_version(target) == parse_version(current):
                 done = target
@@ -3407,6 +3484,11 @@ def cmd_kube_vip_manifest(host, cfg, args, upgrader):
 
 def cmd_sync_manifest(host, cfg, args, upgrader):
     upgrader.sync_manifest()
+    state = load_state(host)
+    if state and state.pop("syncPending", None):
+        save_state(host, state)
+        host.log("the sync an abandoned hop left behind is done")
+        upgrader.report(state)
     return 0
 
 
@@ -3439,6 +3521,9 @@ def build_parser():
     p = sub.add_parser("clear-hold", help="clear a HOLD after fixing its cause")
     p.add_argument("--abandon", action="store_true",
                    help="forget the remaining hops")
+    p.add_argument("--sync-done", action="store_true",
+                   help="forget the manifest sync that a hop abandoned after "
+                   "its reboot left undone (once it was done otherwise)")
     sub.add_parser("sync-manifest",
                    help="apply this image's ReleaseManifest to the cluster")
     p = sub.add_parser("kube-vip-manifest",
