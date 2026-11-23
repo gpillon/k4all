@@ -177,10 +177,14 @@ releases:
     fedora: 45
     syncManifest: true
     notes: >-
-      k4all-operator v0.5.2: a component switched from Unmanaged to Managed
-      (a cluster restored from 1.x) follows its upgradePath from the version
-      it runs, read from its Helm release or, for KubeVirt and CDI, from
-      their CR, instead of jumping to the release's version; manifest steps
-      wait until the component runs them, and a component newer than the
-      release is not downgraded. Same components as v2.6.3. Kubernetes,
-      CRI-O and Fedora are unchanged.
+      Every node pins the kubelet's --node-ip to its own address before the
+      kubelet starts (k4all-node-ip.service at every boot, kubeadm init and
+      join): a node no longer registers the pod-network address of
+      cilium_host, or CRI-O's bridge, as its InternalIP once k4all moves its
+      IP to ovs-bridge. k4all-operator v0.5.2: a component switched from
+      Unmanaged to Managed (a cluster restored from 1.x) follows its
+      upgradePath from the version it runs, read from its Helm release or,
+      for KubeVirt and CDI, from their CR, instead of jumping to the
+      release's version; manifest steps wait until the component runs them,
+      and a component newer than the release is not downgraded. Same
+      components as v2.6.3. Kubernetes, CRI-O and Fedora are unchanged.
