@@ -145,6 +145,9 @@ class FakeHost(ku.Host):
         # first write: the CR was created by a client-side `kubectl apply`.
         self.rm_owners = None
         self.components_after_sync = "Installed"
+        # component -> reason: k4all-operator (v0.5.6 on) refuses its
+        # uninstall and keeps it Installed at an older version
+        self.refused = {}
         self.images = {}            # version -> {"kubernetes": ...}
         self.reboots = 0
         self.operator_replicas = 1
@@ -529,6 +532,11 @@ def _refresh_status(self):
                                           self.components_after_sync),
                "installedVersion": spec.get("version", "")}
         for name, spec in comps.items()}}
+    for name, reason in self.refused.items():
+        if name in comps:
+            self.release_manifest["status"]["components"][name] = {
+                "state": "Installed", "installedVersion": "v0.0.1",
+                "message": "uninstall refused: " + reason}
     op = self.release_manifest["status"]["components"].get("k4all-operator")
     if op is not None and op["state"] != "Unmanaged":
         # the operator is installed by step 1 whatever the other components

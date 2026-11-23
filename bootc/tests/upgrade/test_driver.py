@@ -1663,6 +1663,38 @@ def test_failed_component_after_sync_holds_without_rollback(make_host):
     assert host.clock - started >= datetime.timedelta(minutes=45)
 
 
+def test_a_refused_uninstall_does_not_hold_the_sync(make_host, capsys):
+    # k4all-operator v0.5.6 keeps a component Installed, at the version it
+    # runs, while its uninstall would break what runs on it: KubeVirt with
+    # virt off while VMs exist, kubevirt-manager Removed. It waits on the
+    # user, not on the hop: the hop goes on, and says why.
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    manifest = json.loads(json.dumps(NEW_MANIFEST))
+    comps = manifest["spec"]["components"]
+    comps["kubevirt"] = {"type": "manifest", "version": "v1.10.0", "featureGate": "virt"}
+    comps["kubevirt-manager"] = {"type": "manifest", "version": "v1.5.4",
+                                 "management": "Removed"}
+    host.write(ku.IMAGE_RELEASE_MANIFEST, yaml.safe_dump(manifest))
+    host.release_manifest = {"metadata": {"name": "k4all"}, "spec": {"components": {
+        "k4all-operator": dict(comps["k4all-operator"])}}}
+    vms = "1 VirtualMachine (default/vm1) exists: delete it or set %s Unmanaged first"
+    host.refused = {name: vms % name for name in ("kubevirt", "kubevirt-manager")}
+    host._refresh_status()
+
+    run_cli(host, "run", "--to", "v2.4.0", "--yes")
+    st = finish(host)
+
+    assert not st.get("hold") and st["phase"] == "DONE"
+    for name in ("kubevirt", "kubevirt-manager"):
+        refused = "%s: uninstall refused: %s" % (name, vms % name)
+        assert any(m.startswith("WARNING: ") and refused in m for m in host.logs)
+        assert refused in st["history"][-1]["warning"]
+    capsys.readouterr()
+    assert run_cli(host, "status") == 0
+    assert "kubevirt: uninstall refused: " + vms % "kubevirt" in capsys.readouterr().out
+
+
 # --- pure helpers -------------------------------------------------------------
 def test_operator_only_step_is_skipped_when_the_operator_does_not_change():
     cluster = {"spec": {"components": {"k4all-operator": {"version": "v0.2.0",
@@ -1691,6 +1723,21 @@ def test_components_settled(status, settled, failed):
           "status": status}
     got = ku.components_settled(cr)
     assert (got[0], got[1]) == (settled, failed)
+
+
+def test_a_refused_uninstall_is_settled():
+    # Installed at an older version than the release pins, or Installed
+    # though Removed: settled, the operator waits on the user.
+    refused = "uninstall refused: 1 VirtualMachine (default/vm1) exists"
+    cr = {"spec": {"components": {
+        "kubevirt": {"version": "v1.10.0"},
+        "kubevirt-manager": {"version": "v1.5.4", "management": "Removed"}}},
+        "status": {"components": {
+            "kubevirt": {"state": "Installed", "installedVersion": "v1.9.1",
+                         "message": refused},
+            "kubevirt-manager": {"state": "Installed", "installedVersion": "v1.5.4",
+                                 "message": refused}}}}
+    assert ku.components_settled(cr) == (True, [], [])
 
 
 def test_drop_flexvolume_handles_both_kubeadm_api_shapes():
