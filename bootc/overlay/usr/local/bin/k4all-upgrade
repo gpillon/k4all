@@ -380,12 +380,19 @@ def plan_path(releases, current, target=None):
                        if stream_of(r.version) == stream_of(cur_version)]
         crossing = [r for r in options
                     if stream_of(r.version) != stream_of(cur_version)]
+        # Finish the stream: a newer usable release of it that no hop
+        # reaches from here (its minFrom comes after a blocked patch, say)
+        # stops the plan instead of being left behind.
         newer_in_stream = [r for r in usable
                            if stream_of(r.version) == stream_of(cur_version)
-                           and r.key > cur_key and r.min_from_key <= cur_key]
+                           and r.key > cur_key]
         if crossing and newer_in_stream and not same_stream:
-            raise NoPathError("cannot leave %s before reaching the latest "
-                              "patch of its stream" % cur_version)
+            latest_patch = max(newer_in_stream, key=lambda r: r.key)
+            raise NoPathError("cannot leave %s before reaching %s, the "
+                              "latest patch of its stream, and no hop "
+                              "reaches it from %s (minFrom %s)"
+                              % (cur_version, latest_patch.version,
+                                 cur_version, latest_patch.min_from))
         if same_stream and crossing:
             nxt = max(same_stream, key=lambda r: r.key)
         else:

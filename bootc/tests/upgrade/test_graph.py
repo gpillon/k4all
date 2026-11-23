@@ -309,6 +309,69 @@ def test_stream_is_finished_before_crossing_a_minor():
     assert versions(ku.plan_path(releases, "v2.6.0")) == ["v2.6.1", "v2.7.0"]
 
 
+def stream_with_a_blocked_patch(exit_min_from="v2.5.4"):
+    """The review's case (#74): v2.5.4 is blocked, and v2.5.5, the latest
+    patch of 2.5, comes only from v2.5.4 (an exit patch, ADR-0010)."""
+    return graph([
+        release("v2.5.0", "minor", "v2.4.0", "1.35.10", "1.35", 45),
+        release("v2.5.3", "patch", "v2.5.0", "1.35.10", "1.35", 45),
+        release("v2.5.4", "patch", "v2.5.0", "1.35.10", "1.35", 45,
+                blocked=True),
+        release("v2.5.5", "patch", exit_min_from, "1.35.10", "1.35", 45),
+        release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+    ])
+
+
+def test_a_node_does_not_leave_its_stream_below_a_patch_it_cannot_reach():
+    releases = stream_with_a_blocked_patch()
+    assert ku.validate_graph(releases) == []
+    with pytest.raises(ku.NoPathError,
+                       match="cannot leave v2.5.3 before reaching v2.5.5"):
+        ku.plan_path(releases, "v2.5.3")
+    with pytest.raises(ku.NoPathError, match="v2.5.5"):
+        ku.check_single_hop(releases, "v2.5.3", "v2.6.0")
+    # inside the stream nothing changes: v2.5.3 is its own latest reachable
+    assert ku.plan_path(releases, "v2.5.3", "v2.5.3") == []
+    # a node that can reach the latest patch goes through it
+    assert versions(ku.plan_path(stream_with_a_blocked_patch("v2.5.3"),
+                                 "v2.5.3")) == ["v2.5.5", "v2.6.0"]
+
+
+def unreachable_patches(releases):
+    """Usable releases that no sequence of hops reaches from their stream's
+    X.Y.0 (listed or not) without a blocked release: a node of the stream
+    below one of them cannot finish the stream. The tools of v2.2.4 - v2.6.5
+    do not see it and leave the stream without it; later tools stop with
+    NoPathError. Every node of a stream is at X.Y.0 or later, and minFrom
+    is a lower bound, so what X.Y.0 reaches every later node reaches."""
+    found = []
+    for stream in sorted({ku.stream_of(r.version) for r in releases}):
+        start = ku.parse_version("v%d.%d.0" % stream)
+        members = [r for r in releases
+                   if not r.blocked and r.key > start
+                   and ku.stream_of(r.version) == stream]
+        reached = [start]
+        for rel in members:         # oldest first: hops only go up
+            if any(rel.min_from_key <= key < rel.key for key in reached):
+                reached.append(rel.key)
+            else:
+                found.append(rel.version)
+    return found
+
+
+def test_a_patch_no_hop_reaches_is_found():
+    # The tools of v2.2.4 - v2.6.5 leave the stream below v2.5.5 without a
+    # word: the graph must never give them the chance (#74).
+    assert unreachable_patches(stream_with_a_blocked_patch()) == ["v2.5.5"]
+    assert unreachable_patches(stream_with_a_blocked_patch("v2.5.3")) == []
+
+
+def test_repo_graph_reaches_every_patch_of_a_stream_from_its_minor():
+    with open(RELEASES_YAML, encoding="utf-8") as fh:
+        releases = ku.load_graph(yaml.safe_load(fh))
+    assert unreachable_patches(releases) == []
+
+
 def test_blocked_release_is_never_picked():
     releases = graph([
         release("v2.3.0", "minor", "v2.2.4", "1.35.10", "1.35", 43),
