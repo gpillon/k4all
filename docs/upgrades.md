@@ -56,6 +56,7 @@ The 2.x upgrade path:
 | v2.6.3 | patch: the installer's layout fits RAID controllers with a large optimal I/O size (a kept disk label reuses its BIOS boot partition), and the storage spoke shows when the layout could not be applied; same components as v2.6.2 |
 | v2.6.4 | patch with a ReleaseManifest sync: every node pins the kubelet's `--node-ip` to its own address (no pod-network InternalIP after ovs-bridge); k4all-operator v0.5.3: with the OVS bridge Cilium 1.20 names `ovs-bridge` in its devices (its agents start again at every boot), with KubeVirt VMs on the pod network reach ClusterIPs and DNS, with Multus secondary networks attach; it includes v0.5.2 (a component switched from Unmanaged to Managed follows its upgrade path from the version it runs); KubeVirt's operator and infra prefer control planes (the drain of a cluster's only control plane can end) |
 | v2.6.5 | patch with a ReleaseManifest sync: k4all-operator v0.5.4, whose KubeVirt emulation `auto` uses KVM on the nodes that have it (before, every cluster ran its VMs in software emulation); TopoLVM's `topolvm-node` waits for lvmd's socket instead of crash-looping on a new node; a first boot without network waits for it and keeps the DHCP domain; with firewalld on, each node opens the ports of the CNI it runs (`k4all-cni-firewalld`); new clusters accept 250 pods per node; `reinstall.sh --kubernetes` refuses on 2.x and a base reinstall no longer restores a local backup or re-applies the node's files over the cluster's |
+| v2.6.6 | patch with a ReleaseManifest sync: k4all-operator v0.5.7: turning Virtualization off is refused while VMs or their disks exist and otherwise lets KubeVirt and CDI uninstall themselves first (#94); KubeVirt/CDI feature gates kept on apply; a recreated TopoLVM StorageClass keeps its CDI StorageProfile (#80); no Failed status for a fresh KubeVirt/CDI (#81) or for a Helm release a stopped operator left pending; drains label their node and a budget that allows no disruption holds the hop (#86, #87); `k4all-upgrade` checks a saved plan before each hop (#73) |
 | v2.7.0 | unattended join: `kubeadm init` and `join` become declarative (Kubernetes unchanged) |
 | v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
 | v2.9.0 | Kubernetes 1.37 |
@@ -129,6 +130,21 @@ window:
 
 In every mode the node also follows the k4all-operator's requests.
 
+A plan of the timer or of `k4all-upgrade run` is saved, and its hops can wait:
+with `autoAllow: minor`, the rest of a plan waits for the next window. From
+v2.6.6, before a hop starts (also a hop that waited), the tool checks it on the
+graph it would plan with now: the published one, or offline the image's, which
+lists no later release and so changes nothing. When a release was blocked
+since, a new patch now ends the stream, or a `minFrom` was raised, the plan is
+made again from the committed release: toward the same target, or, for the
+timer, toward the latest release when that target is gone, within `autoAllow`.
+The log says `plan changed:` and why, and so does the plan's history
+(`k4all-upgrade status --json`). A plan of the timer with nothing left that it
+may run is dropped (`plan dropped:`). A plan of `run` whose target no path
+reaches any more goes to HOLD. A hop past its preflight is never planned again.
+The k4all-operator plans at every reconcile and the agent checks each hop it
+asks for.
+
 bootc ships its own `bootc-fetch-apply-updates.timer`, which runs
 `bootc upgrade --apply`. That command would reboot a node into a new
 Kubernetes minor without running kubeadm first, so k4all masks the timer.
@@ -142,7 +158,9 @@ Don't unmask it.
    minute: on control planes the tool waits up to 5 minutes
    (`apiserverReadyTimeoutMinutes` in `/etc/k4all-upgrade.yaml`) before it
    stops in HOLD with the failed `/readyz` checks. On multi-node clusters, the
-   order is respected (see below).
+   order is respected (see below). From v2.6.6, a node that drains itself
+   stops in HOLD when a PodDisruptionBudget would keep its drain from ever
+   ending (see [Drains that never end](#drains-that-never-end)).
 2. **Backup.** The tool runs `k4all-backup.sh` (etcd snapshot, PKI, configs)
    and copies the kubelet config to
    `/var/lib/k4all/upgrade/backup/<from>-<to>/`.
@@ -157,6 +175,11 @@ Don't unmask it.
 5. **Drain and reboot.** Control planes drain themselves; a bootstrap node
    alone in its cluster is not drained. A worker cannot drain itself: it
    waits until someone drains it (see [Multi-node clusters](#multi-node-clusters)).
+   From v2.6.6 a node being drained carries the label
+   `k4all.magesgate.com/draining=true` from its cordon to its uncordon: the
+   k4all-operator tolerates the cordon (a single node must still run it), and
+   prefers the nodes without that label, so a drain that evicts it does not
+   put it back on the node that reboots.
    Right before the reboot kubelet stops and every pod still on the node
    (DaemonSets, or all of them on a single node) gets 30 seconds to exit, so
    a pod with a long grace period cannot hold the shutdown.
@@ -166,7 +189,11 @@ Don't unmask it.
 7. **Sync.** Only for releases that update cluster components. The
    ReleaseManifest of the new image is applied to the cluster in two steps:
    the operator first, then everything else. A failure here stops in HOLD;
-   it never rolls the OS back.
+   it never rolls the OS back. A component whose uninstall the operator
+   refuses (from k4all-operator v0.5.7: KubeVirt with Virtualization off
+   while VMs exist, its status message starts with `uninstall refused:`)
+   does not hold the hop: it waits on you. The tool logs a WARNING, and
+   `k4all-upgrade status` shows it with the hop.
 8. **Commit.** The annotation is removed and the next hop starts.
 
 The state of the upgrade is in `/var/lib/k4all/upgrade/state.json`.
@@ -247,13 +274,15 @@ Every hop reboots the node, so every hop needs a drain. Control planes drain
 themselves with the admin kubeconfig and uncordon after the reboot. A worker
 (or a control plane without `admin.conf`) has `kubelet.conf`, which may not
 evict pods: its hop waits until the node is cordoned. Drain it from a
-control plane:
+control plane, with the label that keeps the k4all-operator off it:
 
 ```bash
+kubectl label node <node> k4all.magesgate.com/draining=true
 kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
 ```
 
-and the hop can start.
+and the hop can start. A worker cannot read the PodDisruptionBudgets: if the
+drain does not end, see [Drains that never end](#drains-that-never-end).
 
 A wrong order and a missing drain are not a HOLD: they pass by themselves.
 The hop does not start and nothing is downloaded; `k4all-upgrade status`
@@ -272,9 +301,73 @@ shows why (`Waiting:`), and so does the Node's `upgrade-message`.
 A bootstrap node without `admin.conf` cannot tell whether it is alone: it is
 not drained, with a warning in the log.
 
-The tool leaves your cordon alone, also after the reboot: run
-`kubectl uncordon <node>` once the node is back (the end of the hop reminds
-you).
+The tool leaves your cordon alone, also after the reboot: once the node is
+back, uncordon it and remove the label (the end of the hop reminds you):
+
+```bash
+kubectl uncordon <node>
+kubectl label node <node> k4all.magesgate.com/draining-
+```
+
+### Drains that never end
+
+A PodDisruptionBudget that allows no disruption (`disruptionsAllowed: 0`)
+although all its pods are healthy refuses every eviction of its pods, so the
+drain of their node never ends. The usual case is the primary of a
+single-instance CloudNativePG cluster: CNPG gives it the budget
+`<cluster>-primary` with `minAvailable: 1`, healthy at 1/1 and never
+disruptable. A Deployment of one replica with `minAvailable: 1` does the same.
+With more instances the primary budget is the same, but CNPG switches the
+primary over to a replica when its node is cordoned, and the drain ends.
+
+From v2.6.6 the drivers of a hop check this before they drain, and name each
+budget and pod. Pods of DaemonSets, terminating or not running pods, and
+budgets whose pods are on other nodes do not count; nor do budgets short of
+healthy pods (their pods are starting: the drain waits for them), nor a CNPG
+primary with a ready replica on another node.
+
+- `k4all-upgrade` on a node that drains itself stops in HOLD in the
+  preflight, before anything is downloaded:
+  `the drain of <node> would never end: PDB <namespace>/<name> allows no
+  disruption of pod <namespace>/<pod> ...`. Nothing was changed.
+- A [ClusterUpgrade](#operator-driven-upgrades-from-v240) does not cordon
+  the node, and its status message names the budget until it allows a
+  disruption.
+- A worker's `k4all-upgrade` cannot read the budgets; look for them before
+  its drain:
+  `kubectl get pdb -A` (a `0` under ALLOWED DISRUPTIONS) and
+  `kubectl get pods -A -o wide --field-selector spec.nodeName=<node>`.
+
+A single-node cluster is not drained, and is not checked.
+
+k4all does not change a database's safety settings: whether it may be down
+while its node reboots is your call. For a single-instance CloudNativePG
+cluster, either let CNPG drop its budget for the hop:
+
+```bash
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"enablePDB":false}}'
+# ... the hop ...
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"enablePDB":true}}'
+```
+
+or use its maintenance window, which with `reusePVC: true` keeps the
+instance on its volume (a TopoLVM volume is local: the pod waits for its
+node to come back):
+
+```bash
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"nodeMaintenanceWindow":{"inProgress":true,"reusePVC":true}}}'
+# ... the hop ...
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"nodeMaintenanceWindow":{"inProgress":false}}}'
+```
+
+The database is down until the node is back. To keep it up instead, give
+the cluster a replica on another node (`instances: 2`) before the hop. Then
+`sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume` on the node, or
+wait for the ClusterUpgrade to go on by itself.
 
 ### Two control planes
 
@@ -462,6 +555,7 @@ minute and after boot (from v2.2.4; until an operator writes
 |---|---|---|
 | `upgrade-target` | operator | release of the hop this node must run now |
 | `upgrade-cordoned` | operator | the operator cordoned the node; it uncordons it once the node is past the reboot (SYNC or COMMIT), or after the hop |
+| `draining` (a label, from v2.6.6) | operator, node | `true` from the cordon to the uncordon (or the end of the hop): the operator's own pod prefers the other nodes |
 | `release` | node | release the node runs: the last committed hop |
 | `node-type` | node | `bootstrap`, `control` or `worker` (from `/etc/node-type`) |
 | `upgrade-phase` | node | phase of the hop in progress (`PREFLIGHT` … `COMMIT`), `HOLD` or `ABANDONED`; absent when idle |
@@ -594,6 +688,52 @@ sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
   `maxPods: 250` to the `kubelet-config` ConfigMap, then on every node run
   `sudo kubeadm upgrade node phase kubelet-config` and
   `sudo systemctl restart kubelet`.
+- From v2.6.6 (k4all-operator v0.5.5 and later) an apply of KubeVirt or CDI
+  keeps the feature gates set on the cluster
+  (`spec.configuration.developerConfiguration.featureGates` of the KubeVirt
+  CR, `spec.config.featureGates` of the CDI CR): the operator applies the
+  cluster's gates plus the ones upstream's CR requires. Before, every apply
+  (an upgrade step, a new spec, a hop with a component change) replaced them
+  with upstream's list, empty for KubeVirt. After the first apply by v0.5.5
+  the operator owns the list (`managedFields`): a gate removed by hand stays
+  removed, unless upstream requires it (CDI's `HonorWaitForFirstConsumer`).
+  A gate lost to an apply of v0.5.4 or earlier does not come back: set it
+  again. Fields upstream's CR does not set, such as `permittedHostDevices`,
+  were never touched.
+- From v2.6.6 (k4all-operator v0.5.6), when the operator recreates the
+  `topolvm-provisioner` StorageClass for a new `volumeBindingMode` (a
+  `componentOverrides.topolvm`, or TopoLVM switched from Unmanaged to
+  Managed), it saves the spec of the class's CDI StorageProfile
+  (`cloneStrategy`, `claimPropertySets`, ...) in the ConfigMap
+  `topolvm-system/topolvm-storageprofile-saved` and puts it back on the
+  profile CDI creates for the new class. Recreations done by older
+  operators (the v2.4.0 hop, Immediate to WaitForFirstConsumer) are not
+  covered: note the profile's spec before that hop.
+- From v2.6.6 a fresh KubeVirt or CDI shows `Pending` ("reports no version
+  yet; waiting for it") while its operator starts, instead of `Failed` until
+  the next 5-minute reconcile.
+- From v2.6.6 (k4all-operator v0.5.7) a Helm release left `pending-install`,
+  `pending-upgrade` or `pending-rollback` by an operator that stopped in the
+  middle of the operation (on a fresh install k4all moves the operator pod
+  off CRI-O's bridge; an OOM kill or a node reboot does the same) is
+  recovered after a minute instead of failing its component for good with
+  "another operation (install/upgrade/rollback) is in progress": a first
+  install's stuck record is deleted and the install adopts what it created,
+  an upgrade is rolled back to the last deployed revision and done again.
+  Nothing is uninstalled.
+- From v2.6.6 (k4all-operator v0.5.7) turning Virtualization off
+  (`features.virt.enabled: false`) is refused while VMs, VMIs, DataVolumes or
+  PVCs made by CDI exist: KubeVirt, CDI and kubevirt-manager stay
+  `Installed`, with "uninstall refused: <reason>" in their status and in the
+  k4all addon. Without them, the operator deletes the KubeVirt and CDI CRs
+  first (both carry `uninstallStrategy: BlockUninstallIfWorkloadsExist`),
+  waits up to 15 minutes for their operators to remove their webhooks,
+  APIServices and CRDs, and only then deletes the operators. Up to v2.6.5
+  it deleted the operators first, from under running VMs; the webhooks and
+  APIServices left behind blocked VM changes, the eviction of VMs during a
+  drain and every namespace deletion, and the ReleaseManifest still said
+  Ready. A cluster already hit: see issue #94 for the recovery, which keeps
+  the VM disks.
 
 ## Ingress: Traefik (v2.4.0)
 

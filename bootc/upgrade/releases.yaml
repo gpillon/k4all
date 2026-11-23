@@ -241,3 +241,35 @@ releases:
       reinstall no longer re-applies the node's files over the cluster's
       ClusterConfig and ReleaseManifest (#68). Same components otherwise.
       Kubernetes, CRI-O and Fedora are unchanged.
+
+  - version: v2.6.6
+    kind: patch
+    minFrom: v2.6.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    # The sync brings k4all-operator v0.5.7.
+    syncManifest: true
+    notes: >-
+      k4all-operator v0.5.7 (through the manifest sync, includes v0.5.5 and
+      v0.5.6). Turning Virtualization off (features.virt) is refused while
+      VMs, VMIs, DataVolumes or CDI-made PVCs exist, and otherwise KubeVirt
+      and CDI uninstall themselves (their CRs, with uninstallStrategy
+      BlockUninstallIfWorkloadsExist) before the operator deletes their
+      operators; before, the operator deleted them from under running VMs
+      and left webhooks and APIServices that broke VM changes, drains and
+      every namespace deletion (#94). An apply of KubeVirt or CDI keeps the
+      feature gates set on the cluster. A recreated TopoLVM StorageClass
+      keeps its CDI StorageProfile settings (#80). A fresh KubeVirt or CDI
+      waits for its operator instead of showing Failed (#81). A Helm
+      release left pending by an operator that stopped mid-operation (on a
+      fresh install, an OOM or a reboot) is recovered instead of failing
+      its component for good. A drain labels its node
+      k4all.magesgate.com/draining so the operator avoids it (#86), and a
+      PodDisruptionBudget that allows no disruption of a pod on the node
+      (a single-instance CloudNativePG primary) holds the hop before STAGE,
+      or keeps ClusterUpgrade from cordoning the node, naming the budget
+      (#87). k4all-upgrade checks a saved plan on the current upgrade graph
+      before each hop (#73). A refused uninstall does not hold a hop.
+      k4all-backup.sh --help prints its usage (#82). Kubernetes, CRI-O,
+      Fedora and the other components are unchanged.

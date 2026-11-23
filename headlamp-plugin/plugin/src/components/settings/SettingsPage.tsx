@@ -66,7 +66,8 @@ function SettingsEditor({ data }: { data: K4allData }) {
   }, [cc?.metadata.resourceVersion]);
 
   const components = data.rm?.spec?.components ?? {};
-  const flow = useSaveFlow(state, dispatch, components);
+  const caps = capabilities(data.rm);
+  const flow = useSaveFlow(state, dispatch, components, caps);
 
   const params = new URLSearchParams(location.search);
   const tab = (TABS.find(t => t.id === params.get('tab'))?.id ?? 'features') as TabId;
@@ -85,12 +86,11 @@ function SettingsEditor({ data }: { data: K4allData }) {
   const nodeIPs = data.nodes
     .map(n => n.status?.addresses?.find(a => a.type === 'InternalIP')?.address)
     .filter((ip): ip is string => !!ip);
-  const caps = capabilities(data.rm);
   const ingress = activeIngress(data.rm?.spec?.components, base);
   const issues: Issue[] = validateSettings(draft, { nodeIPs, ingress });
   const blocking = hasErrors(issues);
   const dirty = isDirty(state);
-  const items = dirty ? describeChanges(base, draft, components) : [];
+  const items = dirty ? describeChanges(base, draft, components, caps) : [];
   const readOnly = !perms.checking && !perms.patchClusterConfig;
   const sectionProps = {
     draft,
@@ -173,7 +173,13 @@ function SettingsEditor({ data }: { data: K4allData }) {
         </Tabs>
       </Box>
 
-      {tab === 'features' && <FeaturesSection {...sectionProps} components={components} />}
+      {tab === 'features' && (
+        <FeaturesSection
+          {...sectionProps}
+          components={components}
+          statuses={data.rm?.status?.components}
+        />
+      )}
       {tab === 'ingress' && (
         <Stack spacing={2}>
           <IngressSection {...sectionProps} controller={ingress} />

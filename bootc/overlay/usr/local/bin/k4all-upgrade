@@ -67,6 +67,10 @@ ANNOTATION_PHASE = "k4all.magesgate.com/upgrade-phase"
 ANNOTATION_MESSAGE = "k4all.magesgate.com/upgrade-message"
 ANNOTATION_REASON = "k4all.magesgate.com/upgrade-reason"
 ANNOTATION_DONE = "k4all.magesgate.com/upgrade-done"
+# On a Node from its cordon to its uncordon, by whoever drains it (this tool,
+# the k4all-operator's ClusterUpgrade, or the admin): the operator's pod
+# tolerates the cordon, and prefers the nodes without this label.
+LABEL_DRAINING = "k4all.magesgate.com/draining"
 PHASE_HOLD = "HOLD"
 PHASE_ABANDONED = "ABANDONED"
 # upgrade-reason next to HOLD; without it the operator sees a HostHold.
@@ -524,19 +528,40 @@ def _plain(version):
     return str(version or "").strip().lstrip("v")
 
 
+# The start of the status message of a component that k4all-operator (v0.5.7
+# on) keeps installed though it should go (its feature off, management
+# Removed), because its uninstall would break what runs on it: KubeVirt while
+# VMs exist. The component stays Installed at the version it runs.
+UNINSTALL_REFUSED = "uninstall refused: "
+
+
+def uninstall_refusals(cr):
+    """[(component, reason)]: the uninstalls k4all-operator refuses."""
+    observed = (((cr or {}).get("status") or {}).get("components")) or {}
+    refused = []
+    for name, st in sorted(observed.items()):
+        message = (st or {}).get("message") or ""
+        if message.startswith(UNINSTALL_REFUSED):
+            refused.append((name, message[len(UNINSTALL_REFUSED):]))
+    return refused
+
+
 def components_settled(cr):
     """(settled, failed, waiting) for a ReleaseManifest after a sync.
 
     A component is settled when the operator reports it in a final state
-    and, for a pinned version, has installed exactly that version.
+    and, for a pinned version, has installed exactly that version. One
+    whose uninstall the operator refuses is settled too: it waits on the
+    user (delete what runs on it, or set it Unmanaged), not on the hop.
     """
     spec = ((cr or {}).get("spec") or {}).get("components") or {}
     status = (cr or {}).get("status") or {}
     observed = status.get("components") or {}
+    refused = {name for name, _ in uninstall_refusals(cr)}
     failed, waiting = [], []
     for name, comp in sorted(spec.items()):
         management = comp.get("management") or "Managed"
-        if management == "Unmanaged":
+        if management == "Unmanaged" or name in refused:
             continue
         st = observed.get(name) or {}
         state = st.get("state")
@@ -1013,6 +1038,142 @@ def readyz_problem(proc):
     return text if len(text) <= 300 else "..." + text[-297:]
 
 
+# A static pod's mirror: a drain leaves it alone.
+MIRROR_ANNOTATION = "kubernetes.io/config.mirror"
+# The labels of a CloudNativePG instance pod.
+CNPG_CLUSTER_LABEL = "cnpg.io/cluster"
+CNPG_ROLE_LABEL = "cnpg.io/instanceRole"
+DRAIN_DOCS = "docs/upgrades.md, Drains that never end"
+
+
+def selector_matches(selector, labels):
+    """Whether a LabelSelector selects ``labels``. As for a policy/v1
+    PodDisruptionBudget, an empty selector selects every pod and a missing
+    one none; an operator it does not know selects nothing."""
+    if selector is None:
+        return False
+    labels = labels or {}
+    for key, value in (selector.get("matchLabels") or {}).items():
+        if labels.get(key) != value:
+            return False
+    for expr in selector.get("matchExpressions") or []:
+        key, op = expr.get("key"), expr.get("operator")
+        values = expr.get("values") or []
+        if op == "In":
+            ok = key in labels and labels[key] in values
+        elif op == "NotIn":
+            ok = key not in labels or labels[key] not in values
+        elif op == "Exists":
+            ok = key in labels
+        elif op == "DoesNotExist":
+            ok = key not in labels
+        else:
+            return False
+        if not ok:
+            return False
+    return True
+
+
+def evicted_under_budget(pod):
+    """Whether a drain evicts ``pod`` and its PodDisruptionBudget decides:
+    a running pod, not a DaemonSet's, not a static pod's mirror, not
+    terminating. The eviction API lets pending and finished pods go
+    whatever their budget says."""
+    meta = pod.get("metadata") or {}
+    if meta.get("deletionTimestamp") \
+            or (pod.get("status") or {}).get("phase") != "Running" \
+            or MIRROR_ANNOTATION in (meta.get("annotations") or {}):
+        return False
+    return not any(o.get("kind") == "DaemonSet"
+                   for o in meta.get("ownerReferences") or [])
+
+
+def budget_never_allows(pdb):
+    """Whether a PodDisruptionBudget allows no disruption although every pod
+    it expects is healthy: waiting changes nothing (the primary of a
+    single-instance CloudNativePG cluster, minAvailable 1 of 1). A budget
+    short of healthy pods is not one: its pods are starting, and the drain
+    retries its evictions until its timeout. Nor is one the disruption
+    controller has not seen yet."""
+    meta, status = pdb.get("metadata") or {}, pdb.get("status") or {}
+    if int(status.get("observedGeneration") or 0) < int(meta.get("generation") or 0):
+        return False
+    return int(status.get("disruptionsAllowed") or 0) == 0 and \
+        int(status.get("currentHealthy") or 0) >= int(status.get("expectedPods") or 0)
+
+
+def pod_ready(pod):
+    return any(c.get("type") == "Ready" and c.get("status") == "True"
+               for c in (pod.get("status") or {}).get("conditions") or [])
+
+
+def cnpg_primary(pod):
+    """The CloudNativePG cluster whose primary ``pod`` is, else None."""
+    labels = (pod.get("metadata") or {}).get("labels") or {}
+    if labels.get(CNPG_ROLE_LABEL) == "primary":
+        return labels.get(CNPG_CLUSTER_LABEL)
+    return None
+
+
+def cnpg_switches_over(pod, replicas):
+    """Whether CloudNativePG moves the primary ``pod`` off its node by
+    itself: when that node is cordoned it switches over to a replica of the
+    cluster, here one ready on another node (CNPG docs, Kubernetes upgrade).
+    Its primary budget allows no disruption, and still the drain ends."""
+    cluster = cnpg_primary(pod)
+    if not cluster:
+        return False
+    meta = pod.get("metadata") or {}
+    for other in replicas:
+        other_meta = other.get("metadata") or {}
+        labels = other_meta.get("labels") or {}
+        if other_meta.get("namespace") == meta.get("namespace") \
+                and labels.get(CNPG_CLUSTER_LABEL) == cluster \
+                and labels.get(CNPG_ROLE_LABEL) == "replica" \
+                and (other.get("spec") or {}).get("nodeName") \
+                not in (None, (pod.get("spec") or {}).get("nodeName")) \
+                and not other_meta.get("deletionTimestamp") \
+                and (other.get("status") or {}).get("phase") == "Running" \
+                and pod_ready(other):
+            return True
+    return False
+
+
+def drain_blockers(pdbs, pods, replicas=()):
+    """[(budget, pod)], each namespace/name, sorted: the pods among ``pods``
+    (the ones of the node to drain) whose eviction a budget always refuses,
+    so the drain of that node would never end. ``replicas``: the
+    CloudNativePG replicas of the cluster, for cnpg_switches_over."""
+    blockers = []
+    for pdb in pdbs:
+        if not budget_never_allows(pdb):
+            continue
+        meta = pdb.get("metadata") or {}
+        namespace = meta.get("namespace")
+        selector = (pdb.get("spec") or {}).get("selector")
+        for pod in pods:
+            pod_meta = pod.get("metadata") or {}
+            if pod_meta.get("namespace") == namespace \
+                    and evicted_under_budget(pod) \
+                    and selector_matches(selector, pod_meta.get("labels")) \
+                    and not cnpg_switches_over(pod, replicas):
+                blockers.append(("%s/%s" % (namespace, meta.get("name")),
+                                 "%s/%s" % (namespace, pod_meta.get("name"))))
+    return sorted(blockers)
+
+
+def drain_blocked_message(node, blockers):
+    """The HOLD of a hop whose drain would never end."""
+    named = ["PDB %s allows no disruption of pod %s" % b for b in blockers[:3]]
+    if len(blockers) > 3:
+        named.append("and %d more" % (len(blockers) - 3))
+    return ("the drain of %s would never end: %s, and all its pods are "
+            "healthy, so waiting does not help. Nothing was changed. For a "
+            "single-instance CloudNativePG cluster, allow its disruption for "
+            "the hop (enablePDB: false or nodeMaintenanceWindow; see %s), or "
+            "move the pod to another node" % (node, "; ".join(named), DRAIN_DOCS))
+
+
 def cluster_kubernetes_version(host, kubeconfig):
     cm = kubectl_json(host, kubeconfig,
                       ["-n", "kube-system", "get", "configmap", "kubeadm-config"])
@@ -1206,6 +1367,48 @@ def check_single_hop(releases, current, target):
                           % (current, target, " -> ".join(
                               [current] + [r.version for r in path])))
     return path[0]
+
+
+def next_release(state):
+    """The release of the open plan's next hop: the hop that waits, else
+    the first pending one."""
+    return (state.get("hop") or {}).get("to") or state["pending"][0]["version"]
+
+
+def stale_hop(releases, state):
+    """Why the next hop of the open plan in ``state`` is no longer one
+    legal hop on the upgrade graph ``releases``; None while it is. A
+    release the graph does not list is not judged: offline the graph is
+    the image's, which ends at the release the image was built from."""
+    current, nxt = state["current"], next_release(state)
+    listed = [r for r in releases if r.key == parse_version(nxt)]
+    if not listed:
+        return None
+    if listed[0].blocked:
+        return "%s is blocked" % nxt
+    try:
+        check_single_hop(releases, current, nxt)
+    except NoPathError as exc:
+        return str(exc)
+    return None
+
+
+def replan(releases, state, allow):
+    """The hops from the committed release of ``state`` toward its target
+    on the upgrade graph ``releases``. A plan of the timer goes toward the
+    latest release when its target cannot be reached any more, and keeps
+    the hops ``allow`` lets it run. NoPathError when no path is left."""
+    errors = validate_graph(releases)
+    if errors:
+        raise NoPathError("the upgrade graph is invalid: %s" % "; ".join(errors))
+    current = state["current"]
+    if state.get("mode") != "auto":
+        return plan_path(releases, current, state.get("target"))
+    try:
+        path = plan_path(releases, current, state.get("target"))
+    except NoPathError:
+        path = plan_path(releases, current)
+    return auto_allowed(path, current, allow)
 
 
 # =========================================================================
@@ -1410,11 +1613,63 @@ class Upgrader:
         state = ("cannot read Node %s (%s)" % (name, why)) if node is None \
             else "Node %s is not cordoned" % name
         return ("this node needs a drain before the reboot, and its kubelet.conf "
-                "may not evict pods; %s. From a control plane run `kubectl drain "
-                "%s --ignore-daemonsets --delete-emptydir-data`, then %s. The "
-                "node stays cordoned after the hop: `kubectl uncordon %s` once it "
-                "is back. From v2.4.0 a ClusterUpgrade drains and uncordons the "
-                "nodes instead." % (state, name, then, name))
+                "may not evict pods; %s. From a control plane run `kubectl label "
+                "node %s %s=true` (the k4all-operator then avoids the node) and "
+                "`kubectl drain %s --ignore-daemonsets --delete-emptydir-data`, "
+                "then %s. The node stays cordoned after the hop: `kubectl "
+                "uncordon %s` and `kubectl label node %s %s-` once it is back. "
+                "From v2.4.0 a ClusterUpgrade drains and uncordons the nodes "
+                "instead." % (state, name, LABEL_DRAINING, name, then, name,
+                              name, LABEL_DRAINING))
+
+    def _label_draining(self, kc, on):
+        """Set (on) or remove the draining label of this Node, with the
+        cordon and the uncordon. Best effort: it only steers where the
+        k4all-operator's pod is scheduled."""
+        arg = LABEL_DRAINING + ("=true" if on else "-")
+        got = kubectl(self.host, kc, ["label", "node", self._node_name(), arg,
+                                      "--overwrite", KUBECTL_TIMEOUT], check=False)
+        if got.returncode != 0:
+            self.host.log("cannot %s the label %s on Node %s: %s"
+                          % ("set" if on else "remove", LABEL_DRAINING,
+                             self._node_name(),
+                             (got.stderr or got.stdout or "").strip()[-300:]))
+
+    def _drain_blockers(self, kc):
+        """drain_blockers() of this node; [] when the budgets or the pods
+        cannot be read (logged): the drain still has its timeout."""
+        name = self._node_name()
+        try:
+            got = kubectl(self.host, kc, ["get", "poddisruptionbudgets", "-A",
+                                          "-o", "json", KUBECTL_TIMEOUT],
+                          check=False)
+            if got.returncode != 0:
+                raise ValueError((got.stderr or got.stdout or "").strip()[-300:])
+            pdbs = [p for p in json.loads(got.stdout).get("items") or []
+                    if budget_never_allows(p)]
+            if not pdbs:
+                return []
+            got = kubectl(self.host, kc, ["get", "pods", "-A", "--field-selector",
+                                          "spec.nodeName=" + name, "-o", "json",
+                                          KUBECTL_TIMEOUT], check=False)
+            if got.returncode != 0:
+                raise ValueError((got.stderr or got.stdout or "").strip()[-300:])
+            pods = json.loads(got.stdout).get("items") or []
+            replicas = []
+            if any(cnpg_primary(p) for p in pods):
+                got = kubectl(self.host, kc, ["get", "pods", "-A", "-l",
+                                              CNPG_ROLE_LABEL + "=replica",
+                                              "-o", "json", KUBECTL_TIMEOUT],
+                              check=False)
+                if got.returncode != 0:
+                    raise ValueError((got.stderr or got.stdout or "").strip()[-300:])
+                replicas = json.loads(got.stdout).get("items") or []
+            return drain_blockers(pdbs, pods, replicas)
+        except ValueError as exc:
+            self.host.log("WARNING: cannot check the PodDisruptionBudgets of the "
+                          "pods on %s (%s): the drain may wait for one until "
+                          "its timeout" % (name, exc))
+            return []
 
     def annotate(self, value):
         """Set (value) or remove (None) the pause annotation on this Node."""
@@ -1574,6 +1829,16 @@ class Upgrader:
             problem = self._cordon_problem("the hop can start")
             if problem:
                 raise NotYet(problem)
+        # A drain this node runs itself would never end on a pod whose
+        # budget allows no disruption: stop before anything is downloaded,
+        # and name it. Changing that budget is the admin's call. A hop the
+        # operator asked for was checked before its cordon.
+        if not operator_driven(state) and kc == ADMIN_KUBECONFIG \
+                and not self._single_node():
+            blockers = self._drain_blockers(kc)
+            if blockers:
+                raise UpgradeError(drain_blocked_message(self._node_name(),
+                                                         blockers))
 
     def _cluster_not_ready(self, kc, check_nodes=True):
         """(problem, nodes): what keeps the control plane from being ready
@@ -1841,6 +2106,9 @@ class Upgrader:
             hop["cordonedOutside"] = True
             return
         minutes = int(self.cfg["drainTimeoutMinutes"])
+        # Labelled with the cordon: the k4all-operator's pod, if this drain
+        # evicts it, does not come back on this node to die with its reboot.
+        self._label_draining(kc, True)
         kubectl(host, kc, ["drain", self._node_name(), "--ignore-daemonsets",
                            "--delete-emptydir-data", "--timeout=%dm" % minutes])
         hop["drained"] = True
@@ -2310,13 +2578,20 @@ class Upgrader:
         kc = self._kubeconfig()
         if hop.get("drained") and kc:
             kubectl(host, kc, ["uncordon", self._node_name()])
+            self._label_draining(kc, False)
             hop["drained"] = False
         self.resume_operator_or_fail(hop)
         if hop.get("syncManifest") and self._role() == "bootstrap":
             before = self._cilium_config(kc)
             before_rm = self._release_manifest(kc)
-            self.sync_manifest(state)
+            refused = self.sync_manifest(state) or []
             self._cilium_after_sync(before, before_rm)
+            # Shown in upgrade-message during the hop, kept in the history
+            # and by `status` after it: the hop must not hide them.
+            warnings = [w for w in (hop.get("warning") or "").split("; ") if w]
+            warnings += [w for w in refused if w not in warnings]
+            if warnings:
+                hop["warning"] = "; ".join(warnings)
 
     # --- COMMIT ----------------------------------------------------------
     def commit(self, state):
@@ -2336,8 +2611,10 @@ class Upgrader:
         if hop.get("cordonedOutside"):
             # Whoever drained the node uncordons it, maybe after more hops.
             host.log("Node %s is still cordoned: once it is back, run "
-                     "`kubectl uncordon %s` from a control plane"
-                     % (self._node_name(), self._node_name()))
+                     "`kubectl uncordon %s` and `kubectl label node %s %s-` "
+                     "from a control plane"
+                     % (self._node_name(), self._node_name(), self._node_name(),
+                        LABEL_DRAINING))
 
     # --- rollback --------------------------------------------------------
     def rollback(self, state, reason):
@@ -2488,7 +2765,8 @@ class Upgrader:
         pins, also when step 1 changed nothing: a SYNC resumed after a HOLD
         in step 1, or `k4all-upgrade sync-manifest`, finds the operator
         already changed in the cluster but maybe not running yet.
-        ``state`` is not used any more; it stays for the callers.
+        ``state`` is not used any more; it stays for the callers. Returns
+        the uninstalls the operator refuses (``_wait_components``).
         """
         host = self.host
         kc = self._kubeconfig()
@@ -2537,7 +2815,7 @@ class Upgrader:
             self._wait_operator(kc, want)
         host.log("ReleaseManifest sync 2/2: components")
         self._apply(kc, merged)
-        self._wait_components(kc)
+        return self._wait_components(kc)
 
     def _hand_over_kube_vip(self, kc, cluster):
         """kube-vip's static-pod manifest belongs to the host: set the
@@ -2646,6 +2924,8 @@ class Upgrader:
         return True
 
     def _wait_components(self, kc):
+        """Wait until the components settle; the uninstalls the operator
+        refuses, as "<component>: uninstall refused: <reason>"."""
         host, deadline = self.host, self._deadline()
         while True:
             cr = kubectl_json(host, kc, ["get", "releasemanifest",
@@ -2653,7 +2933,11 @@ class Upgrader:
             settled, failed, waiting = components_settled(cr)
             if settled:
                 host.log("components reconciled")
-                return
+                refused = ["%s: %s%s" % (name, UNINSTALL_REFUSED, reason)
+                           for name, reason in uninstall_refusals(cr)]
+                for line in refused:
+                    host.log("WARNING: %s" % line)
+                return refused
             # Failed components are retried by the operator; give up only at
             # the deadline.
             if host.now() >= deadline and failed:
@@ -2676,8 +2960,9 @@ class Upgrader:
         "SYNC": ("sync", "COMMIT"),
     }
 
-    def drive(self, state):
-        """Run phases until the plan is done, the node reboots, or a HOLD."""
+    def drive(self, state, checked=False):
+        """Run phases until the plan is done, the node reboots, or a HOLD.
+        ``checked``: the plan was just made on the current upgrade graph."""
         host = self.host
         while True:
             if state.get("hold"):
@@ -2694,12 +2979,21 @@ class Upgrader:
                 if state["mode"] == "auto" and not self._auto_may_continue(state):
                     self._save(state)
                     return state
+                if not checked:
+                    checked = True
+                    if self.check_plan(state):
+                        continue
                 start_next_hop(state)
                 self._save(state)
                 host.log("hop %s -> %s (%s)" % (state["hop"]["from"],
                                                  state["hop"]["to"],
                                                  state["hop"]["kind"]))
                 continue
+            if phase == "PREFLIGHT" and not checked:
+                # a hop that waited (NotYet) or was on hold has not started
+                checked = True
+                if self.check_plan(state):
+                    continue
             try:
                 if phase == "ROLLBACK_REBOOT":
                     self.hold(state, "rolled back to %s after a failed reboot: "
@@ -2755,6 +3049,54 @@ class Upgrader:
         if not in_window(self.host.now(), self.cfg["window"]):
             self.host.log("outside the maintenance window")
             return False
+        return True
+
+    def check_plan(self, state):
+        """Before a hop starts. A plan of the timer or of `run` may be days
+        old (with autoAllow minor a hop waits for the next window): its next
+        hop is checked on the graph the node would plan with now, and the
+        plan is made again when that hop is no longer legal (a release
+        blocked since, a patch that now ends the stream, a minFrom raised).
+        A plan of `run` keeps its target and goes to HOLD when no path
+        leads there any more; a plan of the timer is dropped when nothing
+        is left that it may run. The k4all-operator plans again at every
+        reconcile and the agent checks each hop: its plans are left alone.
+        True when the plan changed."""
+        if operator_driven(state):
+            return False
+        releases = self.graph_loader()
+        why = stale_hop(releases, state)
+        if why is None:
+            return False
+        host, current, nxt = self.host, state["current"], next_release(state)
+        try:
+            path = replan(releases, state, self.cfg["autoAllow"])
+        except NoPathError as exc:
+            if state["mode"] != "auto":
+                self.hold(state, "%s, and no path leads to %s any more (%s): "
+                          "abandon the plan with `k4all-upgrade clear-hold "
+                          "--abandon`" % (why, state.get("target"), exc))
+                return True
+            path, why = [], "%s; no path left: %s" % (why, exc)
+        else:
+            if not path:
+                why += ("; no hop is left that the timer may run (autoAllow "
+                        "%s)" % self.cfg["autoAllow"])
+        new = [r.version for r in path]
+        state["history"].append({
+            "from": current, "to": nxt,
+            "result": "replanned" if path else "dropped", "reason": why,
+            "plan": new, "at": host.now().isoformat(timespec="seconds")})
+        state.update({"hop": None, "pending": [r.to_dict() for r in path],
+                      "phase": "IDLE" if path else "DONE"})
+        state.pop("waiting", None)
+        if path:
+            state["target"] = new[-1]
+            host.log("plan changed: %s; new plan: %s"
+                     % (why, " -> ".join([current] + new)))
+        else:
+            host.log("plan dropped: %s" % why)
+        self._save(state)
         return True
 
 
@@ -3040,6 +3382,9 @@ def cmd_status(host, cfg, args):
                   % (committed, version, version))
         if state.get("abandoned"):
             print("Abandoned: %s" % abandoned_message(state["abandoned"]))
+        last = (state.get("history") or [{}])[-1]
+        if last.get("warning"):
+            print("Warning:   %s (hop to %s)" % (last["warning"], last.get("to")))
         return 0
     print("Upgrade:   target %s, phase %s%s"
           % (state.get("target"), state.get("phase"),
@@ -3049,6 +3394,8 @@ def cmd_status(host, cfg, args):
                                            state["hop"]["kind"]))
     if state.get("pending"):
         print("Then:      %s" % " -> ".join(r["version"] for r in state["pending"]))
+    if (state.get("hop") or {}).get("warning"):
+        print("Warning:   %s" % state["hop"]["warning"])
     if state.get("hold"):
         print("HOLD:      %s" % state["hold"]["reason"])
     elif state.get("waiting"):
@@ -3102,7 +3449,7 @@ def cmd_run(host, cfg, args, upgrader):
     previous = state
     state = new_state(args.to, "run", path, current, cfg["image"], previous)
     save_state(host, state)
-    upgrader.drive(state)
+    upgrader.drive(state, checked=True)
     if state.get("waiting") and state.get("phase") == "PREFLIGHT":
         # Nothing has started: leave no plan behind, the previous state
         # stays as it was.
@@ -3140,7 +3487,7 @@ def cmd_auto(host, cfg, args, upgrader):
         return 0
     state = new_state(None, "auto", path, current, cfg["image"], state)
     save_state(host, state)
-    upgrader.drive(state)
+    upgrader.drive(state, checked=True)
     return 0
 
 
