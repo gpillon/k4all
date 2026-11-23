@@ -1,5 +1,7 @@
 import { Icon } from '@iconify/react';
 import {
+  Alert,
+  AlertTitle,
   alpha,
   Box,
   Card,
@@ -16,12 +18,13 @@ import {
   useTheme,
 } from '@mui/material';
 import React from 'react';
-import { componentActivation } from '../../model/components';
+import { featureOffConsequence } from '../../model/changes';
+import { componentActivation, uninstallRefusal } from '../../model/components';
 import { applyModeOf, FIELDS } from '../../model/fields';
 import { setIn } from '../../model/objects';
 import { emulationMode } from '../../model/settings';
-import { ComponentSpec } from '../../model/types';
-import { ApplyBadge, CapabilityChip, TonePill } from '../common/ui';
+import { ComponentSpec, ComponentStatus } from '../../model/types';
+import { ApplyBadge, CapabilityChip, Mono, TonePill } from '../common/ui';
 import { isChanged, SectionProps } from './common';
 
 type FeatureKey = 'virt' | 'argocd' | 'ovsCni';
@@ -65,9 +68,14 @@ function componentsFor(feature: FeatureKey, components: Record<string, Component
     .sort();
 }
 
-function FeatureCard(
-  props: SectionProps & { def: FeatureDef; components: Record<string, ComponentSpec> }
-) {
+interface FeatureCardProps extends SectionProps {
+  def: FeatureDef;
+  components: Record<string, ComponentSpec>;
+  /** The ReleaseManifest status of each component. */
+  statuses?: Record<string, ComponentStatus>;
+}
+
+function FeatureCard(props: FeatureCardProps) {
   const theme = useTheme();
   const { def, draft, base, update, disabled } = props;
   const path = ['features', def.key, 'enabled'];
@@ -78,10 +86,16 @@ function FeatureCard(
   const ready = props.status?.features?.[def.readyKey];
   const names = componentsFor(def.key, props.components);
   const id = `k4all-feature-${def.key}`;
+  // Components k4all-operator keeps installed though the feature is off.
+  const refusals = names
+    .map(name => ({ name, reason: uninstallRefusal(props.statuses?.[name]) }))
+    .filter((r): r is { name: string; reason: string } => !!r.reason);
 
   let status: React.ReactNode;
   if (enabled !== wasEnabled) {
     status = <TonePill tone="info" label={enabled ? 'Will be installed' : 'Will be removed'} />;
+  } else if (!enabled && refusals.length > 0) {
+    status = <TonePill tone="warning" label="Removal refused" />;
   } else if (!enabled) {
     status = <TonePill tone="neutral" label="Off" />;
   } else {
@@ -139,6 +153,27 @@ function FeatureCard(
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
           {def.help}
         </Typography>
+        {def.key === 'virt' && wasEnabled && !enabled && (
+          <Alert severity={props.caps.virtUninstallGuard ? 'warning' : 'error'} sx={{ mt: 1.5 }}>
+            {featureOffConsequence(
+              def.key,
+              names.length ? names.join(', ') : 'its components',
+              props.caps
+            )}
+          </Alert>
+        )}
+        {refusals.length > 0 && (
+          <Alert severity="warning" sx={{ mt: 1.5 }}>
+            <AlertTitle>k4all-operator keeps these installed</AlertTitle>
+            <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2 }}>
+              {refusals.map(r => (
+                <li key={r.name}>
+                  <Mono>{r.name}</Mono>: <span>{r.reason}</span>
+                </li>
+              ))}
+            </Stack>
+          </Alert>
+        )}
         {names.length > 0 && (
           <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
             {names.map(n => (
@@ -234,7 +269,10 @@ function OvsBridgeCard(props: SectionProps) {
 }
 
 export function FeaturesSection(
-  props: SectionProps & { components: Record<string, ComponentSpec> }
+  props: SectionProps & {
+    components: Record<string, ComponentSpec>;
+    statuses?: Record<string, ComponentStatus>;
+  }
 ) {
   return (
     <Grid container spacing={2}>

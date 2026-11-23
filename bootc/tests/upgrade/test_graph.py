@@ -175,23 +175,27 @@ def in_ci():
     return os.environ.get("CI", "").lower() not in ("", "0", "false", "no")
 
 
-def shipped_tool(tag, tmp_path):
-    """k4all-upgrade as release ``tag`` ships it, from git.
+def missing_tag(tag):
+    """Skip the test, or fail it in CI: a checkout without tags
+    (actions/checkout fetches none by default) would otherwise drop the
+    checks against published releases without a word."""
+    message = "tag %s is not in this checkout" % tag
+    if in_ci():
+        pytest.fail(message + ": in CI the checkout needs the tags "
+                    "(actions/checkout with fetch-depth: 0)")
+    pytest.skip(message)
 
-    Without the tag the test is skipped, except in CI, where it fails: a
-    checkout without tags (actions/checkout fetches none by default) would
-    otherwise drop the check against the published tools without a word."""
+
+def shipped_tool(tag, tmp_path):
+    """k4all-upgrade as release ``tag`` ships it, from git (missing_tag
+    without the tag)."""
     try:
         text = subprocess.run(
             ["git", "-C", REPO, "show",
              "%s:bootc/overlay/usr/local/bin/k4all-upgrade" % tag],
             capture_output=True, text=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError):
-        message = "tag %s is not in this checkout" % tag
-        if in_ci():
-            pytest.fail(message + ": in CI the checkout needs the tags "
-                        "(actions/checkout with fetch-depth: 0)")
-        pytest.skip(message)
+        missing_tag(tag)
     path = tmp_path / ("k4all-upgrade-" + tag)
     path.write_text(text)
     name = "k4all_upgrade_" + tag.replace(".", "_")
@@ -385,3 +389,298 @@ def test_default_config_file_matches_the_built_in_defaults():
     assert cfg["mode"] == "auto"
     assert cfg["autoAllow"] == "patch"
     assert cfg["window"] == WINDOW
+
+
+# --- pinned versions never go down (ADR-0010) ----------------------------------
+def components(**versions):
+    """spec.components of a release manifest: name=version, every one
+    Managed. Underscores stand for dashes (k4all_operator)."""
+    return {name.replace("_", "-"): {"version": version}
+            for name, version in versions.items()}
+
+
+def hops_allowed(releases):
+    """{release: releases one hop can reach}: every hop the versioning rules
+    allow (minFrom, no minor skipped, nothing blocked), whatever the target.
+    plan_path picks among these; a plan saved before a release was published
+    may take one it would not pick today."""
+    minors = [r for r in releases if r.kind == "minor"]
+    return {p.version: [r for r in releases
+                        if not r.blocked and r.min_from_key <= p.key < r.key
+                        and not any(p.key < m.key < r.key for m in minors)]
+            for p in releases}
+
+
+def reachable(releases):
+    """{release: every release some sequence of hops reaches from it}."""
+    hops = hops_allowed(releases)
+    reach = {}
+    for rel in reversed(releases):      # newest first: hops only go up
+        reach[rel.version] = set()
+        for nxt in hops[rel.version]:
+            reach[rel.version] |= {nxt.version} | reach[nxt.version]
+    return reach
+
+
+def pin_decreases(releases, manifests):
+    """(from, sync, component, pinned, synced) for every component version
+    of release ``from``'s manifest that a later manifest sync, at release
+    ``sync``, would move down. ``manifests`` maps each release to the
+    spec.components of its release manifest."""
+    reach = reachable(releases)
+    by_version = {r.version: r for r in releases}
+    found = []
+    for start in releases:
+        for sync in sorted(reach[start.version], key=ku.parse_version):
+            if not by_version[sync].sync_manifest:
+                continue
+            for name, spec in manifests[start.version].items():
+                new = manifests[sync].get(name)
+                if new is None or "Removed" in (spec.get("management"),
+                                                new.get("management")):
+                    continue
+                old_v, new_v = spec.get("version"), new.get("version")
+                old_key, new_key = pin_key(old_v), pin_key(new_v)
+                if old_key is None:
+                    continue        # a floating pin: nothing to go below
+                if new_key is None or new_key < old_key:
+                    found.append((start.version, sync, name, old_v, new_v))
+    return found
+
+
+RELEASE_MANIFEST_PATH = "bootc/overlay/usr/local/share/k4all-release.yaml"
+RELEASE_MANIFEST = os.path.join(REPO, RELEASE_MANIFEST_PATH)
+
+
+def release_manifests(releases):
+    """{release: spec.components of its release manifest}, from its tag.
+
+    The newest release of the graph may have no tag yet (the release being
+    prepared): it gets the working tree's manifest. Any other release must
+    be tagged before the graph lists it (missing_tag)."""
+    newest = releases[-1].version
+    out = {}
+    for rel in releases:
+        proc = subprocess.run(
+            ["git", "-C", REPO, "show",
+             "%s:%s" % (rel.version, RELEASE_MANIFEST_PATH)],
+            capture_output=True, text=True, check=False)
+        if proc.returncode == 0:
+            text = proc.stdout
+        elif rel.version == newest:
+            with open(RELEASE_MANIFEST, encoding="utf-8") as fh:
+                text = fh.read()
+        else:
+            missing_tag(rel.version)
+        out[rel.version] = (yaml.safe_load(text).get("spec") or {}).get(
+            "components") or {}
+    return out
+
+
+def pin_key(version):
+    """A sortable key for a component's pinned version, or None when the pin
+    is not a semver version (latest, master, empty). Semver precedence: the
+    leading v is optional, a prerelease sorts before its release, build
+    metadata does not count."""
+    text = str(version or "").split("+", 1)[0]
+    return ku.parse_version(text) if ku.is_version(text) else None
+
+
+def test_a_stream_patched_after_the_next_minor_is_caught():
+    # The review's scenario B: v2.5.7, cut from a maintenance branch after
+    # v2.6.0, pins operator v0.5.4. A node on it goes to v2.6.0 (no sync),
+    # then, with --to v2.6.1, to a sync of operator v0.5.1.
+    releases = graph([
+        release("v2.5.0", "minor", "v2.4.0", "1.35.10", "1.35", 45),
+        release("v2.5.6", "patch", "v2.5.0", "1.35.10", "1.35", 45),
+        release("v2.5.7", "patch", "v2.5.0", "1.35.10", "1.35", 45,
+                syncManifest=True),
+        release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+        release("v2.6.1", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+                syncManifest=True),
+        release("v2.6.4", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+                syncManifest=True),
+    ])
+    manifests = {
+        "v2.5.0": components(k4all_operator="v0.5.0", cilium="1.20.4"),
+        "v2.5.6": components(k4all_operator="v0.5.0", cilium="1.20.4"),
+        "v2.5.7": components(k4all_operator="v0.5.4", cilium="1.20.4"),
+        "v2.6.0": components(k4all_operator="v0.5.0", cilium="1.20.4"),
+        "v2.6.1": components(k4all_operator="v0.5.1", cilium="1.20.4"),
+        "v2.6.4": components(k4all_operator="v0.5.4", cilium="1.20.4"),
+    }
+    # the default path from v2.5.7 is v2.6.0, v2.6.4: v2.6.1 only by target
+    assert versions(ku.plan_path(releases, "v2.5.7")) == ["v2.6.0", "v2.6.4"]
+    assert pin_decreases(releases, manifests) == [
+        ("v2.5.7", "v2.6.1", "k4all-operator", "v0.5.4", "v0.5.1")]
+
+
+def first_sync(before, after):
+    """v2.3.0, then v2.4.0 with the first manifest sync."""
+    releases = graph([
+        release("v2.3.0", "minor", "v2.2.4", "1.35.10", "1.35", 43),
+        release("v2.4.0", "minor", "v2.3.0", "1.35.10", "1.35", 43,
+                syncManifest=True),
+    ])
+    return releases, {"v2.3.0": before, "v2.4.0": after}
+
+
+def test_a_floating_pin_before_the_first_sync_is_not_a_decrease():
+    # v2.2.4 and v2.3.0 say latest, master or nothing for some components
+    releases, manifests = first_sync(
+        components(kube_vip="latest", multus_cni="master", argocd=""),
+        components(kube_vip="v1.3.1", multus_cni="v4.3.2", argocd="10.18.0"))
+    assert pin_decreases(releases, manifests) == []
+
+
+def test_a_sync_that_floats_a_pinned_component_is_reported():
+    # nothing proves that "latest" is not older than v1.3.1
+    releases, manifests = first_sync(components(kube_vip="v1.3.1"),
+                                     components(kube_vip="latest"))
+    assert pin_decreases(releases, manifests) == [
+        ("v2.3.0", "v2.4.0", "kube-vip", "v1.3.1", "latest")]
+
+
+@pytest.mark.parametrize("before,after,down", [
+    ("v1.9.1", "v1.10.0", False),       # numbers, not text
+    ("1.20.4", "v1.20.4", False),       # the v is optional
+    ("v0.6.0-rc.1", "v0.6.0", False),   # a prerelease is older
+    ("v0.6.0", "v0.6.0-rc.1", True),
+    ("v1.3.1+k4all.2", "v1.3.1", False),  # build metadata does not count
+    ("42.4.0", "41.9.9", True),
+])
+def test_versions_compare_as_semver(before, after, down):
+    releases, manifests = first_sync(components(traefik=before),
+                                     components(traefik=after))
+    assert bool(pin_decreases(releases, manifests)) is down
+
+
+def test_a_component_the_sync_leaves_out_or_adds_is_not_compared():
+    # the sync leaves an unlisted component as it is (ADR-0005)
+    releases, manifests = first_sync(
+        components(ingress_nginx="4.14.3", cilium="1.19.1"),
+        components(traefik="42.4.0", cilium="1.20.4"))
+    assert pin_decreases(releases, manifests) == []
+
+
+@pytest.mark.parametrize("before,after", [
+    ({"version": "4.14.3"}, {"version": "4.0.0", "management": "Removed"}),
+    ({"version": "4.14.3", "management": "Removed"}, {"version": "4.0.0"}),
+])
+def test_a_removed_component_has_no_version_to_keep(before, after):
+    releases, manifests = first_sync({"ingress-nginx": before},
+                                     {"ingress-nginx": after})
+    assert pin_decreases(releases, manifests) == []
+
+
+def test_an_unmanaged_pin_is_compared():
+    # the host writes kube-vip at the version the manifest pins (ADR-0007)
+    releases, manifests = first_sync(
+        {"kube-vip": {"version": "v1.3.1", "management": "Unmanaged"}},
+        {"kube-vip": {"version": "v1.2.0", "management": "Unmanaged"}})
+    assert pin_decreases(releases, manifests) == [
+        ("v2.3.0", "v2.4.0", "kube-vip", "v1.3.1", "v1.2.0")]
+
+
+def test_a_blocked_release_still_counts_where_clusters_run_it():
+    # v2.6.1 is blocked for pinning an operator that later releases do not
+    # carry: clusters already on it would still go down at v2.6.2's sync.
+    # No hop goes to a blocked release, so its own sync is not compared.
+    releases = graph([
+        release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+        release("v2.6.1", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+                syncManifest=True, blocked=True),
+        release("v2.6.2", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+                syncManifest=True),
+        release("v2.6.3", "patch", "v2.6.0", "1.36.6", "1.36", 45,
+                syncManifest=True, blocked=True),
+    ])
+    manifests = {"v2.6.0": components(k4all_operator="v0.5.0"),
+                 "v2.6.1": components(k4all_operator="v0.6.0"),
+                 "v2.6.2": components(k4all_operator="v0.5.9"),
+                 "v2.6.3": components(k4all_operator="v0.5.1")}
+    assert pin_decreases(releases, manifests) == [
+        ("v2.6.1", "v2.6.2", "k4all-operator", "v0.6.0", "v0.5.9")]
+
+
+def exit_patch_ladder(exit_min_from):
+    """The 2.6 stream, where every patch syncs, frozen by v2.7.0, and v2.6.6:
+    an exit patch with v2.6.5's manifest, which v2.7.0 needs (minFrom)."""
+    synced = [release("v2.6.%d" % z, "patch", "v2.6.0", "1.36.6", "1.36", 45,
+                      syncManifest=True) for z in range(1, 6)]
+    return graph([
+        release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45)] + synced + [
+        release("v2.6.6", "patch", exit_min_from, "1.36.6", "1.36", 45),
+        release("v2.7.0", "minor", "v2.6.6", "1.36.6", "1.36", 45),
+        release("v2.7.1", "patch", "v2.7.0", "1.36.6", "1.36", 45,
+                syncManifest=True),
+    ])
+
+
+def test_an_exit_patch_keeps_the_rules():
+    releases = exit_patch_ladder("v2.6.5")
+    operator = {"v2.6.0": "v0.5.0", "v2.6.1": "v0.5.1", "v2.6.2": "v0.5.1",
+                "v2.6.3": "v0.5.1", "v2.6.4": "v0.5.3", "v2.6.5": "v0.5.4",
+                "v2.6.6": "v0.5.4", "v2.7.0": "v0.5.4", "v2.7.1": "v0.6.0"}
+    manifests = {v: components(k4all_operator=o) for v, o in operator.items()}
+    assert ku.validate_graph(releases) == []
+    assert skipped_syncs(releases) == []
+    assert pin_decreases(releases, manifests) == []
+    assert versions(ku.plan_path(releases, "v2.6.3")) == [
+        "v2.6.5", "v2.6.6", "v2.7.0", "v2.7.1"]
+
+
+def test_an_exit_patch_without_a_sync_cannot_skip_one():
+    # from v2.6.0 straight to v2.6.6 would skip the syncs of v2.6.1 - v2.6.5
+    assert skipped_syncs(exit_patch_ladder("v2.6.0"))[0] == ("v2.6.6", "v2.6.1")
+
+
+def test_the_check_sees_every_hop_the_planner_takes(ladder):
+    # pin_decreases may follow more hops than plan_path, never fewer
+    with open(RELEASES_YAML, encoding="utf-8") as fh:
+        repo = ku.load_graph(yaml.safe_load(fh))
+    for releases in (ladder, repo, exit_patch_ladder("v2.6.5")):
+        reach = reachable(releases)
+        for start in releases:
+            for target in releases:
+                try:
+                    path = ku.plan_path(releases, start.version, target.version)
+                except ku.NoPathError:
+                    continue
+                assert {r.version for r in path} <= reach[start.version], \
+                    (start, target)
+
+
+def test_pinned_versions_never_go_down_on_the_repo_graph():
+    with open(RELEASES_YAML, encoding="utf-8") as fh:
+        releases = ku.load_graph(yaml.safe_load(fh))
+    found = pin_decreases(releases, release_manifests(releases))
+    assert found == [], (
+        "a manifest sync moves these pins down, as (from, sync, component, "
+        "pinned, synced); see docs/adr/0010: %s" % found)
+
+
+def test_the_release_being_prepared_has_the_working_tree_manifest():
+    # the newest release of the graph, before its tag exists: a release PR
+    releases = graph([
+        release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+        release("v99.0.0", "minor", "v2.6.0", "1.36.6", "1.36", 45)])
+    with open(RELEASE_MANIFEST, encoding="utf-8") as fh:
+        tree = yaml.safe_load(fh)["spec"]["components"]
+    manifests = release_manifests(releases)
+    assert manifests["v99.0.0"] == tree
+    assert manifests["v2.6.0"]["k4all-operator"]["version"] == "v0.5.0"
+
+
+def test_an_older_release_without_a_tag_fails_in_ci_and_is_skipped_elsewhere(
+        monkeypatch):
+    releases = graph([
+        release("v2.6.0", "minor", "v2.5.0", "1.36.6", "1.36", 45),
+        release("v2.6.99", "patch", "v2.6.0", "1.36.6", "1.36", 45),
+        release("v99.0.0", "minor", "v2.6.0", "1.36.6", "1.36", 45)])
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(pytest.fail.Exception, match="v2.6.99"):
+        release_manifests(releases)
+    monkeypatch.delenv("CI")
+    with pytest.raises(pytest.skip.Exception):
+        release_manifests(releases)
