@@ -24,7 +24,46 @@ BACKUP_MARKER="K4ALL_BACKUP_V2"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 NODE_TYPE="$(cat /etc/node-type 2>/dev/null || echo "unknown")"
 HOSTNAME_VAL="$(hostname)"
-OUTPUT_ARG="${1:-/var/opt/k4all/backups}"
+DEFAULT_OUTPUT="/var/opt/k4all/backups"
+
+usage() {
+    cat <<EOF
+Usage: k4all-backup.sh [output-path]
+
+Creates a full application-level backup of this K4All node, for a restore
+after a reinstall (the installer's Restore).
+
+output-path:
+  - omitted: the backup is written under ${DEFAULT_OUTPUT}/
+  - a directory: the backup is written there with an automatic file name
+  - a path ending in .tar.gz: the archive itself
+
+Automatic restore looks for files named k4all-backup-*.tar.gz.
+
+Options:
+  -h, --help   show this help and exit
+EOF
+}
+
+# The arguments are read before anything else: "--help" used to be taken as
+# the output path (#82).
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    -*)
+        echo "k4all-backup.sh: unknown option ${1}" >&2
+        usage >&2
+        exit 2
+        ;;
+esac
+if [ "$#" -gt 1 ]; then
+    echo "k4all-backup.sh: one output path at most, got $#" >&2
+    usage >&2
+    exit 2
+fi
+OUTPUT_ARG="${1:-$DEFAULT_OUTPUT}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
