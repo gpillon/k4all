@@ -4,6 +4,8 @@
 
 """This module contains constants that are used by various parts of the K4All addon."""
 
+import copy
+
 from dasbus.identifier import DBusServiceIdentifier
 from pyanaconda.core.dbus import DBus
 from pyanaconda.modules.common.constants.namespaces import ADDONS_NAMESPACE
@@ -91,3 +93,21 @@ DEFAULT_INSTALL_CONFIG = {
         }
     }
 }
+
+
+# Roles that join a cluster made by a bootstrap node.
+JOINING_ROLES = ("control", "worker")
+
+
+def node_cluster_config(role, cluster_config):
+    """The ClusterConfig spec a node of ``role`` keeps in /etc/k4all-config.yaml.
+
+    The cluster's CNI is the bootstrap node's choice. A node that joins
+    cannot know it when it is installed, so its configuration carries no
+    ``networking.cni`` rather than a guess (issue #63): k4all-cni-firewalld
+    opens the ports of the CNI that runs on the node.
+    """
+    spec = copy.deepcopy(cluster_config)
+    if role in JOINING_ROLES:
+        spec.get("networking", {}).pop("cni", None)
+    return spec

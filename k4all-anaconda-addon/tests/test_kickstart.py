@@ -235,6 +235,16 @@ class TestK4AllData:
         assert "--ha=none" in s
         assert "%end" in s
 
+    def test_str_of_a_joining_node_has_no_cni(self):
+        # Issue #63: a worker or control plane does not choose the CNI.
+        data = self._make_data()
+        data.handle_header(["--role=worker", "--ha=none"])
+        data.finalize()
+        s = str(data)
+        assert "--role=worker" in s
+        assert "--cni" not in s
+        assert "cni" not in s.split("\n", 2)[2], "nor in the body"
+
     def test_str_includes_flags(self):
         data = self._make_data()
         data.handle_header(["--virt", "--argocd", "--firewalld"])

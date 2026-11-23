@@ -124,13 +124,9 @@ exec_in 'systemctl reset-failed fck8s-k8s-setup-ph3.service 2>/dev/null; systemc
 sleep 5
 
 info "Adding swap tolerance to kubeadm config"
-exec_in 'cat >> /etc/k8s-config.yaml <<KC
----
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-failSwapOn: false
-cgroupDriver: systemd
-KC'
+# The template already has a KubeletConfiguration (maxPods) and kubeadm
+# refuses a kind twice: the swap settings go into that document.
+exec_in "yq e -i '(select(.kind == \"KubeletConfiguration\") | .failSwapOn) = false | (select(.kind == \"KubeletConfiguration\") | .cgroupDriver) = \"systemd\"' /etc/k8s-config.yaml"
 ok "kubeadm config patched"
 
 info "Running kubeadm init (this takes 3-5 minutes)..."

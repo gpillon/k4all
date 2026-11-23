@@ -131,7 +131,7 @@ class TestK4AllInstallationTask:
         cluster_config["cluster"]["ha"]["type"] = "keepalived"
         cluster_config["features"]["virt"]["enabled"] = True
 
-        task = self._make_task(role="control", cluster_config=cluster_config)
+        task = self._make_task(role="bootstrap", cluster_config=cluster_config)
         with patch("subprocess.run", return_value=MagicMock(returncode=1)):
             task.run()
 
@@ -142,6 +142,26 @@ class TestK4AllInstallationTask:
         assert spec["networking"]["cni"]["type"] == "cilium"
         assert spec["cluster"]["ha"]["type"] == "keepalived"
         assert spec["features"]["virt"]["enabled"] is True
+
+    @pytest.mark.parametrize("role", ["worker", "control"])
+    def test_a_joining_node_carries_no_cni_guess(self, role):
+        # Issue #63: the cluster's CNI is the bootstrap node's choice; the
+        # installer's default (calico) is not written on a joining node.
+        from com_k4all_installer.constants import DEFAULT_CLUSTER_CONFIG
+        cluster_config = copy.deepcopy(DEFAULT_CLUSTER_CONFIG)
+        cluster_config["networking"]["firewalld"]["enabled"] = True
+
+        task = self._make_task(role=role, cluster_config=cluster_config)
+        with patch("subprocess.run", return_value=MagicMock(returncode=1)):
+            task.run()
+
+        cr = self._read_config_yaml()
+        if cr is None:
+            pytest.skip("PyYAML not available")
+        assert "cni" not in cr["spec"]["networking"]
+        assert cr["spec"]["networking"]["firewalld"]["enabled"] is True
+        assert cluster_config["networking"]["cni"]["type"] == "calico", \
+            "the installer's own copy is left as it is"
 
     def test_vg_data_disabled_skips(self):
         from com_k4all_installer.constants import DEFAULT_INSTALL_CONFIG

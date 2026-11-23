@@ -218,6 +218,64 @@ spec:
             rollingUpdate:
               maxSurge: 0
               maxUnavailable: 1
+        # topolvm-node exits when lvmd's socket is not there, and lvmd runs
+        # in its own DaemonSet: on a node that joined or booted, topolvm-node
+        # often started first and crash-looped ("dial unix
+        # /run/topolvm/lvmd.sock: connect: no such file or directory") until
+        # its back-off reached a start after lvmd's (#61). The initContainer
+        # waits for the socket, so the node plugin starts once lvmd listens.
+        # Its image is the pinned chart's image.reference, already on the
+        # node: bump it with the chart. It mounts the chart's socket
+        # directory, which exists only with lvmd in its own DaemonSet:
+        # componentOverrides.topolvm that set node.lvmdEmbedded: true must
+        # also set node.initContainers: [] (Helm replaces lists).
+        node:
+          initContainers:
+            - name: wait-for-lvmd
+              image: ghcr.io/topolvm/topolvm-with-sidecar:0.42.1@sha256:00acceab51f358ea88abd74bd0968f78764e9aa94146590e9bc5ead30243c45a
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  # PID 1 ignores SIGTERM without a trap: a pod deleted
+                  # while it waits would last its whole grace period.
+                  trap 'exit 143' TERM
+                  i=0
+                  until [ -S /run/topolvm/lvmd.sock ]; do
+                    if [ $((i % 30)) -eq 0 ]; then
+                      echo "waiting for lvmd: no /run/topolvm/lvmd.sock yet"
+                    fi
+                    i=$((i + 1))
+                    sleep 1
+                  done
+                  echo "lvmd's socket is there"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  memory: 32Mi
+              # Root without capabilities: it only stats the root-owned
+              # socket directory, mounted read-only. SELinux type spc_t:
+              # lvmd's socket is container_var_run_t, and a container_t
+              # process may not even stat it, so with the default type the
+              # wait never ended on an enforcing node (topolvm-node and
+              # lvmd are privileged, hence spc_t too).
+              securityContext:
+                seLinuxOptions:
+                  type: spc_t
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+              volumeMounts:
+                - name: lvmd-socket-dir
+                  mountPath: /run/topolvm
+                  readOnly: true
         lvmd:
           deviceClasses:
             - name: default
@@ -552,7 +610,11 @@ spec:
       # skips the OVS bridge and its agents stopped at every boot), keeps the
       # socket load balancer in the host namespace with KubeVirt, and leaves
       # Multus' CNI config alone.
-      version: "v0.5.3"
+      # v0.5.4 (k4all v2.6.5): KubeVirt's emulation "auto" follows the nodes
+      # (KVM on a node -> useEmulation false), not the operator pod, which
+      # never sees /dev/kvm; Unmanaged and Skipped components keep their
+      # transition time.
+      version: "v0.5.4"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system

@@ -8,7 +8,11 @@ nodes, kubeadm configs that a newer kubeadm rejects.
 
 import os
 import re
+import signal
+import socket
+import subprocess
 
+import pytest
 import yaml
 
 from conftest import REPO, ku
@@ -315,10 +319,23 @@ def test_kubeadm_configs_are_v1beta4_without_flexvolume_flag():
         docs = list(yaml.safe_load_all(read(BIN, "overrides", role,
                                             "k8s-config-%s.yaml" % role)))
         for doc in docs:
+            if doc["apiVersion"].startswith("kubelet.config.k8s.io/"):
+                continue
             assert doc["apiVersion"] == "kubeadm.k8s.io/v1beta4", role
             cm = doc.get("controllerManager") or {}
             names = [a["name"] for a in cm.get("extraArgs") or []]
             assert "flex-volume-plugin-dir" not in names, role
+
+
+def test_bootstrap_kubelet_config_allows_250_pods():
+    # kubeadm init stores it in kube-system/kubelet-config, which the nodes
+    # that join later download; kubeadm refuses the same kind twice.
+    docs = list(yaml.safe_load_all(read(BIN, "overrides", "bootstrap",
+                                        "k8s-config-bootstrap.yaml")))
+    kubelet = [d for d in docs if d["kind"] == "KubeletConfiguration"]
+    assert len(kubelet) == 1
+    assert kubelet[0]["apiVersion"] == "kubelet.config.k8s.io/v1beta1"
+    assert kubelet[0]["maxPods"] == 250
 
 
 def test_bootstrap_init_pins_the_control_plane_to_the_kubelet():
@@ -389,6 +406,105 @@ def test_topolvm_controller_rolls_out_on_a_single_node():
     assert controller["replicaCount"] == 1
     rolling = controller["updateStrategy"]["rollingUpdate"]
     assert rolling["maxSurge"] == 0 and rolling["maxUnavailable"] == 1
+
+
+# image.reference of each pinned TopoLVM chart (`helm show values
+# topolvm/topolvm --version <chart>`): wait-for-lvmd runs the chart's own
+# image, already on every node. A chart bump adds its line here.
+TOPOLVM_CHART_IMAGES = {
+    "17.3.1": "ghcr.io/topolvm/topolvm-with-sidecar:0.42.1"
+              "@sha256:00acceab51f358ea88abd74bd0968f78764e9aa94146590e9bc5ead30243c45a",
+}
+LVMD_SOCKET = "/run/topolvm/lvmd.sock"
+
+
+def topolvm_component():
+    return yaml.safe_load(read(BOOTC, "overlay", "usr", "local", "share",
+                               "k4all-release.yaml"))["spec"]["components"]["topolvm"]
+
+
+def wait_for_lvmd(values):
+    wait = [c for c in values["node"].get("initContainers") or []
+            if c.get("name") == "wait-for-lvmd"]
+    assert len(wait) == 1, "topolvm-node has no wait-for-lvmd initContainer"
+    return wait[0]
+
+
+def test_topolvm_node_waits_for_lvmd():
+    # #61: topolvm-node exits when lvmd's socket is not there, and lvmd is
+    # another DaemonSet: on a node that joined or booted, topolvm-node
+    # crash-looped until its back-off reached a start after lvmd's.
+    topolvm = topolvm_component()
+    values = topolvm["values"]
+    assert not values["node"].get("lvmdEmbedded"), \
+        "the embedded lvmd has no socket: drop wait-for-lvmd with it"
+    assert values["node"].get("lvmdSocket", LVMD_SOCKET) == LVMD_SOCKET
+    assert values["lvmd"].get("socketName", LVMD_SOCKET) == LVMD_SOCKET
+    wait = wait_for_lvmd(values)
+    assert topolvm["version"] in TOPOLVM_CHART_IMAGES, (
+        "TopoLVM chart %s: add its image.reference to TOPOLVM_CHART_IMAGES "
+        "and give it to wait-for-lvmd" % topolvm["version"])
+    assert wait["image"] == TOPOLVM_CHART_IMAGES[topolvm["version"]]
+    assert wait["command"][:2] == ["/bin/sh", "-c"]
+    # The chart's volume for lvmd's socket directory, read-only.
+    assert wait["volumeMounts"] == [{"name": "lvmd-socket-dir",
+                                     "mountPath": os.path.dirname(LVMD_SOCKET),
+                                     "readOnly": True}]
+
+
+def test_wait_for_lvmd_may_stat_the_socket_under_selinux():
+    # lvmd's socket is container_var_run_t on the host. A container_t process
+    # gets "Permission denied" on its stat, so `[ -S ]` stays false and
+    # topolvm-node never left Init on an enforcing node (v2.6.5 VM test).
+    # topolvm-node and lvmd run privileged (spc_t); the init container needs
+    # the same SELinux type, nothing more.
+    wait = wait_for_lvmd(topolvm_component()["values"])
+    ctx = wait.get("securityContext") or {}
+    assert (ctx.get("seLinuxOptions") or {}).get("type") == "spc_t"
+    assert not ctx.get("privileged")
+    assert ctx.get("capabilities", {}).get("drop") == ["ALL"]
+
+
+def run_wait_for_lvmd(tmp_path):
+    script = wait_for_lvmd(topolvm_component()["values"])["command"][2]
+    assert LVMD_SOCKET in script
+    socket_dir = tmp_path / "topolvm"
+    socket_dir.mkdir()
+    script = script.replace(os.path.dirname(LVMD_SOCKET), str(socket_dir))
+    proc = subprocess.Popen(["/bin/sh", "-c", script], stdout=subprocess.PIPE,
+                            text=True)
+    return proc, socket_dir / os.path.basename(LVMD_SOCKET)
+
+
+def test_wait_for_lvmd_ends_once_the_socket_listens(tmp_path):
+    proc, path = run_wait_for_lvmd(tmp_path)
+    try:
+        path.touch()  # a plain file is not lvmd's socket
+        with pytest.raises(subprocess.TimeoutExpired):
+            proc.wait(timeout=1.5)
+        path.unlink()
+        lvmd = socket.socket(socket.AF_UNIX)
+        lvmd.bind(str(path))
+        lvmd.listen(1)
+        assert proc.wait(timeout=5) == 0
+        lvmd.close()
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_wait_for_lvmd_stops_on_sigterm(tmp_path):
+    # As PID 1 without a trap the shell ignores SIGTERM: a pod deleted while
+    # it waits would last its whole grace period.
+    proc, _ = run_wait_for_lvmd(tmp_path)
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            proc.wait(timeout=0.5)
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=5) == 143
+    finally:
+        proc.kill()
+        proc.wait()
 
 
 def test_etcd_tools_come_from_the_etcd_image():
