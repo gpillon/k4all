@@ -161,3 +161,69 @@ def test_the_sync_phase_restarts_cilium_when_the_operator_changed_it(make, monke
     monkeypatch.setattr(up, "sync_manifest", sync_manifest)
     up.sync({"hop": {"syncManifest": True}})
     assert host.deleted == ["k8s-app=cilium", "name=multus"]
+
+
+def with_operator(host, version, applied="h1"):
+    host.release_manifest["spec"]["components"]["k4all-operator"] = {
+        "type": "manifest", "management": "Managed", "version": version}
+    host.release_manifest["status"] = {"components": {"cilium": {"state": "Installed",
+                                                                 "appliedHash": applied}}}
+    return json.loads(json.dumps(host.release_manifest))
+
+
+def test_a_new_operator_is_waited_for_before_comparing(make, monkeypatch):
+    """The operator is paused during the hop: it re-applies Cilium after the
+    sync already looked settled. The restart waits for that re-apply."""
+    host = make()
+    before_rm = with_operator(host, "v0.5.1")
+    with_operator(host, "v0.5.3")              # the sync changed the pin
+    before = dict(host.cilium_data)
+    sleeps = []
+    real_sleep = host.sleep
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 3:                   # the operator re-applies Cilium
+            host.cilium_data["bpf-lb-sock-hostns-only"] = "true"
+            host.release_manifest["status"]["components"]["cilium"]["appliedHash"] = "h2"
+        real_sleep(seconds)
+    monkeypatch.setattr(host, "sleep", sleep)
+    upgrader(host)._cilium_after_sync(before, before_rm)
+    assert len(sleeps) >= 3
+    assert host.deleted == ["k8s-app=cilium", "name=multus"]
+
+
+def test_a_reapply_that_changes_nothing_restarts_nothing(make, monkeypatch):
+    host = make()
+    before_rm = with_operator(host, "v0.5.1")
+    with_operator(host, "v0.5.3")
+    before = dict(host.cilium_data)
+    calls = []
+
+    def sleep(seconds):
+        calls.append(seconds)
+        if len(calls) == 2:
+            host.release_manifest["status"]["components"]["cilium"]["appliedHash"] = "h2"
+        host.clock += __import__("datetime").timedelta(seconds=seconds)
+    monkeypatch.setattr(host, "sleep", sleep)
+    upgrader(host)._cilium_after_sync(before, before_rm)
+    assert len(calls) == 2, "stops waiting once the operator re-applied Cilium"
+    assert host.deleted == []
+
+
+def test_the_wait_for_a_new_operator_is_bounded(make):
+    host = make()
+    before_rm = with_operator(host, "v0.5.1")
+    with_operator(host, "v0.5.3")
+    start = host.now()
+    upgrader(host)._cilium_after_sync(dict(host.cilium_data), before_rm)
+    assert host.deleted == []
+    assert (host.now() - start).total_seconds() <= 5 * 60 + 10
+
+
+def test_the_same_operator_is_not_waited_for(make):
+    host = make()
+    before_rm = with_operator(host, "v0.5.3")
+    start = host.now()
+    upgrader(host)._cilium_after_sync(dict(host.cilium_data), before_rm)
+    assert host.now() == start and host.deleted == []

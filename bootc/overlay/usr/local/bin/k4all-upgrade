@@ -2223,20 +2223,57 @@ class Upgrader:
                  "the agent of this node" % patch["data"]["devices"])
         hop["ciliumDevices"] = "patched"
 
-    def _cilium_after_sync(self, before):
+    def _release_manifest(self, kc):
+        """The cluster's ReleaseManifest, None when it cannot be read."""
+        got = kubectl(self.host, kc, ["get", "releasemanifest",
+                                      RELEASE_MANIFEST_NAME, "-o", "json",
+                                      KUBECTL_TIMEOUT], check=False)
+        if got.returncode != 0:
+            return None
+        try:
+            return json.loads(got.stdout)
+        except ValueError:
+            return None
+
+    def _cilium_after_sync(self, before, before_rm=None):
         """The sync may change cilium-config (k4all-operator v0.5.3:
         socketLB.hostNamespaceOnly with KubeVirt, cni.exclusive off with
         Multus); the operator does not restart the agents. This node already
         runs the new release (its --node-ip pinned, its devices right), so its
         agent restarts here, then Multus, whose CNI config an older agent may
         have renamed. Other nodes read it when they reboot into the release.
+
+        The operator is paused during the hop and re-applies Cilium only once
+        the sync is done, after the components already look settled: when the
+        sync brought another k4all-operator, wait (5 minutes at most) until it
+        re-applied Cilium (its appliedHash moved) or cilium-config changed.
         Best effort: a problem is logged, never a HOLD."""
         host = self.host
         kc = self._kubeconfig()
-        after = self._cilium_config(kc)
-        if before is None or not after or after == before:
+        if before is None or not before or not self._cilium_managed(kc):
             return
-        if not self._cilium_managed(kc):
+
+        def comp(rm, name):
+            return (((rm or {}).get("spec") or {}).get("components") or {}).get(name) or {}
+
+        def applied(rm):
+            return ((((rm or {}).get("status") or {}).get("components") or {})
+                    .get("cilium") or {}).get("appliedHash")
+
+        after = self._cilium_config(kc)
+        rm = self._release_manifest(kc)
+        new_operator = (before_rm is not None and rm is not None and
+                        comp(before_rm, "k4all-operator").get("version")
+                        != comp(rm, "k4all-operator").get("version"))
+        if new_operator and after == before:
+            deadline = host.now() + datetime.timedelta(minutes=5)
+            while after == before and applied(rm) == applied(before_rm):
+                if host.now() >= deadline:
+                    break
+                host.sleep(10)
+                after = self._cilium_config(kc)
+                rm = self._release_manifest(kc)
+        if not after or after == before:
             return
         if not self._restart_local_pods(kc, CILIUM_AGENT_SELECTOR):
             host.log("cilium: the agent of this node was not restarted")
@@ -2277,8 +2314,9 @@ class Upgrader:
         self.resume_operator_or_fail(hop)
         if hop.get("syncManifest") and self._role() == "bootstrap":
             before = self._cilium_config(kc)
+            before_rm = self._release_manifest(kc)
             self.sync_manifest(state)
-            self._cilium_after_sync(before)
+            self._cilium_after_sync(before, before_rm)
 
     # --- COMMIT ----------------------------------------------------------
     def commit(self, state):
