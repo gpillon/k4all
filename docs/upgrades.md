@@ -59,6 +59,23 @@ The 2.x upgrade path:
 | v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
 | v2.9.0 | Kubernetes 1.37 |
 
+### How releases are cut
+
+Every fix lands on main first, and releases are cut from main in version
+order. A release therefore carries the fixes, the pinned component versions
+and the operator migrations of every release before it, and no manifest sync
+moves a component back to an older version. CI checks this on every path the
+upgrade graph allows, target releases included. Once v2.(Y+1).0 ships, the
+v2.Y stream is frozen. The only release it can still get is an exit patch:
+
+- it fixes only the hop to v2.(Y+1).0 and changes nothing in the cluster;
+- v2.(Y+1).0's `minFrom` moves up to it when the hop needs the fix;
+- it shows up in the upgrade graph with the next release cut from main.
+
+A minor syncs the ReleaseManifest only when the sync is what makes it a
+minor. The decision and the check are in
+[ADR-0010](adr/0010-releases-come-from-main-in-version-order.md).
+
 ## Automatic or on command
 
 The policy is `/etc/k4all-upgrade.yaml`. When that file is missing,

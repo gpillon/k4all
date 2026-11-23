@@ -18,6 +18,14 @@
 #          its ReleaseManifest (a component patch, a new operator); a later
 #          patch whose minFrom lets it skip that one syncs too.
 #
+# Streams (docs/adr/0010-releases-come-from-main-in-version-order.md):
+#   releases are cut from main in version order. Once X.(Y+1).0 ships, the
+#   X.Y stream gets only an exit patch: the fix of the hop out of it, the
+#   release manifest of the patch before it, syncManifest false, tagged
+#   before this file lists it. A component's pinned version never goes
+#   down on any path to a release that syncs (test_graph.py reads every
+#   release's manifest from its tag).
+#
 # Fields:
 #   version       release tag
 #   kind          minor | patch
