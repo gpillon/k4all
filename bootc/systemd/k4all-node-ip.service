@@ -1,0 +1,16 @@
+[Unit]
+Description=K4All - Pin the kubelet's node IP
+Documentation=https://github.com/gpillon/k4all
+# Before the kubelet's first start of every boot: without --node-ip it may
+# register an address of the pod network as the node's InternalIP.
+Wants=network-online.target
+After=network-online.target fck8s-restore.service
+Before=kubelet.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/k4all-node-ip
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

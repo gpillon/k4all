@@ -75,6 +75,7 @@ if systemctl is-enabled --quiet firewalld; then
       ;;
     "cilium")
       echo "Configuring firewalld for Cilium..."
+      add_firewalld_rule_if_not_exists 8472/udp  # VXLAN (Cilium's tunnel, routingMode tunnel)
       add_firewalld_rule_if_not_exists 4240/tcp  # Cilium health checks
       add_firewalld_rule_if_not_exists 4244/tcp  # Hubble server
       add_firewalld_rule_if_not_exists 4245/tcp  # Hubble Relay

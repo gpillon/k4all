@@ -76,6 +76,13 @@ MESSAGE_MAX = 1000
 # kubectl calls of the agent and of the phase reports must not hang on an
 # unreachable apiserver.
 KUBECTL_TIMEOUT = "--request-timeout=20s"
+# Cilium on nodes with the OVS bridge (k4all-operator v0.5.3 renders the
+# same keys): see Upgrader._cilium_devices_in_hop.
+CILIUM_NAMESPACE = "kube-system"
+CILIUM_CONFIGMAP = "cilium-config"
+CILIUM_AGENT_SELECTOR = "k8s-app=cilium"
+MULTUS_SELECTOR = "name=multus"
+OVS_BRIDGE_SYSFS = "/sys/class/net/ovs-bridge"
 # Seconds between two preflight checks of /readyz and of the nodes.
 READY_POLL_SECONDS = 10
 # Lock waits (seconds): resume must not lose the hop to a short agent pass.
@@ -1907,6 +1914,10 @@ class Upgrader:
         deadline = host.now() + datetime.timedelta(
             minutes=int(self.cfg["postBootTimeoutMinutes"]))
         while True:
+            # Before the health check: on a node with the OVS bridge the
+            # Cilium of an older release cannot start (the node is NotReady)
+            # until cilium-config names ovs-bridge.
+            self._cilium_devices_in_hop(hop)
             ok, reason = self._node_healthy(hop)
             if ok:
                 break
@@ -2128,6 +2139,171 @@ class Upgrader:
                 return False, "apiserver not ready: %s" % problem
         return True, ""
 
+    # --- Cilium during a hop ---------------------------------------------
+    def _cilium_config(self, kc):
+        """cilium-config's data; {} when the cluster has none (no Cilium);
+        None when it cannot be read (the API not up yet, no rights)."""
+        if kc != ADMIN_KUBECONFIG:
+            return None
+        got = kubectl(self.host, kc, ["-n", CILIUM_NAMESPACE, "get", "configmap",
+                                      CILIUM_CONFIGMAP, "-o", "json",
+                                      KUBECTL_TIMEOUT], check=False)
+        if got.returncode != 0:
+            return {} if "NotFound" in (got.stderr or "") else None
+        try:
+            return json.loads(got.stdout).get("data") or {}
+        except ValueError:
+            return None
+
+    def _cilium_managed(self, kc):
+        """True when the cluster's ReleaseManifest has Cilium Managed. A
+        Cilium left Unmanaged (a cluster restored from 1.x) is the admin's."""
+        got = kubectl(self.host, kc, ["get", "releasemanifest", "k4all", "-o",
+                                      "json", KUBECTL_TIMEOUT], check=False)
+        if got.returncode != 0:
+            return False
+        try:
+            spec = json.loads(got.stdout).get("spec") or {}
+        except ValueError:
+            return False
+        cilium = (spec.get("components") or {}).get("cilium")
+        return bool(cilium) and cilium.get("management", "Managed") == "Managed"
+
+    def _restart_local_pods(self, kc, selector):
+        """Delete this node's pods of a DaemonSet: they start again at once,
+        with the configuration they read at start."""
+        return kubectl(self.host, kc, ["-n", CILIUM_NAMESPACE, "delete", "pod",
+                                       "-l", selector, "--field-selector",
+                                       "spec.nodeName=" + self._node_name(),
+                                       "--wait=false", KUBECTL_TIMEOUT],
+                       check=False).returncode == 0
+
+    def _cilium_devices_in_hop(self, hop):
+        """Cilium 1.20 skips the OVS bridge in its device detection: on a node
+        whose IP is on ovs-bridge the agent of an older release stops at
+        every start ("unable to determine direct routing device"), and the
+        node stays NotReady after the hop's reboot, before the sync brings
+        the k4all-operator (v0.5.3) that names it. Write the same keys the
+        operator renders (devices ovs-bridge first, force-device-detection)
+        and restart this node's agent. Control planes only (cilium-config is
+        cluster-wide: the bootstrap's hop, the first, writes it), Cilium
+        Managed only. Best effort, retried while the node is not healthy."""
+        if hop.get("ciliumDevices"):
+            return
+        host = self.host
+        kc = self._kubeconfig()
+        if kc != ADMIN_KUBECONFIG or not host.exists(OVS_BRIDGE_SYSFS):
+            hop["ciliumDevices"] = "skip"
+            return
+        data = self._cilium_config(kc)
+        if data is None:
+            return  # the API is not up yet: next round
+        devices = (data.get("devices") or "").split()
+        if not data or "ovs-bridge" in devices:
+            hop["ciliumDevices"] = "skip"
+            return
+        if not self._cilium_managed(kc):
+            host.log("cilium: Unmanaged, cilium-config left as it is (Cilium "
+                     "1.20 needs devices ovs-bridge on a node with the OVS "
+                     "bridge)")
+            hop["ciliumDevices"] = "skip"
+            return
+        patch = {"data": {"devices": " ".join(["ovs-bridge"] + devices),
+                          "force-device-detection": "true"}}
+        got = kubectl(host, kc, ["-n", CILIUM_NAMESPACE, "patch", "configmap",
+                                 CILIUM_CONFIGMAP, "--type", "merge", "-p",
+                                 json.dumps(patch), KUBECTL_TIMEOUT],
+                      check=False)
+        if got.returncode != 0:
+            host.log("cilium: cilium-config not patched: %s"
+                     % (got.stderr or "").strip()[-200:])
+            return
+        self._restart_local_pods(kc, CILIUM_AGENT_SELECTOR)
+        host.log("cilium: devices %s, force-device-detection on; restarted "
+                 "the agent of this node" % patch["data"]["devices"])
+        hop["ciliumDevices"] = "patched"
+
+    def _release_manifest(self, kc):
+        """The cluster's ReleaseManifest, None when it cannot be read."""
+        got = kubectl(self.host, kc, ["get", "releasemanifest",
+                                      RELEASE_MANIFEST_NAME, "-o", "json",
+                                      KUBECTL_TIMEOUT], check=False)
+        if got.returncode != 0:
+            return None
+        try:
+            return json.loads(got.stdout)
+        except ValueError:
+            return None
+
+    def _cilium_after_sync(self, before, before_rm=None):
+        """The sync may change cilium-config (k4all-operator v0.5.3:
+        socketLB.hostNamespaceOnly with KubeVirt, cni.exclusive off with
+        Multus); the operator does not restart the agents. This node already
+        runs the new release (its --node-ip pinned, its devices right), so its
+        agent restarts here, then Multus, whose CNI config an older agent may
+        have renamed. Other nodes read it when they reboot into the release.
+
+        The operator is paused during the hop and re-applies Cilium only once
+        the sync is done, after the components already look settled: when the
+        sync brought another k4all-operator, wait (5 minutes at most) until it
+        re-applied Cilium (its appliedHash moved) or cilium-config changed.
+        Best effort: a problem is logged, never a HOLD."""
+        host = self.host
+        kc = self._kubeconfig()
+        if before is None or not before or not self._cilium_managed(kc):
+            return
+
+        def comp(rm, name):
+            return (((rm or {}).get("spec") or {}).get("components") or {}).get(name) or {}
+
+        def applied(rm):
+            return ((((rm or {}).get("status") or {}).get("components") or {})
+                    .get("cilium") or {}).get("appliedHash")
+
+        after = self._cilium_config(kc)
+        rm = self._release_manifest(kc)
+        new_operator = (before_rm is not None and rm is not None and
+                        comp(before_rm, "k4all-operator").get("version")
+                        != comp(rm, "k4all-operator").get("version"))
+        if new_operator and after == before:
+            deadline = host.now() + datetime.timedelta(minutes=5)
+            while after == before and applied(rm) == applied(before_rm):
+                if host.now() >= deadline:
+                    break
+                host.sleep(10)
+                after = self._cilium_config(kc)
+                rm = self._release_manifest(kc)
+        if not after or after == before:
+            return
+        if not self._restart_local_pods(kc, CILIUM_AGENT_SELECTOR):
+            host.log("cilium: the agent of this node was not restarted")
+            return
+        host.log("cilium: cilium-config changed in the sync, restarted the "
+                 "agent of this node")
+        deadline = host.now() + datetime.timedelta(minutes=5)
+        while True:
+            ok, reason = self._node_healthy_now()
+            if ok:
+                break
+            if host.now() >= deadline:
+                host.log("WARNING: cilium: node not Ready after the agent "
+                         "restart: %s" % reason)
+                return
+            host.sleep(10)
+        if self._restart_local_pods(kc, MULTUS_SELECTOR):
+            host.log("multus: restarted on this node")
+
+    def _node_healthy_now(self):
+        """(ok, reason): this Node is Ready."""
+        kc = self._kubeconfig()
+        node = kubectl(self.host, kc, ["get", "node", self._node_name(), "-o",
+                                       "json"], check=False)
+        if node.returncode != 0:
+            return False, "cannot read the node: %s" % node.stderr.strip()
+        if not node_ready(json.loads(node.stdout)):
+            return False, "node is not Ready"
+        return True, ""
+
     # --- SYNC ------------------------------------------------------------
     def sync(self, state):
         host, hop = self.host, state["hop"]
@@ -2137,7 +2313,10 @@ class Upgrader:
             hop["drained"] = False
         self.resume_operator_or_fail(hop)
         if hop.get("syncManifest") and self._role() == "bootstrap":
+            before = self._cilium_config(kc)
+            before_rm = self._release_manifest(kc)
             self.sync_manifest(state)
+            self._cilium_after_sync(before, before_rm)
 
     # --- COMMIT ----------------------------------------------------------
     def commit(self, state):

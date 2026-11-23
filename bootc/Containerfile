@@ -165,7 +165,9 @@ RUN systemctl enable fck8s-first-boot.service && \
     # systemctl enable fck8s-auto-join.service && \
     # systemctl enable fck8s-operator-deploy.service && \
     # systemctl enable fck8s-update-routes.timer && \
-    systemctl enable fck8s-migrate.service
+    systemctl enable fck8s-migrate.service && \
+    # Pins the kubelet's --node-ip before it starts (k4all-utils).
+    systemctl enable k4all-node-ip.service
 
 # Upgrades: k4all-upgrade walks release hops (kubeadm first, then reboot).
 # bootc's own timer runs `bootc upgrade --apply`, which would reboot into a

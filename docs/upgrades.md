@@ -54,6 +54,7 @@ The 2.x upgrade path:
 | v2.6.1 | patch with a ReleaseManifest sync: k4all-operator v0.5.1, which fixes the cleanup of the ingress-nginx namespace; `k4all-upgrade` matches an image staged by its index digest (`indexDigest` in the graph) |
 | v2.6.2 | patch: a 1.x node moves to 2.x by reinstalling with a backup (`k4all-backup.sh`, the installer's Restore), and the restored cluster keeps its components (Unmanaged); the first boot no longer hangs on Open vSwitch; same components as v2.6.1 |
 | v2.6.3 | patch: the installer's layout fits RAID controllers with a large optimal I/O size (a kept disk label reuses its BIOS boot partition), and the storage spoke shows when the layout could not be applied; same components as v2.6.2 |
+| v2.6.4; KubeVirt's operator and infra prefer control planes (the drain of a cluster's only control plane can end) | patch with a ReleaseManifest sync: every node pins the kubelet's `--node-ip` to its own address (no pod-network InternalIP after ovs-bridge); k4all-operator v0.5.3: with the OVS bridge Cilium 1.20 names `ovs-bridge` in its devices (its agents start again at every boot), with KubeVirt VMs on the pod network reach ClusterIPs and DNS, with Multus secondary networks attach; it includes v0.5.2 (a component switched from Unmanaged to Managed follows its upgrade path from the version it runs); KubeVirt's operator and infra prefer control planes (the drain of a cluster's only control plane can end) |
 | v2.7.0 | unattended join: `kubeadm init` and `join` become declarative (Kubernetes unchanged) |
 | v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
 | v2.9.0 | Kubernetes 1.37 |
@@ -461,6 +462,61 @@ sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
   operator only through the ReleaseManifest sync of a k4all release, never
   because a newer operator was published.
 - `update-node.sh` still exists and now calls `k4all-upgrade`.
+- From v2.6.4 every node pins the kubelet's `--node-ip` in
+  `/etc/sysconfig/kubelet` (`KUBELET_EXTRA_ARGS`), from
+  `k4all-node-ip.service` at every boot. A `--node-ip` you or a restore set
+  (in that file or in `/var/lib/kubelet/kubeadm-flags.env`) stays; the one
+  k4all wrote (`/var/lib/k4all/kubelet-node-ip`) follows the node when its
+  address changes.
+- From v2.6.4 (k4all-operator v0.5.3) Cilium gets, from the ClusterConfig:
+  `devices: [ovs-bridge, ...]` with `forceDeviceDetection: true` when the OVS
+  bridge is on (Cilium 1.20 skips the OVS bridge in its device detection, and
+  without it an agent that starts on such a node stops with "unable to
+  determine direct routing device"), `socketLB.hostNamespaceOnly: true` with
+  KubeVirt (VMs on the pod network reach ClusterIPs, DNS included), and
+  `cni.exclusive: false` with Multus (`features.ovsCni`). The operator does not
+  restart the agents: during the v2.6.4 hop the bootstrap names ovs-bridge in
+  `cilium-config` after its reboot, restarts its own agent, and after the sync
+  restarts its agent and Multus again; the other nodes read the configuration
+  when they reboot into the release.
+- A cluster whose Cilium is `Unmanaged` (one restored from 1.x) gets none of
+  this. Cilium 1.19 still detects ovs-bridge by itself; for VMs on the pod
+  network it needs `socketLB.hostNamespaceOnly`, and with Multus
+  `cni.exclusive=false`. Set them by hand, then restart the agents once:
+
+  ```bash
+  helm -n kube-system upgrade cilium oci://quay.io/cilium/charts/cilium \
+    --version "$(helm -n kube-system get metadata cilium | awk '/^VERSION:/ {print $2}')" \
+    --reuse-values --set socketLB.hostNamespaceOnly=true --set cni.exclusive=false
+  kubectl -n kube-system rollout restart ds/cilium
+  ```
+
+  (`cni.exclusive=false` only where Multus runs; on Cilium 1.20 with the OVS
+  bridge add `--set devices='{ovs-bridge}' --set forceDeviceDetection=true`.)
+- From v2.6.4 KubeVirt's operator and infra (virt-api, virt-controller,
+  virt-exportproxy) prefer control planes instead of requiring them. Before,
+  the drain of a cluster's only control plane never ended with KubeVirt on:
+  their PodDisruptionBudgets (minAvailable 1) let nothing move. The hop that
+  brings v2.6.4 drains with the old placement, so on such a cluster apply it
+  first, on the control plane:
+
+  ```bash
+  kubectl -n kubevirt patch deployment virt-operator --type strategic -p \
+    '{"spec":{"template":{"spec":{"affinity":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":null,"preferredDuringSchedulingIgnoredDuringExecution":[{"weight":100,"preference":{"matchExpressions":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists"}]}}]}}}}}}'
+  kubectl -n kubevirt patch kubevirt kubevirt --type merge -p \
+    '{"spec":{"infra":{"nodePlacement":{"affinity":{"nodeAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[{"weight":100,"preference":{"matchExpressions":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists"}]}}]}}}}}}'
+  ```
+
+- A v2.6.x cluster with Cilium (Managed) and the OVS bridge whose agents
+  already stop after a reboot (nodes NotReady) cannot start the hop (the
+  preflight wants every node Ready). Name ovs-bridge first, on a control
+  plane:
+
+  ```bash
+  kubectl -n kube-system patch configmap cilium-config --type merge \
+    -p '{"data":{"devices":"ovs-bridge","force-device-detection":"true"}}'
+  kubectl -n kube-system delete pod -l k8s-app=cilium
+  ```
 
 ## Ingress: Traefik (v2.4.0)
 
