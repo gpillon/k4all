@@ -529,7 +529,11 @@ spec:
       # v0.5.2: a component switched from Unmanaged to Managed follows its
       # upgradePath from the version it runs, and manifest steps wait until
       # the step runs (#55).
-      version: "v0.5.2"
+      # v0.5.3 (k4all v2.6.4): Cilium names ovs-bridge in its devices (1.20
+      # skips the OVS bridge and its agents stopped at every boot), keeps the
+      # socket load balancer in the host namespace with KubeVirt, and leaves
+      # Multus' CNI config alone.
+      version: "v0.5.3"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system
