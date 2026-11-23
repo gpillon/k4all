@@ -20,7 +20,8 @@ disk (the first fixed disk of at least 10 GiB). Back up your data first.**
   cert-manager
 - Headlamp dashboard and metrics-server
 - HA control plane with kube-vip or keepalived (optional)
-- KubeVirt with [kubevirt-manager](https://kubevirt-manager.io/) (optional)
+- KubeVirt with [Hangar](https://github.com/kalik1/hangar), a virtual machine
+  console in the dashboard (optional; it replaced kubevirt-manager in v2.7.0)
 - ArgoCD (optional)
 - Image-based upgrades with `k4all-upgrade`
 
@@ -175,6 +176,6 @@ Take a look at
 
 ## References
 
- - [kubevirt-manager.io](https://kubevirt-manager.io/)
+ - [Hangar](https://github.com/kalik1/hangar) and [Cairn](https://github.com/kalik1/cairn)
  - [kube-vip](https://kube-vip.io)
  - [bootc](https://bootc-dev.github.io/bootc/)

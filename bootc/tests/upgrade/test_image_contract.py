@@ -577,3 +577,84 @@ def test_headlamp_carries_the_pinned_k4all_plugin():
     assert any(m.get("name") == "k4all-plugin" and m.get("mountPath") == mount
                and m.get("readOnly") is True
                for m in values.get("volumeMounts") or []), mount
+
+
+# --- Hangar and Cairn (k4all v2.7.0) ---------------------------------------
+# The operator's headlamp hook leaves out a plugin's entries, found by these
+# names, while its feature is off (hooks/headlamp_plugins.go).
+CONSOLE_PLUGINS = {
+    "hangar": ("hangar-plugin", "ghcr.io/kalik1/hangar-headlamp-plugin", "virt"),
+    "cairn": ("cairn-plugin", "ghcr.io/kalik1/cairn-headlamp-plugin", "rook"),
+}
+
+
+def plugin_tag(values, name, repo):
+    plugin = [c for c in values.get("initContainers") or []
+              if c.get("name") == name]
+    assert len(plugin) == 1, "headlamp has no %s initContainer" % name
+    image_repo, _, tag = plugin[0]["image"].split("@")[0].rpartition(":")
+    assert image_repo == repo, plugin[0]["image"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?", tag), \
+        "the %s image needs a release tag, not %r" % (name, tag)
+    return tag
+
+
+def test_headlamp_carries_the_pinned_console_plugins():
+    # Hangar (KubeVirt) and Cairn (Rook) are copied into Headlamp like the
+    # k4all plugin: pinned images, an emptyDir each, mounted read-only at
+    # <pluginsDir>/<package name>, the folder Headlamp loads the plugin from.
+    values = release_components()["headlamp"]["values"]
+    for component, (name, repo, _) in CONSOLE_PLUGINS.items():
+        plugin_tag(values, name, repo)
+        assert any(v.get("name") == name and "emptyDir" in v
+                   for v in values.get("volumes") or []), name
+        mount = "%s/%s-headlamp-plugin" % (
+            values["config"]["pluginsDir"].rstrip("/"), component)
+        assert any(m.get("name") == name and m.get("mountPath") == mount
+                   and m.get("readOnly") is True
+                   for m in values.get("volumeMounts") or []), mount
+
+
+# k4all component -> (console, file of the console's GitHub Release).
+CONSOLE_BUNDLES = {
+    "hangar": ("hangar", "hangar-cluster.yaml"),
+    "hangar-node-agent": ("hangar", "hangar-node-agent.yaml"),
+    "cairn": ("cairn", "cairn-cluster.yaml"),
+}
+
+
+def test_console_cluster_objects_come_from_their_plugin_release():
+    # Each console's cluster objects (roles, Hangar's delete protection and
+    # node agent) are files of the GitHub Release whose image Headlamp runs,
+    # behind the console's feature: one release pins plugin and objects.
+    components = release_components()
+    values = components["headlamp"]["values"]
+    for component, (console, asset) in CONSOLE_BUNDLES.items():
+        name, repo, gate = CONSOLE_PLUGINS[console]
+        comp = components[component]
+        assert comp["type"] == "manifest", component
+        assert comp["featureGate"] == gate, component
+        assert comp["version"] == "v" + plugin_tag(values, name, repo), component
+        assert comp["source"] == ("https://github.com/kalik1/%s/releases/"
+                                  "download/{{ version }}/%s" % (console, asset))
+        # Namespaced objects carry their namespace in the file: the
+        # component's namespace would also be set on cluster-scoped kinds
+        # the operator does not know (ValidatingAdmissionPolicy).
+        assert "namespace" not in comp, component
+    assert set(components["hangar"]["dependsOn"]) >= {"kubevirt", "cdi"}
+    assert "kubevirt" in components["hangar-node-agent"]["dependsOn"]
+
+
+def test_hangar_replaces_kubevirt_manager():
+    # kubevirt-manager is Removed. Without sources an operator that removes
+    # it from its manifests deletes nothing: the one pinned here removes it
+    # through its kubevirt-manager hook, which keeps the PriorityClasses VMs
+    # name, the image catalog with images in it and a namespace with the
+    # user's objects. Nothing may depend on it any more.
+    components = release_components()
+    kvm = components["kubevirt-manager"]
+    assert kvm["management"] == "Removed"
+    for field in ("source", "sources", "inlineManifests", "patches"):
+        assert field not in kvm, field
+    for name, comp in components.items():
+        assert "kubevirt-manager" not in comp.get("dependsOn", []), name
