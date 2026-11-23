@@ -26,9 +26,9 @@ export const CAPABILITY_SINCE = {
   /**
    * Turning virt off keeps KubeVirt, CDI and kubevirt-manager while VMs and
    * their disks exist ("uninstall refused: ..."); before, they were deleted
-   * from under the running VMs.
+   * from under the running VMs (v0.5.6 too: it was published without this).
    */
-  virtUninstallGuard: 'v0.5.6',
+  virtUninstallGuard: 'v0.5.7',
 } as const;
 
 export type CapabilityId = keyof typeof CAPABILITY_SINCE;

@@ -154,7 +154,7 @@ describe('the Virtualization switch', () => {
     };
     render(
       <FeaturesSection
-        {...sectionProps(draft, vi.fn(), capabilitiesOf('v0.5.6'))}
+        {...sectionProps(draft, vi.fn(), capabilitiesOf('v0.5.7'))}
         components={components}
         statuses={statuses}
       />
@@ -176,7 +176,7 @@ describe('the Virtualization switch', () => {
     const draft = defaultClusterConfig().spec!;
     render(
       <FeaturesSection
-        {...sectionProps(draft, vi.fn(), capabilitiesOf('v0.5.6'))}
+        {...sectionProps(draft, vi.fn(), capabilitiesOf('v0.5.7'))}
         base={on}
         components={components}
       />
@@ -189,8 +189,18 @@ describe('the Virtualization switch', () => {
 
   it('warns, once turned off, that an older k4all-operator deletes KubeVirt and CDI from under the VMs', () => {
     const draft = defaultClusterConfig().spec!;
-    render(<FeaturesSection {...sectionProps(draft)} base={on} components={components} />);
-    expect(screen.getByText(/KubeVirt and CDI are deleted from under them/)).toBeTruthy();
+    // v0.5.6 was published without the guard
+    for (const caps of [OLD_OPERATOR, capabilitiesOf('v0.5.6')]) {
+      const { unmount } = render(
+        <FeaturesSection
+          {...sectionProps(draft, vi.fn(), caps)}
+          base={on}
+          components={components}
+        />
+      );
+      expect(screen.getByText(/KubeVirt and CDI are deleted from under them/)).toBeTruthy();
+      unmount();
+    }
   });
 });
 

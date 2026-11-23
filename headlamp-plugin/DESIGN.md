@@ -367,7 +367,7 @@ release's spec version) in one table, `src/model/capabilities.ts`:
 | `clusterUpgrade` | v0.4.0 (k4all v2.4.0) | explains a missing ClusterUpgrade API (the API itself is detected by discovery) |
 | `cniSwitch` | v0.6.0 | CNI select in Networking, change reviewed as dangerous |
 | `ovsBridgeToggle` | v0.6.0 | OVS bridge switch in Features, change reviewed as dangerous |
-| `virtUninstallGuard` | v0.5.6 (k4all v2.6.6) | turning Virtualization off is reviewed as "uninstalls once nothing runs on them" (the operator keeps KubeVirt and kubevirt-manager while VMs exist, CDI while DataVolumes or PVCs made by CDI exist); older operators are reviewed as deleting KubeVirt and CDI from under running VMs |
+| `virtUninstallGuard` | v0.5.7 (k4all v2.6.6) | turning Virtualization off is reviewed as "uninstalls once nothing runs on them" (the operator keeps KubeVirt and kubevirt-manager while VMs exist, CDI while DataVolumes or PVCs made by CDI exist); older operators are reviewed as deleting KubeVirt and CDI from under running VMs |
 
 An unknown or unparsable version has no optional capability. Fields that
 turn live carry `liveWith: <capability>` in `fields.ts`; the controls and

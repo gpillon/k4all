@@ -125,7 +125,7 @@ Don't unmask it.
    ReleaseManifest of the new image is applied to the cluster in two steps:
    the operator first, then everything else. A failure here stops in HOLD;
    it never rolls the OS back. A component whose uninstall the operator
-   refuses (from k4all-operator v0.5.6: KubeVirt with Virtualization off
+   refuses (from k4all-operator v0.5.7: KubeVirt with Virtualization off
    while VMs exist, its status message starts with `uninstall refused:`)
    does not hold the hop: it waits on you. The tool logs a WARNING, and
    `k4all-upgrade status` shows it with the hop.

@@ -1664,7 +1664,7 @@ def test_failed_component_after_sync_holds_without_rollback(make_host):
 
 
 def test_a_refused_uninstall_does_not_hold_the_sync(make_host, capsys):
-    # k4all-operator v0.5.6 keeps a component Installed, at the version it
+    # k4all-operator v0.5.7 keeps a component Installed, at the version it
     # runs, while its uninstall would break what runs on it: KubeVirt with
     # virt off while VMs exist, kubevirt-manager Removed. It waits on the
     # user, not on the hop: the hop goes on, and says why.

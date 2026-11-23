@@ -524,7 +524,7 @@ def _plain(version):
     return str(version or "").strip().lstrip("v")
 
 
-# The start of the status message of a component that k4all-operator (v0.5.6
+# The start of the status message of a component that k4all-operator (v0.5.7
 # on) keeps installed though it should go (its feature off, management
 # Removed), because its uninstall would break what runs on it: KubeVirt while
 # VMs exist. The component stays Installed at the version it runs.

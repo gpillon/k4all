@@ -68,7 +68,7 @@ const FEATURE_OFF: Record<string, string> = {
 
 /**
  * What turning the feature off does to its components (list), with the
- * installed operator: from v0.5.6 k4all-operator keeps virtualization while
+ * installed operator: from v0.5.7 k4all-operator keeps virtualization while
  * VMs and their disks exist, before it deleted it from under them.
  */
 export function featureOffConsequence(

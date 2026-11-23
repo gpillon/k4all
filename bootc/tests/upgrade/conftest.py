@@ -145,7 +145,7 @@ class FakeHost(ku.Host):
         # first write: the CR was created by a client-side `kubectl apply`.
         self.rm_owners = None
         self.components_after_sync = "Installed"
-        # component -> reason: k4all-operator (v0.5.6 on) refuses its
+        # component -> reason: k4all-operator (v0.5.7 on) refuses its
         # uninstall and keeps it Installed at an older version
         self.refused = {}
         self.images = {}            # version -> {"kubernetes": ...}

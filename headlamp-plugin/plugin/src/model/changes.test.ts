@@ -50,9 +50,9 @@ describe('describeChanges', () => {
     expect(needsAcknowledgement(items)).toBe(true);
   });
 
-  it('says that k4all-operator v0.5.6 keeps virtualization while VMs and their disks exist', () => {
+  it('says that k4all-operator v0.5.7 keeps virtualization while VMs and their disks exist', () => {
     const on = setIn(base(), ['features', 'virt', 'enabled'], true);
-    const [item] = describeChanges(on, base(), components(), capabilitiesOf('v0.5.6'));
+    const [item] = describeChanges(on, base(), components(), capabilitiesOf('v0.5.7'));
     expect(item).toMatchObject({ key: 'features.virt.enabled', severity: 'danger', to: 'off' });
     expect(item.consequence).toBe(
       'Uninstalls cdi, kubevirt, kubevirt-manager, virtctl once nothing runs on them: ' +
@@ -63,14 +63,15 @@ describe('describeChanges', () => {
     );
   });
 
-  it('warns that k4all-operator before v0.5.6 deletes KubeVirt and CDI from under running VMs', () => {
+  it('warns that k4all-operator before v0.5.7 deletes KubeVirt and CDI from under running VMs', () => {
     const on = setIn(base(), ['features', 'virt', 'enabled'], true);
-    for (const caps of [capabilitiesOf('v0.5.5'), capabilitiesOf(null)]) {
+    // v0.5.6, published without the guard, among them
+    for (const caps of [capabilitiesOf('v0.5.6'), capabilitiesOf('v0.5.5'), capabilitiesOf(null)]) {
       const [item] = describeChanges(on, base(), components(), caps);
       expect(item.consequence).toMatch(
         /^Uninstalls cdi, kubevirt, kubevirt-manager, virtctl at once, even while VMs run: KubeVirt and CDI are deleted from under them/
       );
-      expect(item.consequence).toMatch(/k4all-operator v0\.5\.6 \(k4all v2\.6\.6\)/);
+      expect(item.consequence).toMatch(/k4all-operator v0\.5\.7 \(k4all v2\.6\.6\)/);
     }
   });
 
