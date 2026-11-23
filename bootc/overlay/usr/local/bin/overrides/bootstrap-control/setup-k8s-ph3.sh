@@ -21,9 +21,14 @@ if [ -f "/opt/k4all/setup-ph3.done" ]; then
   exit 0
 fi
 
+source /usr/local/bin/k4all-utils
+# The node's address goes into the certificates and the HA settings below
+# (control-plane-utils reads it when sourced): a boot without network waits
+# for it here, and kubeadm init or join after this step with it.
+wait_for_node_network "Kubernetes setup phase 3"
+
 # shellcheck source=SCRIPTDIR/control-plane-utils
 source /var/opt/k4all/bin/control-plane-utils
-source /usr/local/bin/k4all-utils
 
 function setup_k8s_for_vip()  {
   
