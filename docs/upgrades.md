@@ -56,6 +56,7 @@ The 2.x upgrade path:
 | v2.6.3 | patch: the installer's layout fits RAID controllers with a large optimal I/O size (a kept disk label reuses its BIOS boot partition), and the storage spoke shows when the layout could not be applied; same components as v2.6.2 |
 | v2.6.4 | patch with a ReleaseManifest sync: every node pins the kubelet's `--node-ip` to its own address (no pod-network InternalIP after ovs-bridge); k4all-operator v0.5.3: with the OVS bridge Cilium 1.20 names `ovs-bridge` in its devices (its agents start again at every boot), with KubeVirt VMs on the pod network reach ClusterIPs and DNS, with Multus secondary networks attach; it includes v0.5.2 (a component switched from Unmanaged to Managed follows its upgrade path from the version it runs); KubeVirt's operator and infra prefer control planes (the drain of a cluster's only control plane can end) |
 | v2.6.5 | patch with a ReleaseManifest sync: k4all-operator v0.5.4, whose KubeVirt emulation `auto` uses KVM on the nodes that have it (before, every cluster ran its VMs in software emulation); TopoLVM's `topolvm-node` waits for lvmd's socket instead of crash-looping on a new node; a first boot without network waits for it and keeps the DHCP domain; with firewalld on, each node opens the ports of the CNI it runs (`k4all-cni-firewalld`); new clusters accept 250 pods per node; `reinstall.sh --kubernetes` refuses on 2.x and a base reinstall no longer restores a local backup or re-applies the node's files over the cluster's |
+| v2.6.6 | patch with a ReleaseManifest sync: k4all-operator v0.5.6, whose applies of KubeVirt and CDI keep the cluster's feature gates, whose recreated TopoLVM StorageClass keeps its CDI StorageProfile, and whose fresh KubeVirt/CDI no longer shows Failed for 5 minutes; `k4all-upgrade` checks a saved plan on the current graph before each hop; `k4all-backup.sh --help` |
 | v2.7.0 | unattended join: `kubeadm init` and `join` become declarative (Kubernetes unchanged) |
 | v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
 | v2.9.0 | Kubernetes 1.37 |
@@ -567,6 +568,30 @@ sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
   `maxPods: 250` to the `kubelet-config` ConfigMap, then on every node run
   `sudo kubeadm upgrade node phase kubelet-config` and
   `sudo systemctl restart kubelet`.
+- From v2.6.6 (k4all-operator v0.5.5 and later) an apply of KubeVirt or CDI
+  keeps the feature gates set on the cluster
+  (`spec.configuration.developerConfiguration.featureGates` of the KubeVirt
+  CR, `spec.config.featureGates` of the CDI CR): the operator applies the
+  cluster's gates plus the ones upstream's CR requires. Before, every apply
+  (an upgrade step, a new spec, a hop with a component change) replaced them
+  with upstream's list, empty for KubeVirt. After the first apply by v0.5.5
+  the operator owns the list (`managedFields`): a gate removed by hand stays
+  removed, unless upstream requires it (CDI's `HonorWaitForFirstConsumer`).
+  A gate lost to an apply of v0.5.4 or earlier does not come back: set it
+  again. Fields upstream's CR does not set, such as `permittedHostDevices`,
+  were never touched.
+- From v2.6.6 (k4all-operator v0.5.6), when the operator recreates the
+  `topolvm-provisioner` StorageClass for a new `volumeBindingMode` (a
+  `componentOverrides.topolvm`, or TopoLVM switched from Unmanaged to
+  Managed), it saves the spec of the class's CDI StorageProfile
+  (`cloneStrategy`, `claimPropertySets`, ...) in the ConfigMap
+  `topolvm-system/topolvm-storageprofile-saved` and puts it back on the
+  profile CDI creates for the new class. Recreations done by older
+  operators (the v2.4.0 hop, Immediate to WaitForFirstConsumer) are not
+  covered: note the profile's spec before that hop.
+- From v2.6.6 a fresh KubeVirt or CDI shows `Pending` ("reports no version
+  yet; waiting for it") while its operator starts, instead of `Failed` until
+  the next 5-minute reconcile.
 
 ## Ingress: Traefik (v2.4.0)
 

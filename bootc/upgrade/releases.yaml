@@ -233,3 +233,27 @@ releases:
       reinstall no longer re-applies the node's files over the cluster's
       ClusterConfig and ReleaseManifest (#68). Same components otherwise.
       Kubernetes, CRI-O and Fedora are unchanged.
+
+  - version: v2.6.6
+    kind: patch
+    minFrom: v2.6.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    # The sync brings k4all-operator v0.5.6.
+    syncManifest: true
+    notes: >-
+      k4all-operator v0.5.6 (through the manifest sync, includes v0.5.5): an
+      apply of KubeVirt or CDI (an upgrade step, a new spec, a k4all hop) no
+      longer turns off the feature gates set on the cluster, such as
+      HostDevices, Snapshot or Sidecar; the cluster's gates stay and the
+      ones upstream requires are added. When the operator recreates the
+      topolvm-provisioner StorageClass for a new volumeBindingMode, the CDI
+      StorageProfile of the class keeps the spec set by hand (#80). On a
+      fresh install KubeVirt and CDI wait for their operator instead of
+      showing Failed for 5 minutes (#81). k4all-upgrade checks a saved plan
+      on the current upgrade graph before each hop: a release blocked since,
+      a new exit patch or a raised minFrom makes it plan again, drop the
+      plan, or HOLD a `run` whose target is gone (#73; for hops that start
+      from v2.6.6). k4all-backup.sh --help prints its usage (#82).
+      Kubernetes, CRI-O, Fedora and the other components are unchanged.
