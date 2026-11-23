@@ -524,19 +524,40 @@ def _plain(version):
     return str(version or "").strip().lstrip("v")
 
 
+# The start of the status message of a component that k4all-operator (v0.5.7
+# on) keeps installed though it should go (its feature off, management
+# Removed), because its uninstall would break what runs on it: KubeVirt while
+# VMs exist. The component stays Installed at the version it runs.
+UNINSTALL_REFUSED = "uninstall refused: "
+
+
+def uninstall_refusals(cr):
+    """[(component, reason)]: the uninstalls k4all-operator refuses."""
+    observed = (((cr or {}).get("status") or {}).get("components")) or {}
+    refused = []
+    for name, st in sorted(observed.items()):
+        message = (st or {}).get("message") or ""
+        if message.startswith(UNINSTALL_REFUSED):
+            refused.append((name, message[len(UNINSTALL_REFUSED):]))
+    return refused
+
+
 def components_settled(cr):
     """(settled, failed, waiting) for a ReleaseManifest after a sync.
 
     A component is settled when the operator reports it in a final state
-    and, for a pinned version, has installed exactly that version.
+    and, for a pinned version, has installed exactly that version. One
+    whose uninstall the operator refuses is settled too: it waits on the
+    user (delete what runs on it, or set it Unmanaged), not on the hop.
     """
     spec = ((cr or {}).get("spec") or {}).get("components") or {}
     status = (cr or {}).get("status") or {}
     observed = status.get("components") or {}
+    refused = {name for name, _ in uninstall_refusals(cr)}
     failed, waiting = [], []
     for name, comp in sorted(spec.items()):
         management = comp.get("management") or "Managed"
-        if management == "Unmanaged":
+        if management == "Unmanaged" or name in refused:
             continue
         st = observed.get(name) or {}
         state = st.get("state")
@@ -2357,8 +2378,14 @@ class Upgrader:
         if hop.get("syncManifest") and self._role() == "bootstrap":
             before = self._cilium_config(kc)
             before_rm = self._release_manifest(kc)
-            self.sync_manifest(state)
+            refused = self.sync_manifest(state) or []
             self._cilium_after_sync(before, before_rm)
+            # Shown in upgrade-message during the hop, kept in the history
+            # and by `status` after it: the hop must not hide them.
+            warnings = [w for w in (hop.get("warning") or "").split("; ") if w]
+            warnings += [w for w in refused if w not in warnings]
+            if warnings:
+                hop["warning"] = "; ".join(warnings)
 
     # --- COMMIT ----------------------------------------------------------
     def commit(self, state):
@@ -2530,7 +2557,8 @@ class Upgrader:
         pins, also when step 1 changed nothing: a SYNC resumed after a HOLD
         in step 1, or `k4all-upgrade sync-manifest`, finds the operator
         already changed in the cluster but maybe not running yet.
-        ``state`` is not used any more; it stays for the callers.
+        ``state`` is not used any more; it stays for the callers. Returns
+        the uninstalls the operator refuses (``_wait_components``).
         """
         host = self.host
         kc = self._kubeconfig()
@@ -2579,7 +2607,7 @@ class Upgrader:
             self._wait_operator(kc, want)
         host.log("ReleaseManifest sync 2/2: components")
         self._apply(kc, merged)
-        self._wait_components(kc)
+        return self._wait_components(kc)
 
     def _hand_over_kube_vip(self, kc, cluster):
         """kube-vip's static-pod manifest belongs to the host: set the
@@ -2688,6 +2716,8 @@ class Upgrader:
         return True
 
     def _wait_components(self, kc):
+        """Wait until the components settle; the uninstalls the operator
+        refuses, as "<component>: uninstall refused: <reason>"."""
         host, deadline = self.host, self._deadline()
         while True:
             cr = kubectl_json(host, kc, ["get", "releasemanifest",
@@ -2695,7 +2725,11 @@ class Upgrader:
             settled, failed, waiting = components_settled(cr)
             if settled:
                 host.log("components reconciled")
-                return
+                refused = ["%s: %s%s" % (name, UNINSTALL_REFUSED, reason)
+                           for name, reason in uninstall_refusals(cr)]
+                for line in refused:
+                    host.log("WARNING: %s" % line)
+                return refused
             # Failed components are retried by the operator; give up only at
             # the deadline.
             if host.now() >= deadline and failed:
@@ -3140,6 +3174,9 @@ def cmd_status(host, cfg, args):
                   % (committed, version, version))
         if state.get("abandoned"):
             print("Abandoned: %s" % abandoned_message(state["abandoned"]))
+        last = (state.get("history") or [{}])[-1]
+        if last.get("warning"):
+            print("Warning:   %s (hop to %s)" % (last["warning"], last.get("to")))
         return 0
     print("Upgrade:   target %s, phase %s%s"
           % (state.get("target"), state.get("phase"),
@@ -3149,6 +3186,8 @@ def cmd_status(host, cfg, args):
                                            state["hop"]["kind"]))
     if state.get("pending"):
         print("Then:      %s" % " -> ".join(r["version"] for r in state["pending"]))
+    if (state.get("hop") or {}).get("warning"):
+        print("Warning:   %s" % state["hop"]["warning"])
     if state.get("hold"):
         print("HOLD:      %s" % state["hold"]["reason"])
     elif state.get("waiting"):
