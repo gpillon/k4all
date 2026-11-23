@@ -116,7 +116,9 @@ Don't unmask it.
    minute: on control planes the tool waits up to 5 minutes
    (`apiserverReadyTimeoutMinutes` in `/etc/k4all-upgrade.yaml`) before it
    stops in HOLD with the failed `/readyz` checks. On multi-node clusters, the
-   order is respected (see below).
+   order is respected (see below). From v2.6.6, a node that drains itself
+   stops in HOLD when a PodDisruptionBudget would keep its drain from ever
+   ending (see [Drains that never end](#drains-that-never-end)).
 2. **Backup.** The tool runs `k4all-backup.sh` (etcd snapshot, PKI, configs)
    and copies the kubelet config to
    `/var/lib/k4all/upgrade/backup/<from>-<to>/`.
@@ -131,6 +133,11 @@ Don't unmask it.
 5. **Drain and reboot.** Control planes drain themselves; a bootstrap node
    alone in its cluster is not drained. A worker cannot drain itself: it
    waits until someone drains it (see [Multi-node clusters](#multi-node-clusters)).
+   From v2.6.6 a node being drained carries the label
+   `k4all.magesgate.com/draining=true` from its cordon to its uncordon: the
+   k4all-operator tolerates the cordon (a single node must still run it), and
+   prefers the nodes without that label, so a drain that evicts it does not
+   put it back on the node that reboots.
    Right before the reboot kubelet stops and every pod still on the node
    (DaemonSets, or all of them on a single node) gets 30 seconds to exit, so
    a pod with a long grace period cannot hold the shutdown.
@@ -225,13 +232,15 @@ Every hop reboots the node, so every hop needs a drain. Control planes drain
 themselves with the admin kubeconfig and uncordon after the reboot. A worker
 (or a control plane without `admin.conf`) has `kubelet.conf`, which may not
 evict pods: its hop waits until the node is cordoned. Drain it from a
-control plane:
+control plane, with the label that keeps the k4all-operator off it:
 
 ```bash
+kubectl label node <node> k4all.magesgate.com/draining=true
 kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
 ```
 
-and the hop can start.
+and the hop can start. A worker cannot read the PodDisruptionBudgets: if the
+drain does not end, see [Drains that never end](#drains-that-never-end).
 
 A wrong order and a missing drain are not a HOLD: they pass by themselves.
 The hop does not start and nothing is downloaded; `k4all-upgrade status`
@@ -250,9 +259,73 @@ shows why (`Waiting:`), and so does the Node's `upgrade-message`.
 A bootstrap node without `admin.conf` cannot tell whether it is alone: it is
 not drained, with a warning in the log.
 
-The tool leaves your cordon alone, also after the reboot: run
-`kubectl uncordon <node>` once the node is back (the end of the hop reminds
-you).
+The tool leaves your cordon alone, also after the reboot: once the node is
+back, uncordon it and remove the label (the end of the hop reminds you):
+
+```bash
+kubectl uncordon <node>
+kubectl label node <node> k4all.magesgate.com/draining-
+```
+
+### Drains that never end
+
+A PodDisruptionBudget that allows no disruption (`disruptionsAllowed: 0`)
+although all its pods are healthy refuses every eviction of its pods, so the
+drain of their node never ends. The usual case is the primary of a
+single-instance CloudNativePG cluster: CNPG gives it the budget
+`<cluster>-primary` with `minAvailable: 1`, healthy at 1/1 and never
+disruptable. A Deployment of one replica with `minAvailable: 1` does the same.
+With more instances the primary budget is the same, but CNPG switches the
+primary over to a replica when its node is cordoned, and the drain ends.
+
+From v2.6.6 the drivers of a hop check this before they drain, and name each
+budget and pod. Pods of DaemonSets, terminating or not running pods, and
+budgets whose pods are on other nodes do not count; nor do budgets short of
+healthy pods (their pods are starting: the drain waits for them), nor a CNPG
+primary with a ready replica on another node.
+
+- `k4all-upgrade` on a node that drains itself stops in HOLD in the
+  preflight, before anything is downloaded:
+  `the drain of <node> would never end: PDB <namespace>/<name> allows no
+  disruption of pod <namespace>/<pod> ...`. Nothing was changed.
+- A [ClusterUpgrade](#operator-driven-upgrades-from-v240) does not cordon
+  the node, and its status message names the budget until it allows a
+  disruption.
+- A worker's `k4all-upgrade` cannot read the budgets; look for them before
+  its drain:
+  `kubectl get pdb -A` (a `0` under ALLOWED DISRUPTIONS) and
+  `kubectl get pods -A -o wide --field-selector spec.nodeName=<node>`.
+
+A single-node cluster is not drained, and is not checked.
+
+k4all does not change a database's safety settings: whether it may be down
+while its node reboots is your call. For a single-instance CloudNativePG
+cluster, either let CNPG drop its budget for the hop:
+
+```bash
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"enablePDB":false}}'
+# ... the hop ...
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"enablePDB":true}}'
+```
+
+or use its maintenance window, which with `reusePVC: true` keeps the
+instance on its volume (a TopoLVM volume is local: the pod waits for its
+node to come back):
+
+```bash
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"nodeMaintenanceWindow":{"inProgress":true,"reusePVC":true}}}'
+# ... the hop ...
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"nodeMaintenanceWindow":{"inProgress":false}}}'
+```
+
+The database is down until the node is back. To keep it up instead, give
+the cluster a replica on another node (`instances: 2`) before the hop. Then
+`sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume` on the node, or
+wait for the ClusterUpgrade to go on by itself.
 
 ### Two control planes
 
@@ -440,6 +513,7 @@ minute and after boot (from v2.2.4; until an operator writes
 |---|---|---|
 | `upgrade-target` | operator | release of the hop this node must run now |
 | `upgrade-cordoned` | operator | the operator cordoned the node; it uncordons it once the node is past the reboot (SYNC or COMMIT), or after the hop |
+| `draining` (a label, from v2.6.6) | operator, node | `true` from the cordon to the uncordon (or the end of the hop): the operator's own pod prefers the other nodes |
 | `release` | node | release the node runs: the last committed hop |
 | `node-type` | node | `bootstrap`, `control` or `worker` (from `/etc/node-type`) |
 | `upgrade-phase` | node | phase of the hop in progress (`PREFLIGHT` … `COMMIT`), `HOLD` or `ABANDONED`; absent when idle |

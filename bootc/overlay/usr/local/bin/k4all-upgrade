@@ -67,6 +67,10 @@ ANNOTATION_PHASE = "k4all.magesgate.com/upgrade-phase"
 ANNOTATION_MESSAGE = "k4all.magesgate.com/upgrade-message"
 ANNOTATION_REASON = "k4all.magesgate.com/upgrade-reason"
 ANNOTATION_DONE = "k4all.magesgate.com/upgrade-done"
+# On a Node from its cordon to its uncordon, by whoever drains it (this tool,
+# the k4all-operator's ClusterUpgrade, or the admin): the operator's pod
+# tolerates the cordon, and prefers the nodes without this label.
+LABEL_DRAINING = "k4all.magesgate.com/draining"
 PHASE_HOLD = "HOLD"
 PHASE_ABANDONED = "ABANDONED"
 # upgrade-reason next to HOLD; without it the operator sees a HostHold.
@@ -1034,6 +1038,142 @@ def readyz_problem(proc):
     return text if len(text) <= 300 else "..." + text[-297:]
 
 
+# A static pod's mirror: a drain leaves it alone.
+MIRROR_ANNOTATION = "kubernetes.io/config.mirror"
+# The labels of a CloudNativePG instance pod.
+CNPG_CLUSTER_LABEL = "cnpg.io/cluster"
+CNPG_ROLE_LABEL = "cnpg.io/instanceRole"
+DRAIN_DOCS = "docs/upgrades.md, Drains that never end"
+
+
+def selector_matches(selector, labels):
+    """Whether a LabelSelector selects ``labels``. As for a policy/v1
+    PodDisruptionBudget, an empty selector selects every pod and a missing
+    one none; an operator it does not know selects nothing."""
+    if selector is None:
+        return False
+    labels = labels or {}
+    for key, value in (selector.get("matchLabels") or {}).items():
+        if labels.get(key) != value:
+            return False
+    for expr in selector.get("matchExpressions") or []:
+        key, op = expr.get("key"), expr.get("operator")
+        values = expr.get("values") or []
+        if op == "In":
+            ok = key in labels and labels[key] in values
+        elif op == "NotIn":
+            ok = key not in labels or labels[key] not in values
+        elif op == "Exists":
+            ok = key in labels
+        elif op == "DoesNotExist":
+            ok = key not in labels
+        else:
+            return False
+        if not ok:
+            return False
+    return True
+
+
+def evicted_under_budget(pod):
+    """Whether a drain evicts ``pod`` and its PodDisruptionBudget decides:
+    a running pod, not a DaemonSet's, not a static pod's mirror, not
+    terminating. The eviction API lets pending and finished pods go
+    whatever their budget says."""
+    meta = pod.get("metadata") or {}
+    if meta.get("deletionTimestamp") \
+            or (pod.get("status") or {}).get("phase") != "Running" \
+            or MIRROR_ANNOTATION in (meta.get("annotations") or {}):
+        return False
+    return not any(o.get("kind") == "DaemonSet"
+                   for o in meta.get("ownerReferences") or [])
+
+
+def budget_never_allows(pdb):
+    """Whether a PodDisruptionBudget allows no disruption although every pod
+    it expects is healthy: waiting changes nothing (the primary of a
+    single-instance CloudNativePG cluster, minAvailable 1 of 1). A budget
+    short of healthy pods is not one: its pods are starting, and the drain
+    retries its evictions until its timeout. Nor is one the disruption
+    controller has not seen yet."""
+    meta, status = pdb.get("metadata") or {}, pdb.get("status") or {}
+    if int(status.get("observedGeneration") or 0) < int(meta.get("generation") or 0):
+        return False
+    return int(status.get("disruptionsAllowed") or 0) == 0 and \
+        int(status.get("currentHealthy") or 0) >= int(status.get("expectedPods") or 0)
+
+
+def pod_ready(pod):
+    return any(c.get("type") == "Ready" and c.get("status") == "True"
+               for c in (pod.get("status") or {}).get("conditions") or [])
+
+
+def cnpg_primary(pod):
+    """The CloudNativePG cluster whose primary ``pod`` is, else None."""
+    labels = (pod.get("metadata") or {}).get("labels") or {}
+    if labels.get(CNPG_ROLE_LABEL) == "primary":
+        return labels.get(CNPG_CLUSTER_LABEL)
+    return None
+
+
+def cnpg_switches_over(pod, replicas):
+    """Whether CloudNativePG moves the primary ``pod`` off its node by
+    itself: when that node is cordoned it switches over to a replica of the
+    cluster, here one ready on another node (CNPG docs, Kubernetes upgrade).
+    Its primary budget allows no disruption, and still the drain ends."""
+    cluster = cnpg_primary(pod)
+    if not cluster:
+        return False
+    meta = pod.get("metadata") or {}
+    for other in replicas:
+        other_meta = other.get("metadata") or {}
+        labels = other_meta.get("labels") or {}
+        if other_meta.get("namespace") == meta.get("namespace") \
+                and labels.get(CNPG_CLUSTER_LABEL) == cluster \
+                and labels.get(CNPG_ROLE_LABEL) == "replica" \
+                and (other.get("spec") or {}).get("nodeName") \
+                not in (None, (pod.get("spec") or {}).get("nodeName")) \
+                and not other_meta.get("deletionTimestamp") \
+                and (other.get("status") or {}).get("phase") == "Running" \
+                and pod_ready(other):
+            return True
+    return False
+
+
+def drain_blockers(pdbs, pods, replicas=()):
+    """[(budget, pod)], each namespace/name, sorted: the pods among ``pods``
+    (the ones of the node to drain) whose eviction a budget always refuses,
+    so the drain of that node would never end. ``replicas``: the
+    CloudNativePG replicas of the cluster, for cnpg_switches_over."""
+    blockers = []
+    for pdb in pdbs:
+        if not budget_never_allows(pdb):
+            continue
+        meta = pdb.get("metadata") or {}
+        namespace = meta.get("namespace")
+        selector = (pdb.get("spec") or {}).get("selector")
+        for pod in pods:
+            pod_meta = pod.get("metadata") or {}
+            if pod_meta.get("namespace") == namespace \
+                    and evicted_under_budget(pod) \
+                    and selector_matches(selector, pod_meta.get("labels")) \
+                    and not cnpg_switches_over(pod, replicas):
+                blockers.append(("%s/%s" % (namespace, meta.get("name")),
+                                 "%s/%s" % (namespace, pod_meta.get("name"))))
+    return sorted(blockers)
+
+
+def drain_blocked_message(node, blockers):
+    """The HOLD of a hop whose drain would never end."""
+    named = ["PDB %s allows no disruption of pod %s" % b for b in blockers[:3]]
+    if len(blockers) > 3:
+        named.append("and %d more" % (len(blockers) - 3))
+    return ("the drain of %s would never end: %s, and all its pods are "
+            "healthy, so waiting does not help. Nothing was changed. For a "
+            "single-instance CloudNativePG cluster, allow its disruption for "
+            "the hop (enablePDB: false or nodeMaintenanceWindow; see %s), or "
+            "move the pod to another node" % (node, "; ".join(named), DRAIN_DOCS))
+
+
 def cluster_kubernetes_version(host, kubeconfig):
     cm = kubectl_json(host, kubeconfig,
                       ["-n", "kube-system", "get", "configmap", "kubeadm-config"])
@@ -1473,11 +1613,63 @@ class Upgrader:
         state = ("cannot read Node %s (%s)" % (name, why)) if node is None \
             else "Node %s is not cordoned" % name
         return ("this node needs a drain before the reboot, and its kubelet.conf "
-                "may not evict pods; %s. From a control plane run `kubectl drain "
-                "%s --ignore-daemonsets --delete-emptydir-data`, then %s. The "
-                "node stays cordoned after the hop: `kubectl uncordon %s` once it "
-                "is back. From v2.4.0 a ClusterUpgrade drains and uncordons the "
-                "nodes instead." % (state, name, then, name))
+                "may not evict pods; %s. From a control plane run `kubectl label "
+                "node %s %s=true` (the k4all-operator then avoids the node) and "
+                "`kubectl drain %s --ignore-daemonsets --delete-emptydir-data`, "
+                "then %s. The node stays cordoned after the hop: `kubectl "
+                "uncordon %s` and `kubectl label node %s %s-` once it is back. "
+                "From v2.4.0 a ClusterUpgrade drains and uncordons the nodes "
+                "instead." % (state, name, LABEL_DRAINING, name, then, name,
+                              name, LABEL_DRAINING))
+
+    def _label_draining(self, kc, on):
+        """Set (on) or remove the draining label of this Node, with the
+        cordon and the uncordon. Best effort: it only steers where the
+        k4all-operator's pod is scheduled."""
+        arg = LABEL_DRAINING + ("=true" if on else "-")
+        got = kubectl(self.host, kc, ["label", "node", self._node_name(), arg,
+                                      "--overwrite", KUBECTL_TIMEOUT], check=False)
+        if got.returncode != 0:
+            self.host.log("cannot %s the label %s on Node %s: %s"
+                          % ("set" if on else "remove", LABEL_DRAINING,
+                             self._node_name(),
+                             (got.stderr or got.stdout or "").strip()[-300:]))
+
+    def _drain_blockers(self, kc):
+        """drain_blockers() of this node; [] when the budgets or the pods
+        cannot be read (logged): the drain still has its timeout."""
+        name = self._node_name()
+        try:
+            got = kubectl(self.host, kc, ["get", "poddisruptionbudgets", "-A",
+                                          "-o", "json", KUBECTL_TIMEOUT],
+                          check=False)
+            if got.returncode != 0:
+                raise ValueError((got.stderr or got.stdout or "").strip()[-300:])
+            pdbs = [p for p in json.loads(got.stdout).get("items") or []
+                    if budget_never_allows(p)]
+            if not pdbs:
+                return []
+            got = kubectl(self.host, kc, ["get", "pods", "-A", "--field-selector",
+                                          "spec.nodeName=" + name, "-o", "json",
+                                          KUBECTL_TIMEOUT], check=False)
+            if got.returncode != 0:
+                raise ValueError((got.stderr or got.stdout or "").strip()[-300:])
+            pods = json.loads(got.stdout).get("items") or []
+            replicas = []
+            if any(cnpg_primary(p) for p in pods):
+                got = kubectl(self.host, kc, ["get", "pods", "-A", "-l",
+                                              CNPG_ROLE_LABEL + "=replica",
+                                              "-o", "json", KUBECTL_TIMEOUT],
+                              check=False)
+                if got.returncode != 0:
+                    raise ValueError((got.stderr or got.stdout or "").strip()[-300:])
+                replicas = json.loads(got.stdout).get("items") or []
+            return drain_blockers(pdbs, pods, replicas)
+        except ValueError as exc:
+            self.host.log("WARNING: cannot check the PodDisruptionBudgets of the "
+                          "pods on %s (%s): the drain may wait for one until "
+                          "its timeout" % (name, exc))
+            return []
 
     def annotate(self, value):
         """Set (value) or remove (None) the pause annotation on this Node."""
@@ -1637,6 +1829,16 @@ class Upgrader:
             problem = self._cordon_problem("the hop can start")
             if problem:
                 raise NotYet(problem)
+        # A drain this node runs itself would never end on a pod whose
+        # budget allows no disruption: stop before anything is downloaded,
+        # and name it. Changing that budget is the admin's call. A hop the
+        # operator asked for was checked before its cordon.
+        if not operator_driven(state) and kc == ADMIN_KUBECONFIG \
+                and not self._single_node():
+            blockers = self._drain_blockers(kc)
+            if blockers:
+                raise UpgradeError(drain_blocked_message(self._node_name(),
+                                                         blockers))
 
     def _cluster_not_ready(self, kc, check_nodes=True):
         """(problem, nodes): what keeps the control plane from being ready
@@ -1904,6 +2106,9 @@ class Upgrader:
             hop["cordonedOutside"] = True
             return
         minutes = int(self.cfg["drainTimeoutMinutes"])
+        # Labelled with the cordon: the k4all-operator's pod, if this drain
+        # evicts it, does not come back on this node to die with its reboot.
+        self._label_draining(kc, True)
         kubectl(host, kc, ["drain", self._node_name(), "--ignore-daemonsets",
                            "--delete-emptydir-data", "--timeout=%dm" % minutes])
         hop["drained"] = True
@@ -2373,6 +2578,7 @@ class Upgrader:
         kc = self._kubeconfig()
         if hop.get("drained") and kc:
             kubectl(host, kc, ["uncordon", self._node_name()])
+            self._label_draining(kc, False)
             hop["drained"] = False
         self.resume_operator_or_fail(hop)
         if hop.get("syncManifest") and self._role() == "bootstrap":
@@ -2405,8 +2611,10 @@ class Upgrader:
         if hop.get("cordonedOutside"):
             # Whoever drained the node uncordons it, maybe after more hops.
             host.log("Node %s is still cordoned: once it is back, run "
-                     "`kubectl uncordon %s` from a control plane"
-                     % (self._node_name(), self._node_name()))
+                     "`kubectl uncordon %s` and `kubectl label node %s %s-` "
+                     "from a control plane"
+                     % (self._node_name(), self._node_name(), self._node_name(),
+                        LABEL_DRAINING))
 
     # --- rollback --------------------------------------------------------
     def rollback(self, state, reason):
