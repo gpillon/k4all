@@ -37,7 +37,7 @@ delete_file() {
 
   if [ -f "$file_to_del" ]; then
     echo "Deleting $file_to_del"
-    rm -f $file_to_del
+    rm -f "$file_to_del"
   else
     echo "$file_to_del does not exist"
   fi
@@ -88,29 +88,37 @@ done
 # Ask for confirmation before proceeding
 ask_for_confirmation
 
-# Delete all other *.done files except the ones specifically handled by flags
+# K4ALL_ROOT: the tests run the script against a fake root.
+DONE_DIR="${K4ALL_ROOT:-}/opt/k4all"
+
+# Delete all other *.done files except the ones specifically handled by flags,
+# and restore.done: without it the next boot restores the newest backup found
+# on the node (k4all-backup.sh writes to /var/opt/k4all/backups by default)
+# over its PKI, configuration and, on the bootstrap node, etcd.
 if [ "$base" = true ]; then
-  for file in /opt/k4all/*.done; do
-    if [[ "$file" != "/opt/k4all/setup-ph3.done"  && "$file" != "/opt/k4all/setup-ph2.done" && "$file" != "/opt/k4all/k8s-setup-init.done"  && "$file" != "/opt/k4all/setup-hostname.done" && "$file" != "/opt/k4all/setup-ph3-reset-kube.done" && "$file" != "/opt/k4all/setup-proxy.done" ]]; then
-      delete_file "$file"
-    fi
+  for file in "$DONE_DIR"/*.done; do
+    [ -e "$file" ] || continue
+    case "$(basename "$file")" in
+      setup-ph3.done|setup-ph2.done|k8s-setup-init.done|setup-hostname.done|setup-ph3-reset-kube.done|setup-proxy.done|restore.done) ;;
+      *) delete_file "$file" ;;
+    esac
   done
 fi
 
 # Delete specific files based on flags
 if [ "$network_flag" = true ]; then
-  delete_file /opt/k4all/setup-ph2.done
-  delete_file /opt/k4all/setup-ph3.done
-  delete_file /opt/k4all/setup-proxy.done
+  delete_file "$DONE_DIR/setup-ph2.done"
+  delete_file "$DONE_DIR/setup-ph3.done"
+  delete_file "$DONE_DIR/setup-proxy.done"
 fi
 
 if [ "$kubernetes_flag" = true ]; then
-  delete_file "/opt/k4all/k8s-setup-init.done"
-  delete_file "/opt/k4all/setup-ph3-reset-kube.done"
+  delete_file "$DONE_DIR/k8s-setup-init.done"
+  delete_file "$DONE_DIR/setup-ph3-reset-kube.done"
 fi
 
 if [ "$hostname_flag" = true ]; then
-  delete_file "/opt/k4all/setup-hostname.done"
+  delete_file "$DONE_DIR/setup-hostname.done"
 fi
 
 # Reboot the system
