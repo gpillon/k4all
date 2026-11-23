@@ -40,11 +40,14 @@ patch:
 ## Minors stay light
 
 A minor syncs its manifest only when that sync is what makes it a minor: the
-first sync, CRD upgrades, a chart's major
-([ADR-0001](0001-minor-releases-are-mandatory-stops.md)). It never carries a
-fix, a component patch or a new operator forward. Every node of the stream
-before it goes through it, and a published minor cannot be replaced, since
-blocking it leaves that stream without a path.
+first sync, CRD upgrades, a chart's major or a replaced component, as in
+v2.4.0 and the planned v2.8.0. It never carries a fix, a component patch or a
+new operator forward. Every node of the stream before it goes through it, and
+a published minor cannot be replaced, since blocking it leaves that stream
+without a path. This refines
+[ADR-0001](0001-minor-releases-are-mandatory-stops.md) and does not
+contradict it. ADR-0001 says which changes need a minor. This says that a
+minor carries nothing else.
 
 ## The check
 
@@ -99,3 +102,10 @@ release manifest pins must be at most the one in S's.
 - CI checks out the tags (`fetch-depth: 0`). Every release in `releases.yaml`
   except the newest must be tagged before main lists it, which an exit patch
   is by construction.
+- An exit patch's tag runs the release workflow of its own branch. That
+  workflow is safe only from v2.6.2 on: it gives Latest only to the highest
+  tag and writes `indexDigest`
+  ([ADR-0009](0009-graph-pins-images-as-index-digest.md)). So streams before
+  2.6 cannot get an exit patch until their tags get a safe release job
+  ([#79](https://github.com/gpillon/k4all/issues/79)). The steps are in
+  docs/upgrades.md (How releases are cut).

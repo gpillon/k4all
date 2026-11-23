@@ -76,6 +76,31 @@ A minor syncs the ReleaseManifest only when the sync is what makes it a
 minor. The decision and the check are in
 [ADR-0010](adr/0010-releases-come-from-main-in-version-order.md).
 
+Publishing an exit patch, with v2.6.9 after v2.7.x as the example. The order
+matters. Nodes read the upgrade graph of the Latest GitHub release, which is
+the highest tag, and a published release keeps its graph. So the exit patch
+reaches nodes only through the next release from main.
+
+1. Fix the hop on main first, and merge it.
+2. Branch from the tag of the stream's latest patch (`v2.6.8`) and
+   cherry-pick the fix (`git cherry-pick -x`). Leave
+   `k4all-release.yaml` as it is. Add v2.6.9 to `releases.yaml` with
+   `syncManifest: false` and `minFrom` set to the patch before it. If no
+   patch of the stream syncs, `minFrom` can be the stream's X.Y.0.
+3. Tag `v2.6.9` on that branch and push the tag. The tag runs the branch's
+   own release workflow, which publishes the image and the GitHub release.
+   That release does not become Latest, so no node sees it yet. Only tags
+   from v2.6.2 on have a safe workflow, one that gives Latest only to the
+   highest tag and writes `indexDigest` (ADR-0009). So streams before 2.6
+   cannot get an exit patch this way
+   ([#79](https://github.com/gpillon/k4all/issues/79)).
+4. On main, in the next release's PR, add the same v2.6.9 entry to
+   `releases.yaml`. If the hop needs the fix, raise v2.7.0's `minFrom` to
+   `v2.6.9`. CI reads v2.6.9's manifest from its tag, so the tag has to
+   exist first.
+5. Publish that release. It becomes Latest, and its `upgrade-graph.json` is
+   the first one that gives nodes v2.6.9.
+
 ## Automatic or on command
 
 The policy is `/etc/k4all-upgrade.yaml`. When that file is missing,
