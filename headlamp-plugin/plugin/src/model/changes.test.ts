@@ -1,3 +1,4 @@
+import { capabilitiesOf } from './capabilities';
 import {
   describeChanges,
   formatValue,
@@ -47,6 +48,51 @@ describe('describeChanges', () => {
     expect(items[0]).toMatchObject({ severity: 'danger', to: 'off' });
     expect(items[0].consequence).toMatch(/^Uninstalls argocd\./);
     expect(needsAcknowledgement(items)).toBe(true);
+  });
+
+  it('says that k4all-operator v0.5.7 keeps virtualization while VMs and their disks exist', () => {
+    const on = setIn(base(), ['features', 'virt', 'enabled'], true);
+    const [item] = describeChanges(on, base(), components(), capabilitiesOf('v0.5.7'));
+    expect(item).toMatchObject({ key: 'features.virt.enabled', severity: 'danger', to: 'off' });
+    expect(item.consequence).toBe(
+      'Uninstalls cdi, hangar, hangar-node-agent, kubevirt, virtctl once nothing runs on them: ' +
+        'k4all-operator keeps KubeVirt while VirtualMachines or ' +
+        'VirtualMachineInstances exist, and CDI while DataVolumes or PVCs made by CDI exist, and ' +
+        'this switch shows what is left. Back up the VM disks you need, then delete the VMs and ' +
+        'DataVolumes.'
+    );
+  });
+
+  // k4all v2.6.x: kubevirt-manager is still installed, and v0.5.7 keeps it
+  // while VMs exist too (from v2.7.0 the release removes it).
+  it('names kubevirt-manager among what is kept where the release still installs it', () => {
+    const on = setIn(base(), ['features', 'virt', 'enabled'], true);
+    const v266 = {
+      ...components(),
+      'kubevirt-manager': {
+        type: 'manifest',
+        version: 'v1.5.4',
+        featureGate: 'virt',
+        dependsOn: ['kubevirt'],
+      },
+    };
+    const [item] = describeChanges(on, base(), v266, capabilitiesOf('v0.5.7'));
+    expect(item.consequence).toMatch(
+      /^Uninstalls cdi, hangar, hangar-node-agent, kubevirt, kubevirt-manager, virtctl once/
+    );
+    expect(item.consequence).toMatch(/keeps KubeVirt and kubevirt-manager while VirtualMachines/);
+  });
+
+  it('warns that k4all-operator before v0.5.7 deletes KubeVirt and CDI from under running VMs', () => {
+    const on = setIn(base(), ['features', 'virt', 'enabled'], true);
+    // v0.5.6, published without the guard, among them
+    for (const caps of [capabilitiesOf('v0.5.6'), capabilitiesOf('v0.5.5'), capabilitiesOf(null)]) {
+      const [item] = describeChanges(on, base(), components(), caps);
+      expect(item.consequence).toMatch(
+        /^Uninstalls cdi, hangar, hangar-node-agent, kubevirt, virtctl at once, even while VMs run: KubeVirt and CDI are deleted from under them/
+      );
+      expect(item.consequence).toMatch(/k4all-operator v0\.5\.7 \(k4all v2\.6\.6\)/);
+    }
   });
 
   it('describes a Traefik address change once', () => {

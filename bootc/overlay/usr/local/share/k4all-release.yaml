@@ -732,7 +732,17 @@ spec:
       # (KVM on a node -> useEmulation false), not the operator pod, which
       # never sees /dev/kvm; Unmanaged and Skipped components keep their
       # transition time.
-      version: "v0.5.4"
+      # v0.5.7 (k4all v2.6.6; includes v0.5.5 and v0.5.6): an apply of
+      # KubeVirt or CDI keeps the feature gates set on the cluster; a
+      # recreated topolvm-provisioner StorageClass keeps its CDI
+      # StorageProfile spec (#80); a fresh KubeVirt/CDI waits for its
+      # operator instead of showing Failed (#81); turning virt off is refused
+      # while VMs or their disks exist, and otherwise lets KubeVirt and CDI
+      # uninstall themselves before their operators go (#94); a Helm release
+      # left pending by a stopped operator is recovered; a ClusterUpgrade
+      # labels the node it drains and does not cordon a node a
+      # PodDisruptionBudget would keep from draining (#86, #87).
+      version: "v0.5.7"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system

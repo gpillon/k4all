@@ -26,9 +26,9 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
         with:
-          # With the tags: test_graph.py loads k4all-upgrade as each
-          # published release ships it (git show <tag>:...), and fails in CI
-          # when a tag is missing.
+          # With the tags: test_graph.py loads k4all-upgrade and the release
+          # manifest as each published release ships them (git show
+          # <tag>:...), and fails in CI when a tag is missing.
           fetch-depth: 0
 
       - name: Install test and lint dependencies

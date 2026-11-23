@@ -46,6 +46,15 @@ describe('operator capabilities', () => {
     expect(capabilitiesOf('v0.6.0')).toMatchObject({ cniSwitch: true, ovsBridgeToggle: true });
   });
 
+  it('has the virtualization uninstall guard from v0.5.7 (k4all v2.6.6)', () => {
+    // v0.5.6 was published without it: virt off still deletes KubeVirt and CDI
+    expect(capabilitiesOf('v0.5.6').virtUninstallGuard).toBe(false);
+    expect(capabilitiesOf('v0.5.7').virtUninstallGuard).toBe(true);
+    expect(capabilityNote('virtUninstallGuard')).toBe(
+      'coming with k4all-operator v0.5.7 (k4all v2.6.6)'
+    );
+  });
+
   it('names the operator (and k4all release) that brings a capability', () => {
     expect(capabilityNote('cniSwitch')).toBe('coming with k4all-operator v0.6.0');
     expect(capabilityNote('clusterUpgrade')).toBe(

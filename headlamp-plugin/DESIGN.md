@@ -220,7 +220,9 @@ Every row carries an apply badge: **Live** (the operator applies it),
   `ClusterConfig.status.features` (Ready / Installing / Off, or "Will be
   installed/removed" while pending), the components it brings (read from the
   ReleaseManifest `featureGate`s, so it follows the release), and for
-  Virtualization the emulation select. The OVS bridge card is dashed and
+  Virtualization the emulation select, what turning it off does with the
+  installed operator, and "Removal refused" with the operator's reason for
+  each component whose status message starts with `uninstall refused: `. The OVS bridge card is dashed and
   locked with "Coming with k4all-operator v0.6.0"; with that operator it
   gets a switch (4.1).
 - **Ingress**: the release's ingress controller, from the ReleaseManifest
@@ -365,6 +367,7 @@ release's spec version) in one table, `src/model/capabilities.ts`:
 | `clusterUpgrade` | v0.4.0 (k4all v2.4.0) | explains a missing ClusterUpgrade API (the API itself is detected by discovery) |
 | `cniSwitch` | v0.6.0 | CNI select in Networking, change reviewed as dangerous |
 | `ovsBridgeToggle` | v0.6.0 | OVS bridge switch in Features, change reviewed as dangerous |
+| `virtUninstallGuard` | v0.5.7 (k4all v2.6.6) | turning Virtualization off is reviewed as "uninstalls once nothing runs on them" (the operator keeps KubeVirt and kubevirt-manager while VMs exist, CDI while DataVolumes or PVCs made by CDI exist); older operators are reviewed as deleting KubeVirt and CDI from under running VMs |
 
 An unknown or unparsable version has no optional capability. Fields that
 turn live carry `liveWith: <capability>` in `fields.ts`; the controls and
@@ -469,8 +472,8 @@ same patch with `dryRun=All`. The API server runs defaulting, validation and
 admission and returns the object it would store. The review dialog shows:
 
 1. the changes in words, each with severity (info / warning / danger) and its
-   consequence (e.g. "Uninstalls cdi, hangar, hangar-node-agent, kubevirt, virtctl.
-   Virtual machines stop and are deleted…"), with the components a feature
+   consequence (e.g. "Uninstalls cdi, hangar, hangar-node-agent, kubevirt, virtctl
+   once nothing runs on them…"), with the components a feature
    brings read from the ReleaseManifest;
 2. for settings: "After saving, k4all-operator applies these components
    again": every active component with an operator hook when settings change

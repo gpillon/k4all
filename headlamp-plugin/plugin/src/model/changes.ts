@@ -3,6 +3,7 @@
  * in words, and what it does to the cluster.
  */
 
+import { Capabilities, CAPABILITY_RELEASE, CAPABILITY_SINCE } from './capabilities';
 import { componentActivation } from './components';
 import { fieldForPath, FIELDS } from './fields';
 import { dottedPath, getIn, isPlainObject, jsonEqual, Path } from './objects';
@@ -59,19 +60,54 @@ function componentsOf(
 }
 
 const FEATURE_OFF: Record<string, string> = {
-  virt: 'Virtual machines stop and are deleted with the KubeVirt resources. Back up VM disks you need first.',
   argocd:
     'Argo CD stops syncing. Applications it deployed keep running but are no longer reconciled.',
   ovsCni:
     'Pods and VMs attached to OVS secondary networks lose those interfaces when they restart.',
 };
 
+/**
+ * What turning the feature off does to its components (list), with the
+ * installed operator: from v0.5.7 k4all-operator keeps virtualization while
+ * VMs and their disks exist, before it deleted it from under them. It names
+ * kubevirt-manager only where the release still installs it (k4all v2.6.x;
+ * v2.7.0 removes it).
+ */
+export function featureOffConsequence(
+  feature: 'virt' | 'argocd' | 'ovsCni',
+  list: string,
+  caps?: Capabilities
+): string {
+  if (feature !== 'virt') {
+    return `Uninstalls ${list}. ${FEATURE_OFF[feature]}`;
+  }
+  if (caps?.virtUninstallGuard) {
+    const kept = list.split(', ').includes('kubevirt-manager')
+      ? 'KubeVirt and kubevirt-manager'
+      : 'KubeVirt';
+    return (
+      `Uninstalls ${list} once nothing runs on them: k4all-operator keeps ${kept} ` +
+      'while VirtualMachines or VirtualMachineInstances exist, and CDI while ' +
+      'DataVolumes or PVCs made by CDI exist, and this switch shows what is left. Back up the VM ' +
+      'disks you need, then delete the VMs and DataVolumes.'
+    );
+  }
+  return (
+    `Uninstalls ${list} at once, even while VMs run: KubeVirt and CDI are deleted from under ` +
+    'them, and the VMs and DataVolumes are left with nothing to manage them. Back up the VM disks ' +
+    'you need and delete the VMs and DataVolumes first, or upgrade to k4all-operator ' +
+    `${CAPABILITY_SINCE.virtUninstallGuard} (k4all ${CAPABILITY_RELEASE.virtUninstallGuard}) ` +
+    'first: it keeps them while VMs and their disks exist.'
+  );
+}
+
 function featureChange(
   feature: 'virt' | 'argocd' | 'ovsCni',
   label: string,
   enabled: boolean,
   components: Record<string, ComponentSpec>,
-  base: ClusterConfigSpec
+  base: ClusterConfigSpec,
+  caps?: Capabilities
 ): ChangeItem {
   const names = componentsOf(feature, components, base);
   const list = names.length ? names.join(', ') : 'its components';
@@ -83,7 +119,7 @@ function featureChange(
     severity: enabled ? 'info' : 'danger',
     consequence: enabled
       ? `Installs ${list}. This takes a few minutes.`
-      : `Uninstalls ${list}. ${FEATURE_OFF[feature]}`,
+      : featureOffConsequence(feature, list, caps),
   };
 }
 
@@ -124,7 +160,9 @@ const LIVE_DANGER: Record<string, string> = {
 export function describeChanges(
   base: ClusterConfigSpec,
   draft: ClusterConfigSpec,
-  components: Record<string, ComponentSpec> = {}
+  components: Record<string, ComponentSpec> = {},
+  /** What the installed k4all-operator can do; unknown: nothing optional. */
+  caps?: Capabilities
 ): ChangeItem[] {
   const items: ChangeItem[] = [];
   const seen = new Set<string>();
@@ -144,7 +182,7 @@ export function describeChanges(
     const before = base.features?.[feature]?.enabled === true;
     const after = draft.features?.[feature]?.enabled === true;
     if (before !== after) {
-      add(featureChange(feature, label, after, components, base));
+      add(featureChange(feature, label, after, components, base, caps));
     }
   }
 
