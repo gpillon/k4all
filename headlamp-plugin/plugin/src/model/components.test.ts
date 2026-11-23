@@ -85,6 +85,15 @@ describe('componentActivation (port of the operator shouldInstall)', () => {
     expect(componentActivation('traefik', spec(), calico()).active).toBe(true);
   });
 
+  // Operator engine.FeatureEnabled: the rook gate (Cairn) stays off until the
+  // ClusterConfig has a Rook switch; Settings has none to point to yet.
+  it('keeps components behind the rook gate off', () => {
+    expect(componentActivation('cairn', spec({ featureGate: 'rook' }), calico())).toEqual({
+      active: false,
+      reason: 'Needs Rook, which this k4all release cannot turn on yet.',
+    });
+  });
+
   it('leaves Unmanaged and Removed components out', () => {
     expect(componentActivation('traefik', spec({ management: 'Unmanaged' }), calico()).active).toBe(
       false
@@ -151,7 +160,7 @@ describe('buildRows and summarize', () => {
 
   it('summarizes the release', () => {
     const s = summarize(rows);
-    expect(s.total).toBe(18);
+    expect(s.total).toBe(21);
     expect(s.installed).toBe(6);
     expect(s.failed).toBe(0);
     expect(s.upgrading).toBe(1);
@@ -209,7 +218,8 @@ describe('visibleRows', () => {
     const rows = buildRows(releaseManifest(), defaultClusterConfig().spec!);
     expect(rows.some(r => r.name === 'ingress-nginx')).toBe(true);
     expect(visibleRows(rows, false).some(r => r.name === 'ingress-nginx')).toBe(false);
-    expect(visibleRows(rows, false)).toHaveLength(rows.length - 1);
+    expect(visibleRows(rows, false).some(r => r.name === 'kubevirt-manager')).toBe(false);
+    expect(visibleRows(rows, false)).toHaveLength(rows.length - 2);
     expect(visibleRows(rows, true)).toHaveLength(rows.length);
   });
 });

@@ -118,7 +118,8 @@ describe('FeaturesSection', () => {
     const draft = defaultClusterConfig().spec!;
     const update = vi.fn();
     render(<FeaturesSection {...sectionProps(draft, update)} components={components} />);
-    expect(screen.getByText('kubevirt-manager')).toBeTruthy();
+    expect(screen.getByText('hangar')).toBeTruthy();
+    expect(screen.queryByText('kubevirt-manager')).toBeNull();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Argo CD' }));
     expect(applied(update, draft).features?.argocd?.enabled).toBe(true);
   });

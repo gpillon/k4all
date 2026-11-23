@@ -323,7 +323,7 @@ on the field with k4all-operator v0.4.0.
 
 | UI control | CR path | Plugin | Consumer and effect |
 |---|---|---|---|
-| Virtualization switch | `features.virt.enabled` | edit | operator feature gate: installs/uninstalls kubevirt, cdi, kubevirt-manager, virtctl |
+| Virtualization switch | `features.virt.enabled` | edit | operator feature gate: installs/uninstalls kubevirt, cdi, virtctl, hangar, hangar-node-agent (Hangar, the VM console, from k4all v2.7.0; kubevirt-manager before) |
 | Software emulation | `features.virt.emulation` (`auto`/`true`/`false`) | edit | operator virt hook patches KubeVirt `useEmulation` |
 | Argo CD switch | `features.argocd.enabled` | edit | operator feature gate: argocd chart |
 | OVS secondary networks | `features.ovsCni.enabled` | edit | operator feature gate: multus-cni, ovs-cni |
@@ -469,7 +469,7 @@ same patch with `dryRun=All`. The API server runs defaulting, validation and
 admission and returns the object it would store. The review dialog shows:
 
 1. the changes in words, each with severity (info / warning / danger) and its
-   consequence (e.g. "Uninstalls cdi, kubevirt, kubevirt-manager, virtctl.
+   consequence (e.g. "Uninstalls cdi, hangar, hangar-node-agent, kubevirt, virtctl.
    Virtual machines stop and are deleted…"), with the components a feature
    brings read from the ReleaseManifest;
 2. for settings: "After saving, k4all-operator applies these components

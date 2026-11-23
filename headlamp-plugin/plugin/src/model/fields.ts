@@ -44,7 +44,7 @@ export const FIELDS = {
     label: 'Virtualization',
     group: 'features',
     mode: 'live',
-    help: 'KubeVirt, CDI, kubevirt-manager and virtctl, to run virtual machines next to containers.',
+    help: 'KubeVirt, CDI, virtctl and Hangar, the virtual machine console in this dashboard, to run virtual machines next to containers.',
   },
   virtEmulation: {
     path: ['features', 'virt', 'emulation'],

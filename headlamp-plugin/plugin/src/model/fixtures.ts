@@ -99,12 +99,25 @@ export function releaseManifest(): ReleaseManifestObject {
           dependsOn: ['kubevirt'],
         },
         cdi: { type: 'manifest', version: 'v1.66.1', featureGate: 'virt', dependsOn: ['kubevirt'] },
-        'kubevirt-manager': {
+        hangar: {
           type: 'manifest',
-          version: 'v1.5.4',
+          version: 'v0.1.0',
+          featureGate: 'virt',
+          dependsOn: ['kubevirt', 'cdi'],
+        },
+        'hangar-node-agent': {
+          type: 'manifest',
+          version: 'v0.1.0',
           featureGate: 'virt',
           dependsOn: ['kubevirt'],
         },
+        'kubevirt-manager': {
+          type: 'manifest',
+          management: 'Removed',
+          version: 'v1.5.4',
+          featureGate: 'virt',
+        },
+        cairn: { type: 'manifest', version: 'v0.1.0', featureGate: 'rook' },
         argocd: {
           type: 'helm',
           version: '10.18.0',

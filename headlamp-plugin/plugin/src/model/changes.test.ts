@@ -36,7 +36,7 @@ describe('describeChanges', () => {
       severity: 'info',
     });
     expect(items[0].consequence).toBe(
-      'Installs cdi, kubevirt, kubevirt-manager, virtctl. This takes a few minutes.'
+      'Installs cdi, hangar, hangar-node-agent, kubevirt, virtctl. This takes a few minutes.'
     );
     expect(needsAcknowledgement(items)).toBe(false);
   });
