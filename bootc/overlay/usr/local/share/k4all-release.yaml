@@ -257,8 +257,14 @@ spec:
                 limits:
                   memory: 32Mi
               # Root without capabilities: it only stats the root-owned
-              # socket directory, mounted read-only.
+              # socket directory, mounted read-only. SELinux type spc_t:
+              # lvmd's socket is container_var_run_t, and a container_t
+              # process may not even stat it, so with the default type the
+              # wait never ended on an enforcing node (topolvm-node and
+              # lvmd are privileged, hence spc_t too).
               securityContext:
+                seLinuxOptions:
+                  type: spc_t
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
                 capabilities:

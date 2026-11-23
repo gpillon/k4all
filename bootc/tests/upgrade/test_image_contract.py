@@ -452,6 +452,19 @@ def test_topolvm_node_waits_for_lvmd():
                                      "readOnly": True}]
 
 
+def test_wait_for_lvmd_may_stat_the_socket_under_selinux():
+    # lvmd's socket is container_var_run_t on the host. A container_t process
+    # gets "Permission denied" on its stat, so `[ -S ]` stays false and
+    # topolvm-node never left Init on an enforcing node (v2.6.5 VM test).
+    # topolvm-node and lvmd run privileged (spc_t); the init container needs
+    # the same SELinux type, nothing more.
+    wait = wait_for_lvmd(topolvm_component()["values"])
+    ctx = wait.get("securityContext") or {}
+    assert (ctx.get("seLinuxOptions") or {}).get("type") == "spc_t"
+    assert not ctx.get("privileged")
+    assert ctx.get("capabilities", {}).get("drop") == ["ALL"]
+
+
 def run_wait_for_lvmd(tmp_path):
     script = wait_for_lvmd(topolvm_component()["values"])["command"][2]
     assert LVMD_SOCKET in script
