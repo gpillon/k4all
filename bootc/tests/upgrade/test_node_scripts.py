@@ -306,7 +306,9 @@ def test_worker_join_is_verified_on_its_own_node(worker_join):
     proc, calls = worker_join()
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "successfully joined" in proc.stdout
-    assert calls[0] == "sudo bash -c kubeadm join 192.168.6.200:6443 --token x"
+    join = "sudo bash -c kubeadm join 192.168.6.200:6443 --token x"
+    assert calls[:2] == ["sudo /usr/local/bin/k4all-node-ip", join], \
+        "the kubelet's node IP is pinned before kubeadm starts it"
     gets = [c for c in calls if c.startswith("kubectl")]
     assert gets and all(" get node kube-worker-26bkn " in c + " " for c in gets)
     assert not [c for c in calls if " get nodes" in c]

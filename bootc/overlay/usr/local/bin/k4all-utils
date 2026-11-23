@@ -462,3 +462,151 @@ patch_deployment_image_registry() {
       --type='json' \
       -p="[ {\"op\": \"replace\", \"path\": \"/spec/template/spec/containers/$container_index/image\", \"value\": \"$new_image\"} ]"
 }
+# --- The kubelet's node IP -------------------------------------------------
+# Without --node-ip the kubelet picks the node's address itself at every
+# start, from the hostname (systemd's nss-myhostname lists every local
+# address) or the default route. Once k4all moves the IP from the NIC to
+# ovs-bridge and the CNI adds its own interfaces, it can register an address
+# of the pod network (cilium_host) as the node's InternalIP. k4all pins the
+# address once, before the kubelet first starts, and keeps it pinned.
+KUBELET_SYSCONFIG="${KUBELET_SYSCONFIG:-/etc/sysconfig/kubelet}"
+KUBEADM_FLAGS_FILE="${KUBEADM_FLAGS_FILE:-/var/lib/kubelet/kubeadm-flags.env}"
+KUBELET_KUBECONFIG_FILE="${KUBELET_KUBECONFIG_FILE:-/etc/kubernetes/kubelet.conf}"
+# The address k4all wrote: one it may move when the node's address changes.
+K4ALL_NODE_IP_STATE="${K4ALL_NODE_IP_STATE:-/var/lib/k4all/kubelet-node-ip}"
+
+# node_ip_foreign_dev DEV: true for interfaces whose addresses are never the
+# node's own (CNI, tunnels, VMs, containers).
+node_ip_foreign_dev() {
+    case "$1" in
+        "" | lo | cilium_* | lxc* | cali* | tunl* | vxlan* | flannel* | cni* | docker* | podman* \
+            | veth* | kube-ipvs* | genev* | ovs-system | br-int | k6t-* | tap* | virbr*) return 0 ;;
+    esac
+    return 1
+}
+
+# route_src_to IP: "SRC DEV" of the route the kernel takes towards IP, plus
+# " local" when IP is an address of this node. Nothing without a route.
+route_src_to() {
+    ip -4 -o route get "$1" 2>/dev/null | awk '
+        { for (i = 1; i <= NF; i++) { if ($i == "src") s = $(i + 1); if ($i == "dev") d = $(i + 1) }
+          if ($1 == "local") l = " local" }
+        END { if (s != "") print s, d l }'
+}
+
+# api_server_ip: the IPv4 address of the API server in kubelet.conf (empty
+# before the node joined, or when it does not resolve).
+api_server_ip() {
+    local host
+    [ -f "$KUBELET_KUBECONFIG_FILE" ] || return 0
+    host=$(sed -n 's#^[[:space:]]*server:[[:space:]]*https\?://\([^:/]*\).*#\1#p' "$KUBELET_KUBECONFIG_FILE" | head -n 1)
+    host=${host#[}
+    host=${host%]}
+    [ -n "$host" ] || return 0
+    if [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$host"
+    else
+        getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}'
+    fi
+}
+
+# node_ip_on_host IP: true when IP is a global address of one of the node's
+# own interfaces.
+node_ip_on_host() {
+    local dev
+    dev=$(ip -4 -o addr show scope global 2>/dev/null | awk -v ip="$1" '{split($4, a, "/"); if (a[1] == ip) {print $2; exit}}')
+    [ -n "$dev" ] && ! node_ip_foreign_dev "$dev"
+}
+
+# node_ip_candidate: the node's address. The source address towards the API
+# server when that is another node (a worker, a joining control plane); else
+# the source address of the default route: on a control plane holding the
+# API VIP the VIP is local, and the kernel's source is the primary address.
+node_ip_candidate() {
+    local api r src dev
+    api=$(api_server_ip)
+    if [ -n "$api" ]; then
+        r=$(route_src_to "$api")
+        if [ -n "$r" ] && [[ "$r" != *" local" ]]; then
+            read -r src dev _ <<<"$r"
+            if ! node_ip_foreign_dev "$dev" && node_ip_on_host "$src"; then
+                echo "$src"
+                return 0
+            fi
+        fi
+    fi
+    dev=$(ip -4 route show default 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "dev") {print $(i + 1); exit}}')
+    [ -n "$dev" ] && ! node_ip_foreign_dev "$dev" || return 0
+    r=$(route_src_to 192.0.2.1)
+    read -r src dev _ <<<"$r"
+    if [ -n "$src" ] && ! node_ip_foreign_dev "$dev" && node_ip_on_host "$src"; then
+        echo "$src"
+    fi
+}
+
+# kubelet_node_ip_flag FILE: the --node-ip value FILE sets, if any.
+kubelet_node_ip_flag() {
+    local flag
+    [ -f "$1" ] || return 0
+    flag=$(grep -o -- '--node-ip[= ][^ "'"'"']*' "$1" 2>/dev/null | head -n 1) || true
+    [ -n "$flag" ] && echo "${flag:10}"
+    return 0
+}
+
+# set_kubelet_extra_node_ip IP: KUBELET_EXTRA_ARGS in /etc/sysconfig/kubelet
+# gets --node-ip=IP; its other flags stay.
+set_kubelet_extra_node_ip() {
+    local ip="$1" line args
+    mkdir -p "$(dirname "$KUBELET_SYSCONFIG")"
+    touch "$KUBELET_SYSCONFIG"
+    line=$(grep -m 1 '^KUBELET_EXTRA_ARGS=' "$KUBELET_SYSCONFIG" || true)
+    args=${line#KUBELET_EXTRA_ARGS=}
+    args=${args#\"}
+    args=${args%\"}
+    args=${args#\'}
+    args=${args%\'}
+    args=$(echo "$args" | sed -E 's/(^|[[:space:]])--node-ip[= ][^[:space:]]*//g; s/^[[:space:]]+//; s/[[:space:]]+$//')
+    args="${args:+$args }--node-ip=$ip"
+    if [ -n "$line" ]; then
+        sed -i "s#^KUBELET_EXTRA_ARGS=.*#KUBELET_EXTRA_ARGS=\"$args\"#" "$KUBELET_SYSCONFIG"
+    else
+        echo "KUBELET_EXTRA_ARGS=\"$args\"" >>"$KUBELET_SYSCONFIG"
+    fi
+}
+
+# pin_kubelet_node_ip: pin the kubelet to the node's address, before the
+# kubelet starts (k4all-node-ip.service, kubeadm init and join). A --node-ip
+# k4all did not write (kubeadm's flags, a restore, the admin) is left as it
+# is. The one k4all wrote moves only when its address left the node (a new
+# DHCP lease). Prints what it did; changes nothing when no address is found.
+pin_kubelet_node_ip() {
+    local current mine ip
+    current=$(kubelet_node_ip_flag "$KUBEADM_FLAGS_FILE")
+    if [ -n "$current" ]; then
+        echo "kubelet node IP: $current, set in $KUBEADM_FLAGS_FILE"
+        return 0
+    fi
+    current=$(kubelet_node_ip_flag "$KUBELET_SYSCONFIG")
+    mine=$(cat "$K4ALL_NODE_IP_STATE" 2>/dev/null || true)
+    if [ -n "$current" ] && [ "$current" != "$mine" ]; then
+        echo "kubelet node IP: $current, set in $KUBELET_SYSCONFIG"
+        return 0
+    fi
+    if [ -n "$current" ] && node_ip_on_host "$current"; then
+        echo "kubelet node IP: $current"
+        return 0
+    fi
+    ip=$(node_ip_candidate)
+    if [ -z "$ip" ]; then
+        echo "kubelet node IP: no address found (no route to the API server, no default route): not pinned"
+        return 0
+    fi
+    set_kubelet_extra_node_ip "$ip"
+    mkdir -p "$(dirname "$K4ALL_NODE_IP_STATE")"
+    echo "$ip" >"$K4ALL_NODE_IP_STATE"
+    if [ -n "$current" ]; then
+        echo "kubelet node IP: $current left the node, pinned to $ip"
+    else
+        echo "kubelet node IP: pinned to $ip"
+    fi
+}

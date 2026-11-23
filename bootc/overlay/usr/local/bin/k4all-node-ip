@@ -1,0 +1,8 @@
+#!/bin/bash
+# k4all-node-ip: pin the kubelet's --node-ip to the node's address (see
+# pin_kubelet_node_ip in k4all-utils). k4all-node-ip.service runs it at every
+# boot before the kubelet; kubeadm init and join run it too.
+set -euo pipefail
+# shellcheck source=/dev/null
+source /usr/local/bin/k4all-utils
+pin_kubelet_node_ip

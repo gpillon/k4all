@@ -13,6 +13,10 @@ KUBELET_CLIENT_CERT="${KUBELET_CLIENT_CERT:-/var/lib/kubelet/pki/kubelet-client-
 # Decode the join command provided as the argument
 JOIN_COMMAND=$(echo "$1" | base64 -d)
 
+# The kubelet that kubeadm starts must use the node's address, not one it
+# picks (later from ovs-bridge or the CNI's interfaces).
+sudo /usr/local/bin/k4all-node-ip || true
+
 # Run the join command
 sudo bash -c "$JOIN_COMMAND"
 
