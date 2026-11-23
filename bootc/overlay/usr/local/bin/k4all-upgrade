@@ -1208,6 +1208,48 @@ def check_single_hop(releases, current, target):
     return path[0]
 
 
+def next_release(state):
+    """The release of the open plan's next hop: the hop that waits, else
+    the first pending one."""
+    return (state.get("hop") or {}).get("to") or state["pending"][0]["version"]
+
+
+def stale_hop(releases, state):
+    """Why the next hop of the open plan in ``state`` is no longer one
+    legal hop on the upgrade graph ``releases``; None while it is. A
+    release the graph does not list is not judged: offline the graph is
+    the image's, which ends at the release the image was built from."""
+    current, nxt = state["current"], next_release(state)
+    listed = [r for r in releases if r.key == parse_version(nxt)]
+    if not listed:
+        return None
+    if listed[0].blocked:
+        return "%s is blocked" % nxt
+    try:
+        check_single_hop(releases, current, nxt)
+    except NoPathError as exc:
+        return str(exc)
+    return None
+
+
+def replan(releases, state, allow):
+    """The hops from the committed release of ``state`` toward its target
+    on the upgrade graph ``releases``. A plan of the timer goes toward the
+    latest release when its target cannot be reached any more, and keeps
+    the hops ``allow`` lets it run. NoPathError when no path is left."""
+    errors = validate_graph(releases)
+    if errors:
+        raise NoPathError("the upgrade graph is invalid: %s" % "; ".join(errors))
+    current = state["current"]
+    if state.get("mode") != "auto":
+        return plan_path(releases, current, state.get("target"))
+    try:
+        path = plan_path(releases, current, state.get("target"))
+    except NoPathError:
+        path = plan_path(releases, current)
+    return auto_allowed(path, current, allow)
+
+
 # =========================================================================
 # kube-vip's static pod
 # =========================================================================
@@ -2676,8 +2718,9 @@ class Upgrader:
         "SYNC": ("sync", "COMMIT"),
     }
 
-    def drive(self, state):
-        """Run phases until the plan is done, the node reboots, or a HOLD."""
+    def drive(self, state, checked=False):
+        """Run phases until the plan is done, the node reboots, or a HOLD.
+        ``checked``: the plan was just made on the current upgrade graph."""
         host = self.host
         while True:
             if state.get("hold"):
@@ -2694,12 +2737,21 @@ class Upgrader:
                 if state["mode"] == "auto" and not self._auto_may_continue(state):
                     self._save(state)
                     return state
+                if not checked:
+                    checked = True
+                    if self.check_plan(state):
+                        continue
                 start_next_hop(state)
                 self._save(state)
                 host.log("hop %s -> %s (%s)" % (state["hop"]["from"],
                                                  state["hop"]["to"],
                                                  state["hop"]["kind"]))
                 continue
+            if phase == "PREFLIGHT" and not checked:
+                # a hop that waited (NotYet) or was on hold has not started
+                checked = True
+                if self.check_plan(state):
+                    continue
             try:
                 if phase == "ROLLBACK_REBOOT":
                     self.hold(state, "rolled back to %s after a failed reboot: "
@@ -2755,6 +2807,54 @@ class Upgrader:
         if not in_window(self.host.now(), self.cfg["window"]):
             self.host.log("outside the maintenance window")
             return False
+        return True
+
+    def check_plan(self, state):
+        """Before a hop starts. A plan of the timer or of `run` may be days
+        old (with autoAllow minor a hop waits for the next window): its next
+        hop is checked on the graph the node would plan with now, and the
+        plan is made again when that hop is no longer legal (a release
+        blocked since, a patch that now ends the stream, a minFrom raised).
+        A plan of `run` keeps its target and goes to HOLD when no path
+        leads there any more; a plan of the timer is dropped when nothing
+        is left that it may run. The k4all-operator plans again at every
+        reconcile and the agent checks each hop: its plans are left alone.
+        True when the plan changed."""
+        if operator_driven(state):
+            return False
+        releases = self.graph_loader()
+        why = stale_hop(releases, state)
+        if why is None:
+            return False
+        host, current, nxt = self.host, state["current"], next_release(state)
+        try:
+            path = replan(releases, state, self.cfg["autoAllow"])
+        except NoPathError as exc:
+            if state["mode"] != "auto":
+                self.hold(state, "%s, and no path leads to %s any more (%s): "
+                          "abandon the plan with `k4all-upgrade clear-hold "
+                          "--abandon`" % (why, state.get("target"), exc))
+                return True
+            path, why = [], "%s; no path left: %s" % (why, exc)
+        else:
+            if not path:
+                why += ("; the new plan has no hop that autoAllow %s lets the "
+                        "timer run" % self.cfg["autoAllow"])
+        new = [r.version for r in path]
+        state["history"].append({
+            "from": current, "to": nxt,
+            "result": "replanned" if path else "dropped", "reason": why,
+            "plan": new, "at": host.now().isoformat(timespec="seconds")})
+        state.update({"hop": None, "pending": [r.to_dict() for r in path],
+                      "phase": "IDLE" if path else "DONE"})
+        state.pop("waiting", None)
+        if path:
+            state["target"] = new[-1]
+            host.log("plan changed: %s; new plan: %s"
+                     % (why, " -> ".join([current] + new)))
+        else:
+            host.log("plan dropped: %s" % why)
+        self._save(state)
         return True
 
 
@@ -3102,7 +3202,7 @@ def cmd_run(host, cfg, args, upgrader):
     previous = state
     state = new_state(args.to, "run", path, current, cfg["image"], previous)
     save_state(host, state)
-    upgrader.drive(state)
+    upgrader.drive(state, checked=True)
     if state.get("waiting") and state.get("phase") == "PREFLIGHT":
         # Nothing has started: leave no plan behind, the previous state
         # stays as it was.
@@ -3140,7 +3240,7 @@ def cmd_auto(host, cfg, args, upgrader):
         return 0
     state = new_state(None, "auto", path, current, cfg["image"], state)
     save_state(host, state)
-    upgrader.drive(state)
+    upgrader.drive(state, checked=True)
     return 0
 
 

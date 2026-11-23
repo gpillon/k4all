@@ -86,6 +86,21 @@ window:
 
 In every mode the node also follows the k4all-operator's requests.
 
+A plan of the timer or of `k4all-upgrade run` is saved, and its hops can wait:
+with `autoAllow: minor`, the rest of a plan waits for the next window. From
+v2.6.6, before a hop starts (also a hop that waited), the tool checks it on the
+graph it would plan with now: the published one, or offline the image's, which
+lists no later release and so changes nothing. When a release was blocked
+since, a new patch now ends the stream, or a `minFrom` was raised, the plan is
+made again from the running release: toward the same target, or, for the timer,
+toward the latest release when that target is gone, within `autoAllow`. The log
+says `plan changed:` and why, and so does the plan's history
+(`k4all-upgrade status --json`). A plan of the timer with nothing left that it
+may run is dropped (`plan dropped:`). A plan of `run` whose target no path
+reaches any more goes to HOLD. A hop past its preflight is never planned again.
+The k4all-operator plans at every reconcile and the agent checks each hop it
+asks for.
+
 bootc ships its own `bootc-fetch-apply-updates.timer`, which runs
 `bootc upgrade --apply`. That command would reboot a node into a new
 Kubernetes minor without running kubeadm first, so k4all masks the timer.
