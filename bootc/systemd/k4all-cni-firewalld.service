@@ -1,0 +1,9 @@
+[Unit]
+Description=K4All - Open the firewalld ports of the CNI that runs on this node
+Documentation=https://github.com/gpillon/k4all
+# Started by k4all-cni-firewalld.path. Does nothing without firewalld.
+After=firewalld.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/k4all-cni-firewalld

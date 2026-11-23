@@ -21,6 +21,7 @@ from pyanaconda.modules.common.task import Task
 from com_k4all_installer.constants import (
     K4ALL_CONFIG_PATH, K4ALL_NODE_TYPE_PATH,
     CR_API_VERSION, CR_KIND, CR_NAME,
+    node_cluster_config,
 )
 
 log = logging.getLogger(__name__)
@@ -111,7 +112,7 @@ class K4AllInstallationTask(Task):
             "apiVersion": CR_API_VERSION,
             "kind": CR_KIND,
             "metadata": {"name": CR_NAME},
-            "spec": self._cluster_config,
+            "spec": node_cluster_config(self._role, self._cluster_config),
         }
 
         config_path = normpath(joinpath(self._sysroot, K4ALL_CONFIG_PATH))

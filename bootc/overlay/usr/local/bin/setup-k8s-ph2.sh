@@ -62,47 +62,19 @@ if systemctl is-enabled --quiet firewalld; then
   add_firewalld_rule_if_not_exists 10255/tcp  # Read-only Kubelet API (deprecated)
   add_firewalld_rule_if_not_exists 30000-32767/tcp  # NodePort Services
 
-  # Check the CNI type from the configuration file and apply appropriate firewall rules
-  CNI_TYPE=$(yq e '.spec.networking.cni.type' "$K4ALL_CONFIG_FILE")
-  case "$CNI_TYPE" in
-    "calico")
-      echo "Configuring firewalld for Calico..."
-      add_firewalld_rule_if_not_exists 179/tcp  # BGP for Calico
-      add_firewalld_rule_if_not_exists 4789/udp # VXLAN for Calico
-      add_firewalld_rule_if_not_exists 5473/tcp # Typha for Calico
-      add_firewalld_rule_if_not_exists 51820/udp # IPv4 Wireguard
-      add_firewalld_rule_if_not_exists 51821/udp # IPv6 Wireguard
-      ;;
-    "cilium")
-      echo "Configuring firewalld for Cilium..."
-      add_firewalld_rule_if_not_exists 8472/udp  # VXLAN (Cilium's tunnel, routingMode tunnel)
-      add_firewalld_rule_if_not_exists 4240/tcp  # Cilium health checks
-      add_firewalld_rule_if_not_exists 4244/tcp  # Hubble server
-      add_firewalld_rule_if_not_exists 4245/tcp  # Hubble Relay
-      add_firewalld_rule_if_not_exists 4250/tcp  # Mutual Authentication port
-      add_firewalld_rule_if_not_exists 4251/tcp  # Spire Agent health check port
-      add_firewalld_rule_if_not_exists 6060/tcp  # cilium-agent pprof server
-      add_firewalld_rule_if_not_exists 6061/tcp  # cilium-operator pprof server
-      add_firewalld_rule_if_not_exists 6062/tcp  # Hubble Relay pprof server
-      add_firewalld_rule_if_not_exists 9878/tcp  # cilium-envoy health listener
-      add_firewalld_rule_if_not_exists 9879/tcp  # cilium-agent health status API
-      add_firewalld_rule_if_not_exists 9890/tcp  # cilium-agent gops server
-      add_firewalld_rule_if_not_exists 9891/tcp  # operator gops server
-      add_firewalld_rule_if_not_exists 9893/tcp  # Hubble Relay gops server
-      add_firewalld_rule_if_not_exists 9901/tcp  # cilium-envoy Admin API
-      add_firewalld_rule_if_not_exists 9962/tcp  # cilium-agent Prometheus metrics
-      add_firewalld_rule_if_not_exists 9963/tcp  # cilium-operator Prometheus metrics
-      add_firewalld_rule_if_not_exists 9964/tcp  # cilium-envoy Prometheus metrics
-      add_firewalld_rule_if_not_exists 51871/udp # WireGuard encryption tunnel endpoint
-      ;;
-    "flannel")
-      echo "Configuring firewalld for Flannel..."
-      add_firewalld_rule_if_not_exists 8472/udp # VXLAN for Flannel
-      ;;
-    *)
-      echo "No specific CNI firewall rules needed for $CNI_TYPE."
-      ;;
-  esac
+  # The CNI's ports. A bootstrap node chose the cluster's CNI: its
+  # configuration says which. A worker or a control plane cannot know it
+  # when it is installed: its configuration has no CNI, or the guess of an
+  # older installer (calico, issue #63). On every node k4all-cni-firewalld
+  # opens the ports of the CNI that runs there, once the CNI's pod writes
+  # its configuration in /etc/cni/net.d.
+  if [ "$(tr -d '[:space:]' < /etc/node-type)" = "bootstrap" ]; then
+    CNI_TYPE=$(yq e '.spec.networking.cni.type' "$K4ALL_CONFIG_FILE")
+    echo "Configuring firewalld for $CNI_TYPE..."
+    for port in $(cni_firewalld_ports "$CNI_TYPE"); do
+      add_firewalld_rule_if_not_exists "$port"
+    done
+  fi
 
   firewall-cmd --reload
 fi
