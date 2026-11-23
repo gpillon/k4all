@@ -10,6 +10,7 @@
 import { useSnackbar } from 'notistack';
 import React from 'react';
 import { getClusterConfig, patchClusterConfig } from '../../api/k4allApi';
+import { Capabilities } from '../../model/capabilities';
 import {
   Adjustment,
   ChangeItem,
@@ -64,7 +65,9 @@ export interface SaveFlow {
 export function useSaveFlow(
   state: EditorState,
   dispatch: React.Dispatch<EditorAction>,
-  components: Record<string, ComponentSpec>
+  components: Record<string, ComponentSpec>,
+  /** What the installed k4all-operator can do, for what the changes do. */
+  caps?: Capabilities
 ): SaveFlow {
   const [phase, setPhaseState] = React.useState<SavePhase>({ kind: 'idle' });
   const { enqueueSnackbar } = useSnackbar();
@@ -100,7 +103,7 @@ export function useSaveFlow(
           draft,
           ops,
           result,
-          items: describeChanges(base.spec ?? {}, draft, components),
+          items: describeChanges(base.spec ?? {}, draft, components, caps),
           adjustments: serverAdjustments(draft, result.spec),
           reapplied: reappliedComponents(base.spec ?? {}, draft, components),
           rebasedFrom,

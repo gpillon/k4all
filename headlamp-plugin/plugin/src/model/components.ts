@@ -39,6 +39,21 @@ function featureEnabled(feature: string, config: ClusterConfigSpec): boolean {
   return false;
 }
 
+/**
+ * The start of the message of a component k4all-operator keeps installed
+ * though it should go (its feature off, or management Removed), because its
+ * uninstall would break what runs on it (v0.5.6: KubeVirt while VMs exist).
+ */
+export const UNINSTALL_REFUSED = 'uninstall refused: ';
+
+/** Why k4all-operator refuses to uninstall the component, if it does. */
+export function uninstallRefusal(status: ComponentStatus | undefined): string | undefined {
+  const message = status?.message;
+  return message?.startsWith(UNINSTALL_REFUSED)
+    ? message.slice(UNINSTALL_REFUSED.length)
+    : undefined;
+}
+
 /** The feature that gates a component: its featureGate, or the operator's name-based fallback. */
 export function componentFeature(
   name: string,

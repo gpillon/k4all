@@ -4,7 +4,7 @@
  * so Iconify does not try to download them.
  */
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import React from 'react';
 import { vi } from 'vitest';
 import { Capabilities, capabilitiesOf } from '../model/capabilities';
@@ -128,6 +128,69 @@ describe('FeaturesSection', () => {
     render(<FeaturesSection {...sectionProps(draft)} components={components} />);
     expect(screen.getByText('Will be installed')).toBeTruthy();
     expect(screen.getByLabelText('Software emulation')).toBeTruthy();
+  });
+});
+
+describe('the Virtualization switch', () => {
+  const components = releaseManifest().spec!.components!;
+  const on = setIn(defaultClusterConfig().spec!, ['features', 'virt', 'enabled'], true);
+
+  it('shows why k4all-operator keeps virtualization installed', () => {
+    const draft = defaultClusterConfig().spec!;
+    const statuses = {
+      kubevirt: {
+        state: 'Installed',
+        installedVersion: 'v1.9.1',
+        message:
+          'uninstall refused: 1 VirtualMachine (default/vm1) exists: delete it or set kubevirt Unmanaged first',
+      },
+      cdi: {
+        state: 'Installed',
+        installedVersion: 'v1.66.1',
+        message:
+          'uninstall refused: 1 DataVolume (default/disk) exists: delete it or set cdi Unmanaged first',
+      },
+      virtctl: { state: 'Skipped', message: 'disabled by ClusterConfig feature gate' },
+    };
+    render(
+      <FeaturesSection
+        {...sectionProps(draft, vi.fn(), capabilitiesOf('v0.5.6'))}
+        components={components}
+        statuses={statuses}
+      />
+    );
+    const card = within(screen.getByText('Virtualization').closest('.MuiCard-root') as HTMLElement);
+    expect(card.getByText('Removal refused')).toBeTruthy();
+    expect(card.queryByText('Off')).toBeNull();
+    expect(
+      card.getByText(
+        '1 VirtualMachine (default/vm1) exists: delete it or set kubevirt Unmanaged first'
+      )
+    ).toBeTruthy();
+    expect(
+      card.getByText('1 DataVolume (default/disk) exists: delete it or set cdi Unmanaged first')
+    ).toBeTruthy();
+  });
+
+  it('warns, once turned off, that k4all-operator waits for the VMs and their disks', () => {
+    const draft = defaultClusterConfig().spec!;
+    render(
+      <FeaturesSection
+        {...sectionProps(draft, vi.fn(), capabilitiesOf('v0.5.6'))}
+        base={on}
+        components={components}
+      />
+    );
+    expect(screen.getByText('Will be removed')).toBeTruthy();
+    expect(
+      screen.getByText(/keeps KubeVirt and kubevirt-manager while VirtualMachines/)
+    ).toBeTruthy();
+  });
+
+  it('warns, once turned off, that an older k4all-operator deletes KubeVirt and CDI from under the VMs', () => {
+    const draft = defaultClusterConfig().spec!;
+    render(<FeaturesSection {...sectionProps(draft)} base={on} components={components} />);
+    expect(screen.getByText(/KubeVirt and CDI are deleted from under them/)).toBeTruthy();
   });
 });
 

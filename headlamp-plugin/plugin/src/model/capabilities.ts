@@ -23,6 +23,12 @@ export const CAPABILITY_SINCE = {
   cniSwitch: 'v0.6.0',
   /** Turning spec.features.ovsBridge.enabled on and off on a running cluster (not in v0.5.0). */
   ovsBridgeToggle: 'v0.6.0',
+  /**
+   * Turning virt off keeps KubeVirt, CDI and kubevirt-manager while VMs and
+   * their disks exist ("uninstall refused: ..."); before, they were deleted
+   * from under the running VMs.
+   */
+  virtUninstallGuard: 'v0.5.6',
 } as const;
 
 export type CapabilityId = keyof typeof CAPABILITY_SINCE;
@@ -30,6 +36,7 @@ export type CapabilityId = keyof typeof CAPABILITY_SINCE;
 /** The k4all release that first pins an operator with the capability, for the UI. */
 export const CAPABILITY_RELEASE: Partial<Record<CapabilityId, string>> = {
   clusterUpgrade: 'v2.4.0',
+  virtUninstallGuard: 'v2.6.6',
 };
 
 export type Capabilities = Record<CapabilityId, boolean> & {
