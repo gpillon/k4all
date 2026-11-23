@@ -391,6 +391,25 @@ spec:
         - "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/kubevirt-cr.yaml"
       namespace: kubevirt
       featureGate: virt
+      # KubeVirt runs its operator and its infra (virt-api, virt-controller,
+      # virt-exportproxy) only on control planes, with PodDisruptionBudgets
+      # of minAvailable 1. With one control plane its drain can never end:
+      # nothing can move. Prefer control planes instead of requiring them.
+      patches:
+        - target:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: virt-operator
+            namespace: kubevirt
+          type: strategic
+          patch: '{"spec":{"template":{"spec":{"affinity":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":null,"preferredDuringSchedulingIgnoredDuringExecution":[{"weight":100,"preference":{"matchExpressions":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists"}]}}]}}}}}}'
+        - target:
+            apiVersion: kubevirt.io/v1
+            kind: KubeVirt
+            name: kubevirt
+            namespace: kubevirt
+          type: merge
+          patch: '{"spec":{"infra":{"nodePlacement":{"affinity":{"nodeAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[{"weight":100,"preference":{"matchExpressions":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists"}]}}]}}}}}}'
       custom: {}
 
     virtctl:
@@ -526,7 +545,14 @@ spec:
       # needs on existing clusters.
       # v0.5.1 (k4all v2.6.1): the cleanup of the ingress-nginx namespace
       # after its uninstall.
-      version: "v0.5.1"
+      # v0.5.2: a component switched from Unmanaged to Managed follows its
+      # upgradePath from the version it runs, and manifest steps wait until
+      # the step runs (#55).
+      # v0.5.3 (k4all v2.6.4): Cilium names ovs-bridge in its devices (1.20
+      # skips the OVS bridge and its agents stopped at every boot), keeps the
+      # socket load balancer in the host namespace with KubeVirt, and leaves
+      # Multus' CNI config alone.
+      version: "v0.5.3"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system

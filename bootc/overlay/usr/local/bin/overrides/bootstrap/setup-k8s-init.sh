@@ -71,6 +71,9 @@ fi
 # to start: this first node borrows CRI-O's bridge until then.
 lend_crio_bridge_cni
 
+# The kubelet keeps the node's address after k4all moves it to ovs-bridge.
+pin_kubelet_node_ip
+
 kubeadm init --config /etc/k8s-config.yaml
 
 setup_kubeconfig_for_user "root" "/root"

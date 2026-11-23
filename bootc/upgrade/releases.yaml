@@ -168,3 +168,34 @@ releases:
       same components as v2.6.2, k4all-operator v0.5.1; the manifest sync is
       there for nodes that come from v2.6.0. Kubernetes, CRI-O and Fedora are
       unchanged.
+
+  - version: v2.6.4
+    kind: patch
+    minFrom: v2.6.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    syncManifest: true
+    notes: >-
+      Every node pins the kubelet's --node-ip to its own address before the
+      kubelet starts (k4all-node-ip.service at every boot, kubeadm init and
+      join): a node no longer registers the pod-network address of
+      cilium_host, or CRI-O's bridge, as its InternalIP once k4all moves its
+      IP to ovs-bridge. k4all-operator v0.5.3 (from v0.5.1, through the
+      manifest sync): with the OVS bridge, Cilium names ovs-bridge in its
+      devices and keeps detecting the others, so its agents start again on
+      every boot (Cilium 1.20 skips the OVS bridge and stopped with "unable
+      to determine direct routing device"); with KubeVirt, Cilium keeps the
+      socket load balancer in the host namespace, so VMs on the pod network
+      reach ClusterIPs and the cluster DNS; with Multus, Cilium leaves
+      Multus' CNI config alone, so secondary networks attach. The operator
+      restarts no agent: during the hop the bootstrap names ovs-bridge
+      before Cilium has to start after the reboot and restarts its own agent
+      and Multus after the sync; the other nodes read the new configuration
+      at their reboot. It also brings v0.5.2: a component switched from
+      Unmanaged to Managed (a cluster restored from 1.x) follows its
+      upgradePath from the version it runs. KubeVirt's operator and infra
+      prefer control planes instead of requiring them, so the drain of a
+      cluster's only control plane can end (its PodDisruptionBudgets left
+      nothing to move). firewalld opens Cilium's VXLAN port. Same components
+      otherwise. Kubernetes, CRI-O and Fedora are unchanged.
