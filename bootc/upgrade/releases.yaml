@@ -194,5 +194,8 @@ releases:
       and Multus after the sync; the other nodes read the new configuration
       at their reboot. It also brings v0.5.2: a component switched from
       Unmanaged to Managed (a cluster restored from 1.x) follows its
-      upgradePath from the version it runs. Same components otherwise.
-      Kubernetes, CRI-O and Fedora are unchanged.
+      upgradePath from the version it runs. KubeVirt's operator and infra
+      prefer control planes instead of requiring them, so the drain of a
+      cluster's only control plane can end (its PodDisruptionBudgets left
+      nothing to move). firewalld opens Cilium's VXLAN port. Same components
+      otherwise. Kubernetes, CRI-O and Fedora are unchanged.
