@@ -42,7 +42,7 @@ Kubernetes never moves more than one minor per release, and never in the
 same release as a Fedora major. Before it leaves a stream, a node always takes
 that stream's latest patch first. If no hop reaches that patch (its `minFrom`
 is a blocked release, say), the plan stops with no path instead of leaving the
-stream without it. The tools of v2.6.5 and before do not make this check, so CI
+stream without it. The tools of v2.6.6 and before do not make this check, so CI
 refuses a graph in which a patch cannot be reached from its stream's minor
 release.
 

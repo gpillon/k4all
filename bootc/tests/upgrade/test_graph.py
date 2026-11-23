@@ -344,7 +344,7 @@ def test_a_node_does_not_leave_its_stream_below_a_patch_it_cannot_reach():
 def unreachable_patches(releases):
     """Usable releases that no sequence of hops reaches from their stream's
     X.Y.0 (listed or not) without a blocked release: a node of the stream
-    below one of them cannot finish the stream. The tools of v2.2.4 - v2.6.5
+    below one of them cannot finish the stream. The tools of v2.2.4 - v2.6.6
     do not see it and leave the stream without it; later tools stop with
     NoPathError. Every node of a stream is at X.Y.0 or later, and minFrom
     is a lower bound, so what X.Y.0 reaches every later node reaches."""
@@ -364,7 +364,7 @@ def unreachable_patches(releases):
 
 
 def test_a_patch_no_hop_reaches_is_found():
-    # The tools of v2.2.4 - v2.6.5 leave the stream below v2.5.5 without a
+    # The tools of v2.2.4 - v2.6.6 leave the stream below v2.5.5 without a
     # word: the graph must never give them the chance (#74).
     assert unreachable_patches(stream_with_a_blocked_patch()) == ["v2.5.5"]
     assert unreachable_patches(stream_with_a_blocked_patch("v2.5.3")) == []
