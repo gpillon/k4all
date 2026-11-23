@@ -610,3 +610,39 @@ pin_kubelet_node_ip() {
         echo "kubelet node IP: pinned to $ip"
     fi
 }
+
+# --- The node's network at first boot ---------------------------------------
+# A node may boot for the first time without network: no DHCP lease yet, the
+# cable unplugged, the VLAN not passed. NetworkManager-wait-online gives up
+# after a minute and the boot goes on, so the first-boot steps that need the
+# network wait for it themselves.
+
+# node_has_network: the node has a network: a global address on one of its
+# own interfaces (a DHCP lease, a static address), or a default route.
+node_has_network() {
+    local dev
+    while read -r _ dev _; do
+        node_ip_foreign_dev "$dev" || return 0
+    done < <(ip -o addr show scope global 2>/dev/null)
+    [ -n "$(ip route show default 2>/dev/null)$(ip -6 route show default 2>/dev/null)" ]
+}
+
+# wait_for_node_network WHAT: wait, as long as it takes, until the node has
+# a network. WHAT names the waiting step in the log lines (one a minute).
+wait_for_node_network() {
+    local what="${1:-this step}" poll="${K4ALL_NETWORK_POLL:-5}" waited=0 xtrace=""
+    node_has_network && return 0
+    # No `set -x` trace of every poll in the journal.
+    case $- in *x*) xtrace=1; set +x ;; esac
+    echo "No network yet: $what waits for it."
+    until node_has_network; do
+        sleep "$poll"
+        waited=$((waited + poll))
+        if [ $((waited % 60)) -lt "$poll" ]; then
+            echo "Still no network after ${waited}s: $what waits for it."
+        fi
+    done
+    echo "The node has a network (after ${waited}s): $what goes on."
+    if [ -n "$xtrace" ]; then set -x; fi
+    return 0
+}
