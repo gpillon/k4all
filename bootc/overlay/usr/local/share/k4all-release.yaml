@@ -391,6 +391,25 @@ spec:
         - "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/kubevirt-cr.yaml"
       namespace: kubevirt
       featureGate: virt
+      # KubeVirt runs its operator and its infra (virt-api, virt-controller,
+      # virt-exportproxy) only on control planes, with PodDisruptionBudgets
+      # of minAvailable 1. With one control plane its drain can never end:
+      # nothing can move. Prefer control planes instead of requiring them.
+      patches:
+        - target:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: virt-operator
+            namespace: kubevirt
+          type: strategic
+          patch: '{"spec":{"template":{"spec":{"affinity":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":null,"preferredDuringSchedulingIgnoredDuringExecution":[{"weight":100,"preference":{"matchExpressions":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists"}]}}]}}}}}}'
+        - target:
+            apiVersion: kubevirt.io/v1
+            kind: KubeVirt
+            name: kubevirt
+            namespace: kubevirt
+          type: merge
+          patch: '{"spec":{"infra":{"nodePlacement":{"affinity":{"nodeAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[{"weight":100,"preference":{"matchExpressions":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists"}]}}]}}}}}}'
       custom: {}
 
     virtctl:
