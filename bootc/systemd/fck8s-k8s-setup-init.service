@@ -18,6 +18,11 @@ ExecStart=/bin/bash -c '[ -x /var/opt/k4all/bin/setup-k8s-init.sh ] && exec /var
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=30
+# The units after this one (node-ready-and-schedulable, taint-master-
+# schedulable, operator-deploy) wait across the retries: with the default
+# mode a first failed try failed them too, and the node finished its setup
+# only at the next boot.
+RestartMode=direct
 
 [Install]
 WantedBy=multi-user.target

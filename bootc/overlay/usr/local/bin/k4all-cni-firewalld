@@ -1,0 +1,34 @@
+#!/bin/bash
+# k4all-cni-firewalld: open in firewalld the ports of the CNI that runs on
+# this node, as its configuration in /etc/cni/net.d shows.
+#
+# A worker or a control plane does not know the cluster's CNI when it is
+# installed (issue #63); the CNI's pod writes its configuration there once it
+# runs on the node. k4all-cni-firewalld.path runs this at every change of
+# /etc/cni/net.d, on every node: a CNI that comes later (a join, a CNI
+# switch) gets its ports too. Without firewalld running it does nothing. It
+# only opens ports, without a reload.
+set -euo pipefail
+
+# K4ALL_ROOT: the tests run the script against a fake root.
+ROOT="${K4ALL_ROOT:-}"
+source "$ROOT/usr/local/bin/k4all-utils"
+CNI_NET_DIR="$ROOT/etc/cni/net.d"
+K4ALL_CNI_SHARE="$ROOT/usr/local/share/k4all-cni"
+
+if ! systemctl is-active --quiet firewalld; then
+    echo "firewalld is not running: no CNI ports to open."
+    exit 0
+fi
+
+CNIS=$(running_cnis)
+if [ -z "$CNIS" ]; then
+    echo "No configuration of a CNI k4all knows (calico, cilium, flannel) in $CNI_NET_DIR yet."
+    exit 0
+fi
+
+for cni in $CNIS; do
+    echo "CNI on this node: $cni"
+    # shellcheck disable=SC2046 # one port per word
+    open_firewalld_ports $(cni_firewalld_ports "$cni")
+done

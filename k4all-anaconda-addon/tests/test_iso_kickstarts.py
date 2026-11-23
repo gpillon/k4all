@@ -72,3 +72,32 @@ def _assert_clusterconfig_contract(config):
     assert config["features"]["argocd"]["enabled"] is False
     assert config["features"]["ovsCni"]["enabled"] is False
     assert config["features"]["ovsBridge"]["enabled"] is True
+
+
+JOINING_KICKSTARTS = {
+    "unattended-control.toml": lambda: _kickstart_from_toml(TOML_CONFIGS[2]),
+    "unattended-worker.toml": lambda: _kickstart_from_toml(TOML_CONFIGS[3]),
+    "ks-worker.cfg": lambda: STANDALONE_KICKSTARTS[1].read_text(),
+}
+
+
+@pytest.mark.parametrize("name", sorted(JOINING_KICKSTARTS))
+def test_joining_kickstarts_do_not_guess_the_cni(name):
+    # Issue #63: the worker and control ISOs wrote --cni=calico whatever
+    # the cluster runs. The node takes the cluster's CNI when it joins.
+    kickstart = JOINING_KICKSTARTS[name]()
+    addon = kickstart[kickstart.index("%addon com_k4all_installer"):]
+    addon = addon[:addon.index("%end")]
+    assert "--cni" not in addon
+    assert '"cni"' not in addon
+
+
+@pytest.mark.parametrize("path", [TOML_CONFIGS[1], STANDALONE_KICKSTARTS[0]],
+                         ids=lambda path: path.name)
+def test_bootstrap_kickstarts_still_choose_the_cni(path):
+    kickstart = (_kickstart_from_toml(path) if path.suffix == ".toml"
+                 else path.read_text())
+    data = _parse_k4all_addon(kickstart)
+    assert data.role == "bootstrap"
+    assert "--cni=calico" in kickstart
+    assert data.cluster_config["networking"]["cni"]["type"] == "calico"

@@ -141,6 +141,7 @@ RUN mkdir -p /usr/local/share/k4all-upgrade && \
 # ============================================================================
 COPY systemd/*.service /etc/systemd/system/
 COPY systemd/*.timer /etc/systemd/system/
+COPY systemd/*.path /etc/systemd/system/
 COPY overlay/etc/systemd/system/kubelet.service.d/ /etc/systemd/system/kubelet.service.d/
 COPY overlay/usr/lib/systemd/system/ovs-delete-transient-ports.service.d/ \
      /usr/lib/systemd/system/ovs-delete-transient-ports.service.d/
@@ -167,7 +168,10 @@ RUN systemctl enable fck8s-first-boot.service && \
     # systemctl enable fck8s-update-routes.timer && \
     systemctl enable fck8s-migrate.service && \
     # Pins the kubelet's --node-ip before it starts (k4all-utils).
-    systemctl enable k4all-node-ip.service
+    systemctl enable k4all-node-ip.service && \
+    # Opens the firewalld ports of the CNI that runs on the node, when the
+    # CNI writes its configuration (k4all-cni-firewalld).
+    systemctl enable k4all-cni-firewalld.path
 
 # Upgrades: k4all-upgrade walks release hops (kubeadm first, then reboot).
 # bootc's own timer runs `bootc upgrade --apply`, which would reboot into a

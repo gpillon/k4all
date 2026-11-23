@@ -38,6 +38,7 @@ clusterDNS:
   - "$CLUSTER_DNS_IP"
 clusterDomain: "$CLUSTER_DOMAIN"
 failSwapOn: false
+maxPods: 250 # as in k8s-config-bootstrap.yaml
 rotateCertificates: true
 serverTLSBootstrap: true
 EOF
