@@ -23,6 +23,14 @@ _Avoid_: major, feature release
 A later release inside a stream. A patch may be skipped, and never crosses a minor.
 _Avoid_: hotfix, point release
 
+**Frozen stream**:
+A stream whose next minor release has shipped. It gets no more releases, except an exit patch.
+_Avoid_: old stream, maintenance branch, end-of-life stream
+
+**Exit patch**:
+A patch of a frozen stream that fixes only the hop out of it, and keeps the release manifest of the patch before it.
+_Avoid_: bridge patch (the bridge release is v2.2.4), backport
+
 **Mandatory stop**:
 A release that no path may skip. Every minor release is one.
 _Avoid_: checkpoint, milestone
@@ -42,6 +50,10 @@ _Avoid_: release graph, release list
 **Blocked release**:
 A release withdrawn from the upgrade graph: no path picks it.
 _Avoid_: withdrawn, yanked, deprecated release
+
+**Sync release**:
+A release whose hop ends with a manifest sync, which applies the release's own ReleaseManifest to the cluster.
+_Avoid_: syncing release, "sync" alone
 
 ## Moving a node
 
