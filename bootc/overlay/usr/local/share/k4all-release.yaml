@@ -308,6 +308,86 @@ spec:
         - cert-manager
       custom: {}
 
+    # Rook/Ceph, optional (featureGate rook; older operators skip gates
+    # they do not know). Rook 1.21 runs Ceph 20 (Tentacle). The operator's
+    # rook-ceph hook (the k4all-operator of k4all v2.7.0) creates
+    # the CephCluster rook-ceph, the pool vm-pool, the StorageClass ceph-rbd
+    # (RWX Block, for live migration), its VolumeSnapshotClass and CDI's
+    # StorageProfile once each, with defaults from the node count (no
+    # CephCluster below 3 nodes), then leaves them to Cairn: day-2 changes
+    # (mgr/mon count, pool settings) stay. `image` is the Ceph image of that
+    # CephCluster; Helm does not use it. Neither chart is uninstalled while a
+    # CephCluster exists: delete it first (that destroys its data).
+    rook-ceph:
+      type: helm
+      version: "1.21.2"
+      repo: "https://charts.rook.io/release"
+      chart: rook-ceph
+      namespace: rook-ceph
+      image: "quay.io/ceph/ceph:v20.2.4"
+      values:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 512Mi
+        enableDiscoveryDaemon: false
+        monitoring:
+          enabled: false
+        # SELinux is enforcing on k4all nodes: Ceph's pods write host paths
+        # (/var/lib/rook), and without privileged Rook cannot chown them.
+        hostpathRequiresPrivileged: true
+      featureGate: rook
+      dependsOn:
+        - calico
+        - cilium
+      custom: {}
+
+    # Rook 1.21's chart installs the ceph-csi operator but no driver: this
+    # chart declares the RBD driver under the provisioner name Rook's
+    # StorageClasses use (Rook's recommended values, CephFS, NFS and NVMe-oF
+    # off). snapshotPolicy volumeSnapshot adds the csi-snapshotter sidecar:
+    # without it a VolumeSnapshot of ceph-rbd never becomes ready (CDI picks
+    # snapshots as the DataImportCron format of rbd).
+    ceph-csi-drivers:
+      type: helm
+      version: "1.1.0"
+      repo: "https://ceph.github.io/ceph-csi-operator"
+      chart: ceph-csi-drivers
+      namespace: rook-ceph
+      values:
+        operatorConfig:
+          namespace: rook-ceph
+          driverSpecDefaults:
+            imageSet:
+              name: rook-csi-operator-image-set-configmap
+            nodePlugin:
+              priorityClassName: system-node-critical
+            controllerPlugin:
+              priorityClassName: system-cluster-critical
+              replicas: 1
+        drivers:
+          rbd:
+            enabled: true
+            name: rook-ceph.rbd.csi.ceph.com
+            snapshotPolicy: volumeSnapshot
+          cephfs:
+            enabled: false
+            name: rook-ceph.cephfs.csi.ceph.com
+          nfs:
+            enabled: false
+            name: rook-ceph.nfs.csi.ceph.com
+          nvmeof:
+            enabled: false
+            name: rook-ceph.nvmeof.csi.ceph.com
+      featureGate: rook
+      # The Driver CRD, the ceph-csi operator and its image set come with
+      # rook-ceph.
+      dependsOn:
+        - rook-ceph
+      custom: {}
+
     # --- Certificates ---
     cert-manager:
       type: helm
