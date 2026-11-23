@@ -93,9 +93,9 @@ v2.6.6, before a hop starts (also a hop that waited), the tool checks it on the
 graph it would plan with now: the published one, or offline the image's, which
 lists no later release and so changes nothing. When a release was blocked
 since, a new patch now ends the stream, or a `minFrom` was raised, the plan is
-made again from the running release: toward the same target, or, for the timer,
-toward the latest release when that target is gone, within `autoAllow`. The log
-says `plan changed:` and why, and so does the plan's history
+made again from the committed release: toward the same target, or, for the
+timer, toward the latest release when that target is gone, within `autoAllow`.
+The log says `plan changed:` and why, and so does the plan's history
 (`k4all-upgrade status --json`). A plan of the timer with nothing left that it
 may run is dropped (`plan dropped:`). A plan of `run` whose target no path
 reaches any more goes to HOLD. A hop past its preflight is never planned again.

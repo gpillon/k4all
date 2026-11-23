@@ -2838,8 +2838,8 @@ class Upgrader:
             path, why = [], "%s; no path left: %s" % (why, exc)
         else:
             if not path:
-                why += ("; the new plan has no hop that autoAllow %s lets the "
-                        "timer run" % self.cfg["autoAllow"])
+                why += ("; no hop is left that the timer may run (autoAllow "
+                        "%s)" % self.cfg["autoAllow"])
         new = [r.version for r in path]
         state["history"].append({
             "from": current, "to": nxt,
