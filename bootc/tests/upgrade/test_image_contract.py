@@ -681,3 +681,21 @@ def test_hangar_replaces_kubevirt_manager():
         assert field not in kvm, field
     for name, comp in components.items():
         assert "kubevirt-manager" not in comp.get("dependsOn", []), name
+
+
+def test_metadata_service_comes_with_the_operator():
+    # k4all-metadata is the operator's own component: its image is built
+    # and tagged with the operator's release, so a bump of one is a bump of
+    # the other. No sources (the operator's hook renders its policies), so
+    # an operator that does not know its gate must leave it out: under
+    # featureGate virt an operator before v0.6.0 would fail it ("no source
+    # URLs"). It needs KubeVirt's VirtualMachineInstance kind.
+    components = release_components()
+    md = components["k4all-metadata"]
+    assert md["type"] == "manifest"
+    assert md["version"] == components["k4all-operator"]["version"]
+    assert md["image"] == "ghcr.io/gpillon/k4all-metadata:{{ version }}"
+    assert md["featureGate"] == "virtMetadata"
+    assert md["dependsOn"] == ["kubevirt"]
+    for field in ("source", "sources", "inlineManifests", "patches", "namespace"):
+        assert field not in md, field

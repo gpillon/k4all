@@ -705,6 +705,28 @@ spec:
         - kubevirt
       custom: {}
 
+    # The metadata service of VMs on 169.254.169.254: OpenStack and EC2
+    # paths (cloud-init, cloudbase-init, cirros), IMDSv2, and the VM's
+    # ServiceAccount tokens for the audiences of the ClusterConfig. Part of
+    # the k4all-operator: no sources, its hook applies two
+    # MutatingAdmissionPolicies that add to each served VM's virt-launcher
+    # pod an init container redirecting 169.254.169.254:80 (NET_ADMIN
+    # only, container_t) and the server (uid 107, read-only, no
+    # capabilities); its metadata controller writes each VM's Secret
+    # k4all-md-<vm> from the VM's spec. On with
+    # spec.features.virt.metadata.enabled (gate virtMetadata: an operator
+    # before v0.6.0 does not know it and leaves this component out).
+    # The image is released with the operator, same tag: version is
+    # k4all-operator's version.
+    k4all-metadata:
+      type: manifest
+      version: "v0.5.7"   # same tag as k4all-operator
+      image: "ghcr.io/gpillon/k4all-metadata:{{ version }}"
+      featureGate: virtMetadata
+      dependsOn:
+        - kubevirt
+      custom: {}
+
     # Hangar replaces kubevirt-manager. On clusters that ran it, the
     # operator's kubevirt-manager hook removes its console and roles; it
     # keeps a PriorityClass (vm-standard, vm-preemptible) while a VM or
