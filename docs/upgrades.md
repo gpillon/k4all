@@ -151,7 +151,8 @@ asks for.
 
 `podStopMaxSeconds` (from v2.6.7, default 300) is the most time one pod gets
 to stop right before a reboot. Each pod gets its own grace period, at least
-30 seconds and at most this. On a single node the preflight warns about the
+30 seconds and at most this. The pods on the pod network stop first and the
+host-network ones after them, so the reboot waits at most twice this. On a single node the preflight warns about the
 pods that ask for more (`k4all-upgrade status`, `Warning:`). A value that is
 not a whole number stops every command until it is fixed.
 
@@ -193,8 +194,11 @@ Don't unmask it.
    Right before the reboot kubelet stops, and so do the pods still on the
    node: DaemonSets, or all of them on a single node, its VMs included. From
    v2.6.7 each pod gets its own `terminationGracePeriodSeconds` to exit, at
-   least 30 seconds and at most `podStopMaxSeconds` (see below). They stop in
-   parallel, so the reboot waits at most `podStopMaxSeconds`. A virt-launcher
+   least 30 seconds and at most `podStopMaxSeconds` (see below). The pods on
+   the pod network stop first, in parallel, while the CNI agent still runs:
+   CRI-O tears a pod's network down before it stops its containers. The
+   host-network pods (the CNI agent, the static pods) stop after them, in
+   parallel. The reboot waits at most twice `podStopMaxSeconds`. A virt-launcher
    pod has its VMI's grace period plus 30 seconds, and its guest shuts down
    cleanly. Up to v2.6.6 every pod got 30 seconds, whatever it asked for
    ([#98](https://github.com/gpillon/k4all/issues/98)). A guest that needed

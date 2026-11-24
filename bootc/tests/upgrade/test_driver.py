@@ -613,9 +613,10 @@ def test_pods_are_stopped_with_a_deadline_before_the_reboot(make_host):
     reboot = index_of(host, lambda c: c[:3] == ["bootc", "upgrade",
                                                 "--from-downloaded"])
     assert stop < pods < reboot
-    # each pod with its grace period, at least 30 s (test_pod_stop.py)
-    assert host.pod_stops == ["30 p-dns\n30 p-etcd\n"]
-    assert host.pods_stopped == 1
+    # each pod with its grace period, at least 30 s, the pod network first
+    # (test_pod_stop.py)
+    assert host.pod_stops == ["30 p-dns\n", "30 p-etcd\n"]
+    assert host.pods_stopped == 2
 
 
 def test_a_failed_reboot_starts_kubelet_again(make_host):
@@ -643,7 +644,7 @@ def test_the_rollback_reboot_stops_the_pods_too(make_host):
     before = host.pods_stopped
     run_cli(host, "resume")
     assert state(host)["phase"] == "ROLLBACK_REBOOT"
-    assert host.pods_stopped == before + 1
+    assert host.pods_stopped == before + 2
 
 
 # Review: a TimeoutExpired from Host.run left kubelet stopped, without the
@@ -692,7 +693,7 @@ def test_pods_that_do_not_stop_cleanly_are_only_a_note(make_host):
     _pod_stop_answers(host, 123, NETNS_BUSY)
     assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
     assert host.reboots == 1
-    note, = [m for m in host.logs if m.startswith("before the reboot:")]
+    note = [m for m in host.logs if m.startswith("before the reboot: some")][0]
     assert note.startswith("before the reboot: some pods did not stop cleanly; "
                            "the reboot ends them (last crictl message: ")
     assert "device or resource busy" in note and "exited" not in note

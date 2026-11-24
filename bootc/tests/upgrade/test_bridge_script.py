@@ -31,7 +31,8 @@ def node(tmp_path):
               image_tag=None, nodes="k4all-1   Ready   control-plane   1d   v1.35.6\n",
               admin=True, free_kib=50 * 1024 * 1024, node_type=None,
               release_manifest=None, kube_vip_manifest=None, vip_up=True,
-              graces=(("pod-a", "30"), ("pod-b", "30")), ps_fails=False):
+              graces=(("pod-a", "30"), ("pod-b", "30")), ps_fails=False,
+              networks=(("pod-a", "POD"), ("pod-b", "NODE")), inspect_fails=False):
         status = {"status": {"booted": {"image": {"image": {"image": booted}}},
                              "staged": ({"image": {"image": {"image": staged}}}
                                         if staged else None)}}
@@ -72,13 +73,19 @@ def node(tmp_path):
             {"id": "c%d" % i, "podSandboxId": pod, "annotations": {
                 "io.kubernetes.pod.terminationGracePeriod": grace}}
             for i, (pod, grace) in enumerate(graces)]}))
+        # `inspectp -o json`: each pod's network namespace (NODE: host network)
+        (tmp_path / "inspectp.json").write_text(json.dumps([
+            {"status": {"id": pod, "linux": {"namespaces": {"options": {
+                "network": network}}}}} for pod, network in networks]))
         _fake(bin_dir, "crictl",
               'case " $* " in\n'
               '  *" pods -q --state ready "*) printf "pod-a\\npod-b\\n" ;;\n'
               '  *" ps -o json "*) %s ;;\n'
+              '  *" inspectp -o json "*) %s ;;\n'
               '  *" stopp "*) echo "crictl $*" >> %s ;;\n'
               "esac\n" % ("exit 1" if ps_fails else "cat %s" % (tmp_path / "ps.json"),
-                          log))
+                          "exit 1" if inspect_fails
+                          else "cat %s" % (tmp_path / "inspectp.json"), log))
         _fake(bin_dir, "df", 'echo Avail; echo %d\n' % free_kib)
         _fake(bin_dir, "id", 'echo 0\n')
         # the node ships mikefarah yq; mimic the one expression the script uses
@@ -214,6 +221,30 @@ def test_a_failed_stop_is_tried_again_while_the_pod_has_time(node, tmp_path):
     a = [c for c in calls if c.endswith(" stopp pod-a")]
     assert len(a) == 2 and a[0].split()[-3] == "--timeout=212s"
     assert len([c for c in calls if c.endswith(" stopp pod-b")]) == 1
+
+
+# k4all#98, VM 980: with the CNI agent stopping at the same time, CRI-O's
+# network teardown of the other pods failed and left their containers alone.
+def test_the_pod_network_stops_before_the_host_network(node, tmp_path):
+    setup, run = node
+    setup(graces=(("pod-a", "210"), ("pod-b", "1")))
+    crictl = tmp_path / "bin" / "crictl"         # pod-a takes a second to stop
+    crictl.write_text(crictl.read_text().replace(
+        '  *" stopp "*) echo', '  *" stopp pod-a "*) sleep 1; echo "crictl $*" >> %s ;;\n'
+        '  *" stopp "*) echo' % (tmp_path / "calls.log")))
+    proc, calls = run("--now")
+    assert proc.returncode == 0, proc.stderr
+    stopp = [c.split()[-1] for c in calls if " stopp " in c]
+    assert stopp == ["pod-a", "pod-b"], "pod-b, on the host network, after"
+
+
+def test_without_the_networks_every_pod_stops_at_once(node):
+    setup, run = node
+    setup(inspect_fails=True)
+    proc, calls = run("--now")
+    assert proc.returncode == 0, proc.stderr
+    assert sorted(c.split()[-1] for c in calls if " stopp " in c) == ["pod-a", "pod-b"]
+    assert "cannot tell which pods are on the host network" in proc.stdout
 
 
 def test_grace_periods_that_cannot_be_read_give_every_pod_the_most(node):

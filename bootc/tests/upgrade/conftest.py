@@ -85,10 +85,13 @@ def manifest_digest(version, arch="amd64"):
     return "sha256:" + hashlib.sha256(("%s %s" % (arch, version)).encode()).hexdigest()
 
 
-def sandbox(pod_id, namespace, name, grace=30, containers=("main",)):
-    """A ready pod sandbox of CRI-O, as FakeHost.sandboxes holds it."""
+def sandbox(pod_id, namespace, name, grace=30, containers=("main",),
+            network="POD"):
+    """A ready pod sandbox of CRI-O, as FakeHost.sandboxes holds it.
+    network: NODE for a host-network pod, POD for one on the pod network,
+    None when `crictl inspectp` does not say."""
     return {"id": pod_id, "namespace": namespace, "name": name, "grace": grace,
-            "containers": list(containers)}
+            "containers": list(containers), "network": network}
 
 
 class Proc:
@@ -139,10 +142,12 @@ class FakeHost(ku.Host):
         self.pods_stopped = 0       # times every pod was stopped with crictl
         # CRI-O's ready pod sandboxes; "grace" is the terminationGracePeriod
         # kubelet put on their running containers (None: no running one)
-        self.sandboxes = [sandbox("p-etcd", "kube-system", "etcd-k4all-node-1"),
+        self.sandboxes = [sandbox("p-etcd", "kube-system", "etcd-k4all-node-1",
+                                  network="NODE"),
                           sandbox("p-dns", "kube-system", "coredns-5d78c9869d-x2k4q")]
-        self.crictl_fails = set()   # "pods", "ps": that listing fails
-        self.pod_stops = []         # stdin of each stop: "<seconds> <pod id>" lines
+        self.crictl_fails = set()   # "pods", "ps", "inspectp": that call fails
+        # stdin of each stop, in order (one per phase): "<seconds> <pod id>" lines
+        self.pod_stops = []
         self.pod_stop_took = {}     # pod id -> seconds its stop takes (default 1)
         self.pod_stop_rc = {}       # pod id -> rc of its stop (default 0)
         self.pod_stop_tries = {}    # pod id -> crictl stopp tries (default 1)
@@ -323,6 +328,17 @@ class FakeHost(ku.Host):
                         "annotations": {"io.kubernetes.container.restartCount": "0",
                                         ku.GRACE_ANNOTATION: str(p["grace"])}})
             return Proc(json.dumps({"containers": containers}))
+        if args[:3] == ["inspectp", "-o", "json"]:
+            # crictl prints a list for several pods, the object for one
+            found = []
+            for p in self.sandboxes:
+                if p["id"] not in args[3:]:
+                    continue
+                linux = {} if p["network"] is None else {
+                    "namespaces": {"options": {"network": p["network"]}}}
+                found.append({"status": {"id": p["id"], "linux": linux},
+                              "info": {}})
+            return Proc(json.dumps(found[0] if len(found) == 1 else found))
         return Proc(returncode=1, stderr="crictl %s" % args)
 
     def _bootc(self, args):

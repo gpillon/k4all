@@ -20,7 +20,8 @@
 #   --force     continue when a check only warns (unknown image, nodes not Ready)
 #
 # Right before the reboot each pod gets its own grace period to stop, at least
-# 30 s and at most K4ALL_POD_STOP_MAX_SECONDS (default 300).
+# 30 s and at most K4ALL_POD_STOP_MAX_SECONDS (default 300): first the pods on
+# the pod network, then the host-network ones, so at most twice that.
 set -euo pipefail
 
 BRIDGE_VERSION="v2.2.4"
@@ -257,11 +258,15 @@ bootc_unit() {
 # CRI-O takes crictl's --timeout as the deadline of the stop, keeps 2 s of it
 # for the call and the infra container, and stops the containers of a pod in
 # parallel; one crictl per pod, all at once. It tears the pod's network down
-# first: when that fails (the CNI agent stops too), the stop is tried again
-# while the pod has time left (3 tries at most). Listing the pods changes
+# first, so the pods on the pod network stop first, then the ones on the host
+# network (the CNI agent, the static pods): with the agent stopping at the
+# same time the teardown failed and left the containers alone. A stop that
+# failed is tried again while the pod has time left (3 tries at most). The
+# reboot waits at most twice POD_STOP_MAX_SECONDS. Listing the pods changes
 # nothing, so a dry run lists them too.
 stop_pods() {
     local crictl="crictl --runtime-endpoint unix:///run/crio/crio.sock" pods graces plan
+    local networks host_pods
     log "stopping kubelet and the pods (each within its grace period: at least" \
         "${POD_STOP_SECONDS} s, at most ${POD_STOP_MAX_SECONDS} s)"
     run systemctl stop kubelet || true
@@ -285,16 +290,38 @@ stop_pods() {
                 END { s = g < lo ? lo : g; print (s > hi ? hi : s), id }'
         fi
     done)
+    # "<pod id> <NODE|POD>" of each pod: NODE is the host network
+    # shellcheck disable=SC2086 # one argument per pod id
+    if networks=$($crictl inspectp -o json $pods 2>/dev/null | jq -r 'if type == "array"
+            then .[] else . end | "\(.status.id) \(.status.linux.namespaces.options.network // "")"' \
+            2>/dev/null); then
+        host_pods=$(echo "$networks" | awk '$2 == "NODE" { printf "%s ", $1 }')
+    else
+        log "cannot tell which pods are on the host network: every pod stops at once"
+        host_pods=""
+    fi
+    stop_phase "$(echo "$plan" | awk -v host="$host_pods" '
+        BEGIN { n = split(host, h, " "); for (i = 1; i <= n; i++) skip[h[i]] = 1 }
+        !($2 in skip)')"
+    stop_phase "$(echo "$plan" | awk -v host="$host_pods" '
+        BEGIN { n = split(host, h, " "); for (i = 1; i <= n; i++) keep[h[i]] = 1 }
+        $2 in keep')"
+}
+
+# stop_phase PLAN: stop the pods of PLAN ("<seconds> <pod id>" lines) at once.
+stop_phase() {
+    local crictl="crictl --runtime-endpoint unix:///run/crio/crio.sock"
+    [ -n "$1" ] || return 0
     if [ "$DRY_RUN" = true ]; then
-        echo "$plan" | while read -r seconds pod; do
+        echo "$1" | while read -r seconds pod; do
             log "would run: $crictl --timeout=$((seconds + 2))s stopp $pod"
         done
         return 0
     fi
-    echo "$plan" | xargs -r -n 2 -P 0 sh -c \
-        "end=\$((\$(date +%s) + \$0)); n=0; while [ \$n -lt 3 ]; do n=\$((n + 1));
-         $crictl --timeout=\$((end - \$(date +%s) + 2))s stopp \"\$1\" >/dev/null 2>&1 && break;
-         [ \$((end - \$(date +%s))) -gt 1 ] || break; sleep 1; done" || true
+    echo "$1" | xargs -r -n 2 -P 0 sh -c \
+        "end=\$((\$(date +%s) + \$0)); t=\$((\$0 + 2)); n=0; while [ \$n -lt 3 ]; do n=\$((n + 1));
+         $crictl --timeout=\${t}s stopp \"\$1\" >/dev/null 2>&1 && break;
+         t=\$((end - \$(date +%s) + 1)); [ \$t -gt 2 ] || break; sleep 1; done" || true
 }
 
 if [ "$NOW" = true ]; then

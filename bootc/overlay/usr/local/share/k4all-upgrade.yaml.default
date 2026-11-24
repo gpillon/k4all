@@ -20,7 +20,8 @@ window:
   durationMinutes: 120
 
 # Right before a reboot each pod gets its own terminationGracePeriodSeconds
-# to stop, at least 30 s and at most this many seconds (all pods at once, so
-# the reboot waits at most this long). A VM's virt-launcher pod asks for its
-# VMI's grace period plus 30 s.
+# to stop, at least 30 s and at most this many seconds. The pods on the pod
+# network stop first, all at once, then the host-network ones (the CNI agent,
+# the static pods), so the reboot waits at most twice this long. A VM's
+# virt-launcher pod asks for its VMI's grace period plus 30 s.
 podStopMaxSeconds: 300
