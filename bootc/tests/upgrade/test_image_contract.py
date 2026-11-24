@@ -414,6 +414,13 @@ def test_rook_is_optional():
     assert "rook-ceph" in components["ceph-csi-drivers"]["dependsOn"]
 
 
+def test_cairn_goes_before_rook():
+    # The reconciler uninstalls a feature's components in reverse
+    # dependency order (consoles first): without dependsOn, Cairn's roles
+    # went first only by a tie-break on names.
+    assert release_components()["cairn"]["dependsOn"] == ["rook-ceph"]
+
+
 def test_rook_runs_under_selinux_with_snapshots():
     # k4all nodes enforce SELinux: without privileged pods Rook cannot chown
     # /var/lib/rook. Without the snapshotter sidecar (snapshotPolicy none, the

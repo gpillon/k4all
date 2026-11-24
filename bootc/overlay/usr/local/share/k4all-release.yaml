@@ -463,11 +463,14 @@ spec:
     # cairn-admin), from the GitHub Release of the plugin Headlamp runs
     # (same tag as cairn-plugin above, with a "v"). Cairn is Rook's console:
     # this component and Cairn's plugin come with features.rook.enabled.
+    # dependsOn: turning Rook off uninstalls the console first.
     cairn:
       type: manifest
       version: "v0.1.0"
       source: "https://github.com/kalik1/cairn/releases/download/{{ version }}/cairn-cluster.yaml"
       featureGate: rook
+      dependsOn:
+        - rook-ceph
       custom: {}
 
     # --- Certificates ---
