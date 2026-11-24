@@ -144,6 +144,8 @@ class FakeHost(ku.Host):
         self.crictl_fails = set()   # "pods", "ps": that listing fails
         self.pod_stops = []         # stdin of each stop: "<seconds> <pod id>" lines
         self.pod_stop_took = {}     # pod id -> seconds its stop takes (default 1)
+        self.pod_stop_rc = {}       # pod id -> rc of its stop (default 0)
+        self.pod_stop_tries = {}    # pod id -> crictl stopp tries (default 1)
         self.sleeps = []            # seconds of every Host.sleep, in order
         self.cluster_config = {
             "apiVersion": "kubeadm.k8s.io/v1beta4",
@@ -277,7 +279,9 @@ class FakeHost(ku.Host):
             self.pods_stopped += 1
             self.pod_stops.append(input_text)
             lines = [line.split() for line in (input_text or "").splitlines()]
-            return Proc("".join("%s 0 %d\n" % (pod, self.pod_stop_took.get(pod, 1))
+            return Proc("".join("%s %d %d %d\n" % (pod, self.pod_stop_rc.get(pod, 0),
+                                                    self.pod_stop_took.get(pod, 1),
+                                                    self.pod_stop_tries.get(pod, 1))
                                 for _, pod in lines))
         if cmd == "crictl":
             return self._crictl(argv[3:])

@@ -101,16 +101,26 @@ POD_STOP_SECONDS = 30
 # sandbox has no such annotation.
 GRACE_ANNOTATION = "io.kubernetes.pod.terminationGracePeriod"
 CRICTL = "crictl --runtime-endpoint unix:///run/crio/crio.sock"
-# One crictl per pod, all at once; each input line is "<seconds> <pod id>".
-# crictl's --timeout is the deadline of the CRI call. CRI-O stops the pod's
-# containers with what is left of it, less 1 s for the infra container
-# (stopTimeoutFromContext, stopPodSandbox), then kills them: 2 s more give
-# the containers the pod's seconds. Each pod prints "<pod id> <crictl rc>
-# <seconds its stop took>"; the script fails (xargs: 123) when one stop did.
-STOP_PODS_SCRIPT = (
-    "xargs -r -n 2 -P 0 sh -c 's=$(date +%s); " + CRICTL
-    + " --timeout=$(($0 + 2))s stopp \"$1\" >/dev/null; r=$?; "
-    "echo \"$1 $r $(($(date +%s) - s))\"; [ $r -eq 0 ]'")
+# One stop per pod, all at once; each input line is "<seconds> <pod id>".
+# crictl's --timeout is the deadline of the CRI call. CRI-O (v1.36.8,
+# stopPodSandbox) first tears the pod's network down, then stops the
+# containers with what is left of the deadline, less 1 s for the infra
+# container (stopTimeoutFromContext), and kills them at the end: 2 s more
+# give the containers the pod's seconds. A failed network teardown fails the
+# call with the containers untouched, but CRI-O marks the network stopped:
+# while the pod has time left, the stop is tried again (3 tries at most), and
+# the next call goes straight to the containers. On a VM the CNI agent stops
+# at the same time and cilium-cni waits about 32 s for it before it fails.
+# Each pod prints "<pod id> <0, or 1 when its stop failed> <seconds it
+# took> <tries>"; the script fails (xargs: 123) when one stop did.
+STOP_ONE_POD = (
+    "s=$(date +%s); end=$((s + $0)); r=1; n=0; "
+    "while [ $n -lt 3 ]; do n=$((n + 1)); "
+    + CRICTL + " --timeout=$((end - $(date +%s) + 2))s stopp \"$1\" >/dev/null"
+    " && { r=0; break; }; "
+    "[ $((end - $(date +%s))) -gt 1 ] || break; sleep 1; done; "
+    "echo \"$1 $r $(($(date +%s) - s)) $n\"; [ $r -eq 0 ]")
+STOP_PODS_SCRIPT = "xargs -r -n 2 -P 0 sh -c '" + STOP_ONE_POD + "'"
 # xargs: some of the commands it ran exited 1-125, here some `crictl stopp`.
 XARGS_SOME_FAILED = 123
 RELEASE_MANIFEST_NAME = "k4all"
@@ -2404,24 +2414,43 @@ class Upgrader:
         return pod_stop_plan(sandboxes, containers, most)
 
     def _report_pod_stops(self, plan, stdout):
-        """Log the pods that used all their time (CRI-O killed what was
-        left), and how long the ones with more than POD_STOP_SECONDS took."""
+        """Log how the pods stopped: the ones CRI-O killed at their deadline,
+        how long the ones with more than POD_STOP_SECONDS took, and the stops
+        that failed (the reboot ends those pods)."""
         took = {}
         for line in (stdout or "").splitlines():
             parts = line.split()
-            if len(parts) == 3 and parts[2].isdigit():
-                took[parts[0]] = int(parts[2])
+            if len(parts) == 4 and all(p.isdigit() for p in parts[1:]):
+                took[parts[0]] = tuple(int(p) for p in parts[1:])
+        failed, again = [], []
         for seconds, pod, name, grace in plan:
             if pod not in took:
                 continue
-            if took[pod] >= seconds:
+            rc, spent, tries = took[pod]
+            if rc == 0 and tries > 1:
+                again.append(name)
+            if rc != 0:
+                failed.append(name)
+                if seconds > POD_STOP_SECONDS:
+                    self.host.log("before the reboot: %s: its stop failed within "
+                                  "its %d s; the reboot ends it" % (name, seconds))
+            elif spent >= seconds:
                 asks = " (it asks %d s)" % grace \
                     if grace is not None and grace > seconds else ""
                 self.host.log("before the reboot: %s did not stop within %d s%s: "
                               "CRI-O killed it" % (name, seconds, asks))
             elif seconds > POD_STOP_SECONDS:
                 self.host.log("before the reboot: %s stopped in %d s (of %d s)"
-                              % (name, took[pod], seconds))
+                              % (name, spent, seconds))
+        if again:
+            self.host.log("before the reboot: %d pods stopped at a second or "
+                          "third try, their network teardown having failed "
+                          "first: %s" % (len(again), ", ".join(sorted(again))))
+        if failed:
+            self.host.log("before the reboot: the stop of %d pods failed (CRI-O "
+                          "tears the network down first, and the CNI may be "
+                          "stopping too; the reboot ends them): %s"
+                          % (len(failed), ", ".join(sorted(failed))))
 
     # --- POST_BOOT -------------------------------------------------------
     def post_boot(self, state):

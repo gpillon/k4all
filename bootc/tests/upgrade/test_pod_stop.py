@@ -161,6 +161,39 @@ def test_the_log_says_how_the_long_pods_stopped(make_host):
         "a pod that stops in its first seconds is not worth a line"
 
 
+# VM 980, hop v2.6.7 -> v2.6.91: CRI-O tears a pod's network down before it
+# stops its containers, and the Cilium agent stops at the same time: 27 of
+# about 40 pods waited ~32 s on cilium-cni ("Agent is starting up, will
+# retry"), then their stop failed with the containers untouched. A long
+# stop retried in time (test_the_stop_script_retries_...) ends well; a stop
+# that failed is not a pod CRI-O killed.
+def test_the_log_names_the_stops_that_failed(make_host):
+    host = single_node(make_host, LAUNCHER,
+                       sandbox("p-hook", "nmstate", "nmstate-webhook-7c49", grace=30))
+    host.pod_stop_rc = {"p-vm": 1, "p-hook": 1, "p-dns": 1}
+    host.pod_stop_took = {"p-vm": 210, "p-hook": 32, "p-dns": 32}
+    hop(host)
+    assert "before the reboot: vms/virt-launcher-slow-shutdown-7xq2m: its stop " \
+           "failed within its 210 s; the reboot ends it" in host.logs
+    assert "before the reboot: the stop of 3 pods failed (CRI-O tears the " \
+           "network down first, and the CNI may be stopping too; the reboot " \
+           "ends them): kube-system/coredns-5d78c9869d-x2k4q, " \
+           "nmstate/nmstate-webhook-7c49, vms/virt-launcher-slow-shutdown-7xq2m" \
+           in host.logs
+    assert not [m for m in host.logs if "CRI-O killed it" in m]
+
+
+def test_the_log_names_the_stops_that_needed_another_try(make_host):
+    host = single_node(make_host, LAUNCHER)
+    host.pod_stop_took, host.pod_stop_tries = {"p-vm": 125}, {"p-vm": 2}
+    hop(host)
+    assert "before the reboot: vms/virt-launcher-slow-shutdown-7xq2m stopped " \
+           "in 125 s (of 210 s)" in host.logs
+    assert "before the reboot: 1 pods stopped at a second or third try, their " \
+           "network teardown having failed first: " \
+           "vms/virt-launcher-slow-shutdown-7xq2m" in host.logs
+
+
 def test_the_rollback_reboot_gives_the_pods_their_time_too(make_host):
     host = single_node(make_host, LAUNCHER)
     host.healthy_after_boot = False
@@ -200,6 +233,44 @@ def test_the_stop_script_gives_each_pod_its_own_deadline(tmp_path):
     took = sorted(line.split()[:2] for line in got.stdout.splitlines())
     assert took == [["p1", "0"], ["p2", "0"], ["p3", "0"]]
     assert all(1 <= int(line.split()[2]) <= 2 for line in got.stdout.splitlines())
+
+
+def test_the_stop_script_retries_a_stop_whose_network_teardown_failed(tmp_path):
+    # CRI-O marks the network stopped even when its teardown failed, so the
+    # second stop goes straight to the containers, with the time left.
+    env, log = fake_crictl(tmp_path,
+                           'echo "$*" >> %(log)s\n'
+                           'case "$*" in *" p2")\n'
+                           '  if [ ! -e %(log)s.p2 ]; then touch %(log)s.p2; sleep 2;\n'
+                           '    echo "network teardown failed for pod sandbox" >&2; exit 1; fi ;;\n'
+                           'esac\n')
+    got = subprocess.run(["sh", "-c", ku.STOP_PODS_SCRIPT], env=env,
+                         input="30 p1\n10 p2\n", capture_output=True, text=True)
+    assert got.returncode == 0, got.stderr
+    calls = [line.split() for line in log.read_text().splitlines()]
+    p2 = [c[-3] for c in calls if c[-1] == "p2"]
+    assert len(p2) == 2 and p2[0] == "--timeout=12s"
+    assert p2[1] in ("--timeout=9s", "--timeout=10s"), "the time left, not more"
+    assert len([c for c in calls if c[-1] == "p1"]) == 1
+    assert sorted(line.split()[:2] + line.split()[3:] for line in
+                  got.stdout.splitlines()) == [["p1", "0", "1"], ["p2", "0", "2"]]
+
+
+def test_the_stop_script_gives_up_when_the_time_is_over(tmp_path):
+    env, log = fake_crictl(tmp_path,
+                           'echo "$*" >> %(log)s\n'
+                           'case "$*" in *" p3") sleep 3; exit 1 ;;\n'
+                           '  *" p4") exit 1 ;; esac\n')
+    started = time.monotonic()
+    got = subprocess.run(["sh", "-c", ku.STOP_PODS_SCRIPT], env=env,
+                         input="3 p3\n30 p4\n", capture_output=True, text=True)
+    assert time.monotonic() - started < 10, "no loop on a stop that keeps failing"
+    calls = [line.split()[-1] for line in log.read_text().splitlines()]
+    assert calls.count("p3") == 1, "its 3 s are over: no second try"
+    assert calls.count("p4") == 3, "at most 3 tries"
+    assert got.returncode == ku.XARGS_SOME_FAILED
+    assert sorted(line.split()[:2] for line in got.stdout.splitlines()) == \
+        [["p3", "1"], ["p4", "1"]]
 
 
 def test_the_stop_script_says_which_stop_failed(tmp_path):

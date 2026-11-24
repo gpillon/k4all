@@ -198,6 +198,24 @@ def test_a_most_that_is_not_a_number_stops_before_anything_changes(node):
     assert calls == []
 
 
+def test_a_failed_stop_is_tried_again_while_the_pod_has_time(node, tmp_path):
+    # CRI-O tears the network down first; when that fails (the CNI agent
+    # stops too) the containers are untouched, and the next stop reaches them.
+    setup, run = node
+    setup(graces=(("pod-a", "210"), ("pod-b", "30")))
+    bin_dir = tmp_path / "bin"
+    real = (bin_dir / "crictl").read_text()
+    (bin_dir / "crictl").write_text(real.replace(
+        '  *" stopp "*) echo "crictl $*" >> ',
+        '  *" stopp pod-a "*) echo "crictl $*" >> %s; [ -e %s.a ] || { touch %s.a; exit 1; } ;;\n'
+        '  *" stopp "*) echo "crictl $*" >> ' % ((tmp_path / "calls.log",) + (tmp_path / "calls.log",) * 2)))
+    proc, calls = run("--now")
+    assert proc.returncode == 0, proc.stderr
+    a = [c for c in calls if c.endswith(" stopp pod-a")]
+    assert len(a) == 2 and a[0].split()[-3] == "--timeout=212s"
+    assert len([c for c in calls if c.endswith(" stopp pod-b")]) == 1
+
+
 def test_grace_periods_that_cannot_be_read_give_every_pod_the_most(node):
     setup, run = node
     setup(ps_fails=True)
