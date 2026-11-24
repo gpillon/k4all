@@ -20,9 +20,10 @@ from pyanaconda.core.kickstart.addon import AddonData
 
 from com_k4all_installer.constants import (
     VALID_ROLES, VALID_CNI_TYPES, VALID_HA_TYPES,
-    VALID_EMULATION_VALUES,
+    VALID_EMULATION_VALUES, VALID_ROOK_SMALL_CLUSTER, VALID_METADATA_SCOPES,
+    MAX_PODS_RANGE,
     DEFAULT_CLUSTER_CONFIG, DEFAULT_INSTALL_CONFIG,
-    JOINING_ROLES, node_cluster_config,
+    JOINING_ROLES, node_cluster_config, cluster_config_schema,
 )
 
 log = logging.getLogger(__name__)
@@ -176,7 +177,7 @@ class K4AllData(AddonData):
             log.debug("Merged user config from kickstart body")
 
         self._normalize_and_validate_cluster_config(
-            self.cluster_config, DEFAULT_CLUSTER_CONFIG
+            self.cluster_config, cluster_config_schema()
         )
 
         cni_type = self.cluster_config["networking"]["cni"]["type"]
@@ -191,6 +192,29 @@ class K4AllData(AddonData):
         if emulation not in VALID_EMULATION_VALUES:
             raise ValueError(
                 f"Invalid ClusterConfig virtualization emulation value: {emulation}"
+            )
+
+        # The CRD refuses these too, but only when the node applies its
+        # ClusterConfig at first boot: refuse them at install instead.
+        features = self.cluster_config["features"]
+        small_cluster = features.get("rook", {}).get("smallCluster", "Refuse")
+        if small_cluster not in VALID_ROOK_SMALL_CLUSTER:
+            raise ValueError(
+                f"Invalid ClusterConfig features.rook.smallCluster: {small_cluster} "
+                f"(one of {', '.join(VALID_ROOK_SMALL_CLUSTER)})"
+            )
+        scope = features["virt"].get("metadata", {}).get("scope", "Labelled")
+        if scope not in VALID_METADATA_SCOPES:
+            raise ValueError(
+                f"Invalid ClusterConfig features.virt.metadata.scope: {scope} "
+                f"(one of {', '.join(VALID_METADATA_SCOPES)})"
+            )
+        max_pods = self.cluster_config.get("nodes", {}).get("kubelet", {}).get("maxPods")
+        low, high = MAX_PODS_RANGE
+        if max_pods is not None and not low <= max_pods <= high:
+            raise ValueError(
+                f"Invalid ClusterConfig nodes.kubelet.maxPods: {max_pods} "
+                f"(from {low} to {high})"
             )
 
     def _normalize_and_validate_cluster_config(self, config, schema, path=()):
@@ -231,6 +255,11 @@ class K4AllData(AddonData):
             elif isinstance(expected, dict):
                 self._normalize_and_validate_cluster_config(
                     value, expected, field_path
+                )
+            elif isinstance(expected, int) and (
+                    isinstance(value, bool) or not isinstance(value, int)):
+                raise ValueError(
+                    f"ClusterConfig field {dotted} must be an integer"
                 )
             elif isinstance(expected, str) and not isinstance(value, str):
                 raise ValueError(

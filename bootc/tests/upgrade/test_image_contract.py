@@ -339,6 +339,24 @@ def test_bootstrap_kubelet_config_allows_250_pods():
     assert kubelet[0]["maxPods"] == 250
 
 
+def test_new_installs_own_the_250_pods_kubeadm_gives_them():
+    # A new install's ClusterConfig owns maxPods (spec §3), with the value
+    # kubeadm's bootstrap config gives the cluster, so the node settings
+    # controller finds kubelet-config as it wants it: no rollout after the
+    # install. kubeadm init takes the value of /etc/k4all-config.yaml, so a
+    # kickstart's own maxPods agrees too.
+    with open(os.path.join(BOOTC, "overlay", "etc", "k4all-config.yaml.default"),
+              encoding="utf-8") as fh:
+        default = yaml.safe_load(fh)["spec"]
+    docs = list(yaml.safe_load_all(read(BIN, "overrides", "bootstrap",
+                                        "k8s-config-bootstrap.yaml")))
+    [kubelet] = [d for d in docs if d["kind"] == "KubeletConfiguration"]
+    assert default["nodes"]["kubelet"]["maxPods"] == kubelet["maxPods"] == 250
+    script = read(BIN, "overrides", "bootstrap", "setup-k8s-init.sh")
+    assert "'.spec.nodes.kubelet.maxPods // 250'" in script
+    assert '(select(.kind == "KubeletConfiguration") | .maxPods) = ' in script
+
+
 def test_bootstrap_init_pins_the_control_plane_to_the_kubelet():
     script = read(BIN, "overrides", "bootstrap", "setup-k8s-init.sh")
     assert ".kubernetesVersion) = " in script

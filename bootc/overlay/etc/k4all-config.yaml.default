@@ -12,12 +12,29 @@ spec:
     virt:
       enabled: false
       emulation: auto
+      # The metadata service on 169.254.169.254, for the VMs whose template
+      # has the label k4all.magesgate.com/metadata: enabled. Nothing runs
+      # while virt is off.
+      metadata:
+        enabled: true
+        scope: Labelled
+    # Rook/Ceph with the Cairn console. Turning it on, set in the same
+    # change the disks it takes (storage.deviceFilter; absent: every blank
+    # disk of every node) and, below 3 nodes, smallCluster: Allow: k4all
+    # creates the Ceph cluster once, right after Rook is installed.
+    rook:
+      enabled: false
     argocd:
       enabled: false
     ovsCni:
       enabled: false
     ovsBridge:
       enabled: true
+  # Kubelet settings of every node. 250 pods is what kubeadm's bootstrap
+  # configuration gives a new cluster (k8s-config-bootstrap.yaml).
+  nodes:
+    kubelet:
+      maxPods: 250
   cluster:
     apiEndPointUseHostName: false
     customApiEndPoint: ""

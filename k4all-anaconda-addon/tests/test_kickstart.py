@@ -137,6 +137,43 @@ class TestK4AllData:
         assert data.cluster_config["features"]["virt"]["enabled"] is True
         assert data.cluster_config["features"]["argocd"]["enabled"] is False
 
+    def test_body_turns_rook_on(self):
+        # features.rook is in the defaults (enabled false), so a kickstart
+        # can turn Rook on at install, with its creation inputs.
+        data = self._make_data()
+        data.handle_header(["--role=bootstrap"])
+        data.handle_line('{"features": {"rook": {"enabled": true, "smallCluster": "Allow", '
+                         '"storage": {"deviceFilter": "^sdb$"}}}}\n')
+        data.finalize()
+        assert data.cluster_config["features"]["rook"] == {
+            "enabled": True, "smallCluster": "Allow", "storage": {"deviceFilter": "^sdb$"}}
+
+    def test_body_sets_the_v270_settings(self):
+        data = self._make_data()
+        data.handle_header(["--role=bootstrap", "--virt"])
+        data.handle_line('{"nodes": {"kubelet": {"maxPods": 300}}, '
+                         '"features": {"virt": {"hangar": {"nodeAgent": false}, '
+                         '"metadata": {"enabled": false}}}}\n')
+        data.finalize()
+        assert data.cluster_config["nodes"]["kubelet"]["maxPods"] == 300
+        assert data.cluster_config["features"]["virt"]["hangar"] == {"nodeAgent": False}
+        assert data.cluster_config["features"]["virt"]["metadata"] == {
+            "enabled": False, "scope": "Labelled"}
+
+    def test_max_pods_must_be_a_number(self):
+        data = self._make_data()
+        data.handle_header([])
+        data.handle_line('{"nodes": {"kubelet": {"maxPods": "250"}}}\n')
+        with pytest.raises(ValueError, match="nodes.kubelet.maxPods must be an integer"):
+            data.finalize()
+
+    def test_rook_small_cluster_takes_refuse_or_allow(self):
+        data = self._make_data()
+        data.handle_header([])
+        data.handle_line('{"features": {"rook": {"enabled": true, "smallCluster": "Maybe"}}}\n')
+        with pytest.raises(ValueError, match="smallCluster"):
+            data.finalize()
+
     def test_body_extra_fields_rejected(self):
         data = self._make_data()
         data.handle_header([])
