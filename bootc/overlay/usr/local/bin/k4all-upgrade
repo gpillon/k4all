@@ -1069,6 +1069,7 @@ MIRROR_ANNOTATION = "kubernetes.io/config.mirror"
 CNPG_CLUSTER_LABEL = "cnpg.io/cluster"
 CNPG_ROLE_LABEL = "cnpg.io/instanceRole"
 DRAIN_DOCS = "docs/upgrades.md, Drains that never end"
+BARE_PODS_DOCS = "docs/upgrades.md, Pods that declare no controller"
 
 
 def selector_matches(selector, labels):
@@ -1298,7 +1299,7 @@ def bare_pods_message(node, names):
             "%s. Nothing recreates such a pod once it is gone, and `kubectl "
             "drain` deletes it only with --force. Nothing was changed. Delete "
             "them, or recreate them under a controller (a Deployment, a Job), "
-            "see %s" % (node, _some(names), DRAIN_DOCS))
+            "see %s" % (node, _some(names), BARE_PODS_DOCS))
 
 
 def bare_pods_note(node, names):
@@ -1306,7 +1307,7 @@ def bare_pods_note(node, names):
     return ("Node %s runs pods that declare no controller: %s. Its drain "
             "refuses them, and with --force deletes them for good: delete them "
             "or recreate them under a controller first (see %s)."
-            % (node, _some(names), DRAIN_DOCS))
+            % (node, _some(names), BARE_PODS_DOCS))
 
 
 def cluster_kubernetes_version(host, kubeconfig):

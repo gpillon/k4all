@@ -361,7 +361,36 @@ primary with a ready replica on another node.
 
 A single-node cluster is not drained, and is not checked.
 
-#### Pods that declare no controller
+k4all does not change a database's safety settings: whether it may be down
+while its node reboots is your call. For a single-instance CloudNativePG
+cluster, either let CNPG drop its budget for the hop:
+
+```bash
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"enablePDB":false}}'
+# ... the hop ...
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"enablePDB":true}}'
+```
+
+or use its maintenance window, which with `reusePVC: true` keeps the
+instance on its volume (a TopoLVM volume is local: the pod waits for its
+node to come back):
+
+```bash
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"nodeMaintenanceWindow":{"inProgress":true,"reusePVC":true}}}'
+# ... the hop ...
+kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
+  -p '{"spec":{"nodeMaintenanceWindow":{"inProgress":false}}}'
+```
+
+The database is down until the node is back. To keep it up instead, give
+the cluster a replica on another node (`instances: 2`) before the hop. Then
+`sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume` on the node, or
+wait for the ClusterUpgrade to go on by itself.
+
+### Pods that declare no controller
 
 A pod that no controller owns makes `kubectl drain` refuse the whole drain
 (`cannot delete Pods that declare no controller (use --force to
@@ -400,7 +429,7 @@ kubelet starts such a pod again after the reboot. The CLI check helps the
 hops that start from v2.6.7 or later
 ([ADR-0004](adr/0004-one-upgrade-tool-in-every-release.md)).
 
-#### VMs on a single node
+### VMs on a single node
 
 A single node is not drained, so its VMs run until the reboot. From v2.6.7
 each virt-launcher pod then gets its own grace period: the VMI's
@@ -411,35 +440,6 @@ v2.6.6 or older gives every pod 30 seconds. On those releases, stop the VMs
 with a slow shutdown yourself before the hop: `virtctl stop <vm>`, and
 `virtctl start <vm>` after it. You can also set `mode: manual` and stop them
 before `k4all-upgrade run`.
-
-k4all does not change a database's safety settings: whether it may be down
-while its node reboots is your call. For a single-instance CloudNativePG
-cluster, either let CNPG drop its budget for the hop:
-
-```bash
-kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
-  -p '{"spec":{"enablePDB":false}}'
-# ... the hop ...
-kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
-  -p '{"spec":{"enablePDB":true}}'
-```
-
-or use its maintenance window, which with `reusePVC: true` keeps the
-instance on its volume (a TopoLVM volume is local: the pod waits for its
-node to come back):
-
-```bash
-kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
-  -p '{"spec":{"nodeMaintenanceWindow":{"inProgress":true,"reusePVC":true}}}'
-# ... the hop ...
-kubectl -n <namespace> patch clusters.postgresql.cnpg.io <cluster> --type merge \
-  -p '{"spec":{"nodeMaintenanceWindow":{"inProgress":false}}}'
-```
-
-The database is down until the node is back. To keep it up instead, give
-the cluster a replica on another node (`instances: 2`) before the hop. Then
-`sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume` on the node, or
-wait for the ClusterUpgrade to go on by itself.
 
 ### Two control planes
 
