@@ -19,7 +19,6 @@ them, in parallel. The reboot waits at most twice podStopMaxSeconds.
 
 import os
 import subprocess
-import time
 
 import pytest
 
@@ -268,79 +267,101 @@ def test_only_host_network_pods_stop_in_one_go(make_host):
 
 
 # --- the script that stops them -------------------------------------------------
-def fake_crictl(tmp_path, body):
+def fake_crictl(tmp_path, body, clock=None):
+    """A crictl that runs ``body`` (%(log)s: its log, %(clock)s: the clock
+    file). With ``clock`` (seconds), `date +%s` and `sleep` read and move a
+    fake clock instead of the real one, so the script's arithmetic is the
+    same on any machine; the crictl body moves it with
+    `echo $(( $(cat %(clock)s) + N )) > %(clock)s`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    log = tmp_path / "stopp.log"
-    crictl = bin_dir / "crictl"
-    crictl.write_text("#!/bin/bash\n" + body % {"log": log})
-    crictl.chmod(0o755)
+    log, clock_file = tmp_path / "stopp.log", tmp_path / "clock"
+
+    def tool(name, text):
+        path = bin_dir / name
+        path.write_text("#!/bin/bash\n" + text)
+        path.chmod(0o755)
+    tool("crictl", body % {"log": log, "clock": clock_file, "dir": tmp_path})
+    if clock is not None:
+        clock_file.write_text("%d\n" % clock)
+        tool("date", '[ "$1" = +%%s ] || exec /usr/bin/date "$@"\ncat %s\n' % clock_file)
+        tool("sleep", 'echo $(( $(cat %s) + ${1%%.*} )) > %s\n' % (clock_file, clock_file))
     return dict(os.environ, PATH="%s:%s" % (bin_dir, os.environ["PATH"])), log
 
 
+def stop(env, plan):
+    return subprocess.run(["sh", "-c", ku.STOP_PODS_SCRIPT], env=env, input=plan,
+                          capture_output=True, text=True)
+
+
 def test_the_stop_script_gives_each_pod_its_own_deadline(tmp_path):
-    env, log = fake_crictl(tmp_path, 'sleep 1; echo "$*" >> %(log)s\n')
-    started = time.monotonic()
-    got = subprocess.run(["sh", "-c", ku.STOP_PODS_SCRIPT], env=env, check=True,
-                         input="30 p1\n210 p2\n300 p3\n", capture_output=True,
-                         text=True)
-    elapsed = time.monotonic() - started
+    # Each fake stop waits until all three have started (5 s at most): one
+    # after the other, they would not meet.
+    env, log = fake_crictl(tmp_path,
+                           'touch %(dir)s/started.$$\n'
+                           'for i in $(seq 100); do [ $(ls %(dir)s/started.* | wc -l) -ge 3 ]'
+                           ' && break; /usr/bin/sleep 0.05; done\n'
+                           'n=$(ls %(dir)s/started.* | wc -l)\n'
+                           'echo "$* $([ $n -ge 3 ] && echo together || echo alone)" >> %(log)s\n')
+    got = stop(env, "30 p1\n210 p2\n300 p3\n")
+    assert got.returncode == 0, got.stderr
     calls = sorted(log.read_text().splitlines())
     # CRI-O keeps 1 s of the deadline for the call and 1 s for the infra
     # container: the containers get the pod's time.
     assert calls == [
-        "--runtime-endpoint unix:///run/crio/crio.sock --timeout=212s stopp p2",
-        "--runtime-endpoint unix:///run/crio/crio.sock --timeout=302s stopp p3",
-        "--runtime-endpoint unix:///run/crio/crio.sock --timeout=32s stopp p1"]
-    assert elapsed < 2.5, "the pods stop in parallel"
-    took = sorted(line.split()[:2] for line in got.stdout.splitlines())
-    assert took == [["p1", "0"], ["p2", "0"], ["p3", "0"]]
-    assert all(1 <= int(line.split()[2]) <= 2 for line in got.stdout.splitlines())
+        "--runtime-endpoint unix:///run/crio/crio.sock --timeout=212s stopp p2 together",
+        "--runtime-endpoint unix:///run/crio/crio.sock --timeout=302s stopp p3 together",
+        "--runtime-endpoint unix:///run/crio/crio.sock --timeout=32s stopp p1 together"], \
+        "the pods stop in parallel"
+    took = sorted(line.split() for line in got.stdout.splitlines())
+    assert [t[:2] + t[3:] for t in took] == [["p1", "0", "1"], ["p2", "0", "1"],
+                                             ["p3", "0", "1"]]
+    assert all(t[2].isdigit() for t in took)
 
 
 def test_the_stop_script_retries_a_stop_whose_network_teardown_failed(tmp_path):
     # CRI-O marks the network stopped even when its teardown failed, so the
-    # second stop goes straight to the containers, with the time left.
+    # second stop goes straight to the containers, with the time left: the
+    # first try took 2 s of the pod's 10, the script waits 1 s.
     env, log = fake_crictl(tmp_path,
                            'echo "$*" >> %(log)s\n'
-                           'case "$*" in *" p2")\n'
-                           '  if [ ! -e %(log)s.p2 ]; then touch %(log)s.p2; sleep 2;\n'
-                           '    echo "network teardown failed for pod sandbox" >&2; exit 1; fi ;;\n'
-                           'esac\n')
-    got = subprocess.run(["sh", "-c", ku.STOP_PODS_SCRIPT], env=env,
-                         input="30 p1\n10 p2\n", capture_output=True, text=True)
+                           'if [ ! -e %(log)s.failed ]; then touch %(log)s.failed\n'
+                           '  echo $(( $(cat %(clock)s) + 2 )) > %(clock)s\n'
+                           '  echo "network teardown failed for pod sandbox" >&2; exit 1; fi\n',
+                           clock=1000)
+    got = stop(env, "10 p2\n")
     assert got.returncode == 0, got.stderr
-    calls = [line.split() for line in log.read_text().splitlines()]
-    p2 = [c[-3] for c in calls if c[-1] == "p2"]
-    assert len(p2) == 2 and p2[0] == "--timeout=12s", "the first try: the whole time"
-    assert p2[1] in ("--timeout=8s", "--timeout=9s"), "then the time left, not more"
-    assert len([c for c in calls if c[-1] == "p1"]) == 1
-    assert sorted(line.split()[:2] + line.split()[3:] for line in
-                  got.stdout.splitlines()) == [["p1", "0", "1"], ["p2", "0", "2"]]
+    assert [c.split()[-3] for c in log.read_text().splitlines()] == \
+        ["--timeout=12s", "--timeout=9s"], "the whole time, then the time left"
+    assert got.stdout.split() == ["p2", "0", "3", "2"]
 
 
 def test_the_stop_script_gives_up_when_the_time_is_over(tmp_path):
     env, log = fake_crictl(tmp_path,
                            'echo "$*" >> %(log)s\n'
-                           'case "$*" in *" p3") sleep 3; exit 1 ;;\n'
-                           '  *" p4") exit 1 ;; esac\n')
-    started = time.monotonic()
-    got = subprocess.run(["sh", "-c", ku.STOP_PODS_SCRIPT], env=env,
-                         input="3 p3\n30 p4\n", capture_output=True, text=True)
-    assert time.monotonic() - started < 10, "no loop on a stop that keeps failing"
-    calls = [line.split()[-1] for line in log.read_text().splitlines()]
-    assert calls.count("p3") == 1, "its 3 s are over: no second try"
-    assert calls.count("p4") == 3, "at most 3 tries"
+                           'echo $(( $(cat %(clock)s) + 3 )) > %(clock)s; exit 1\n',
+                           clock=1000)
+    got = stop(env, "3 p3\n")
+    assert [c.split()[-3] for c in log.read_text().splitlines()] == ["--timeout=5s"], \
+        "its 3 s are over: no second try"
     assert got.returncode == ku.XARGS_SOME_FAILED
-    assert sorted(line.split()[:2] for line in got.stdout.splitlines()) == \
-        [["p3", "1"], ["p4", "1"]]
+    assert got.stdout.split() == ["p3", "1", "3", "1"]
+
+
+def test_the_stop_script_tries_three_times_at_most(tmp_path):
+    env, log = fake_crictl(tmp_path, 'echo "$*" >> %(log)s\nexit 1\n', clock=1000)
+    got = stop(env, "30 p4\n")
+    assert [c.split()[-3] for c in log.read_text().splitlines()] == \
+        ["--timeout=32s", "--timeout=31s", "--timeout=30s"]
+    assert got.returncode == ku.XARGS_SOME_FAILED
+    assert got.stdout.split() == ["p4", "1", "3", "3"]
 
 
 def test_the_stop_script_says_which_stop_failed(tmp_path):
     env, _ = fake_crictl(tmp_path, 'case "$*" in *" p2") echo "rpc error: '
-                                   'device or resource busy" >&2; exit 1 ;; esac\n')
-    got = subprocess.run(["sh", "-c", ku.STOP_PODS_SCRIPT], env=env,
-                         input="30 p1\n30 p2\n", capture_output=True, text=True)
+                                   'device or resource busy" >&2; exit 1 ;; esac\n',
+                         clock=1000)
+    got = stop(env, "30 p1\n30 p2\n")
     assert got.returncode == ku.XARGS_SOME_FAILED
     assert sorted(line.split()[:2] for line in got.stdout.splitlines()) == \
         [["p1", "0"], ["p2", "1"]]
