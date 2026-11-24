@@ -234,3 +234,80 @@ def test_only_the_highest_release_becomes_latest(version, tags, latest):
     proc = run("latest", version, stdin=ls_remote(tags))
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == latest
+
+
+# --- notes --------------------------------------------------------------------
+# The release body of VERSION ends with docs/release-notes/VERSION.md: the
+# release job published v2.6.7 without notes, and they were added by hand
+# half an hour later.
+
+def test_the_notes_of_a_version_are_its_file(tmp_path):
+    (tmp_path / "v2.7.0.md").write_text("### New in v2.7.0\n\n- Hangar\n")
+    proc = run("notes", "v2.7.0", "--dir", str(tmp_path))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "### New in v2.7.0\n\n- Hangar\n"
+
+
+def test_notes_without_a_final_newline_get_one(tmp_path):
+    # the workflow closes the step output with a delimiter line after them
+    (tmp_path / "v2.7.0.md").write_text("- Hangar")
+    proc = run("notes", "v2.7.0", "--dir", str(tmp_path))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "- Hangar\n"
+
+
+def test_a_version_without_notes_prints_nothing_and_warns(tmp_path):
+    env = dict(os.environ, GITHUB_ACTIONS="true")
+    proc = run("notes", "v2.7.1", "--dir", str(tmp_path), env=env)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == ""
+    assert proc.stderr.startswith("::warning::")
+    assert "v2.7.1.md" in proc.stderr
+
+
+@pytest.mark.parametrize("version", ["../v2.7.0", "v2.7.0/x", "main", ""])
+def test_notes_are_read_only_for_a_version(tmp_path, version):
+    proc = run("notes", version, "--dir", str(tmp_path))
+    assert proc.returncode == 1
+    assert proc.stdout == ""
+
+
+def test_the_notes_dir_defaults_to_the_repo_docs(tmp_path):
+    env = dict(os.environ, GITHUB_ACTIONS="true")
+    proc = run("notes", "v0.0.1", env=env)
+    assert proc.returncode == 0, proc.stderr
+    assert os.path.join("docs", "release-notes", "v0.0.1.md") in proc.stderr
+
+
+def test_every_notes_file_is_named_after_a_release_of_the_graph():
+    # a misspelt file name would publish the release without its notes
+    import yaml
+    with open(os.path.join(REPO, "bootc", "upgrade", "releases.yaml"),
+              encoding="utf-8") as fh:
+        versions = {rel["version"] for rel in yaml.safe_load(fh)["releases"]}
+    notes = os.path.join(REPO, "docs", "release-notes")
+    names = sorted(os.listdir(notes)) if os.path.isdir(notes) else []
+    stray = [name for name in names
+             if name != "README.md" and (not name.endswith(".md")
+                                         or name[:-len(".md")] not in versions)]
+    assert stray == [], stray
+
+
+def test_the_release_body_ends_with_the_notes_of_the_version():
+    import yaml
+    with open(os.path.join(REPO, ".github", "workflows", "build.yaml"),
+              encoding="utf-8") as fh:
+        steps = yaml.safe_load(fh)["jobs"]["release"]["steps"]
+    by_name = {step.get("name"): step for step in steps}
+    notes = [step for step in steps if step.get("id") == "notes"]
+    assert len(notes) == 1, "a release step with id notes"
+    notes = notes[0]
+    assert "release-checks.py notes" in notes["run"]
+    assert "$GITHUB_OUTPUT" in notes["run"]
+    # written only when the release is created (a rerun keeps its notes)
+    assert notes.get("if") == "steps.published.outputs.published == 'false'"
+    create = by_name["Create GitHub Release"]
+    assert steps.index(notes) < steps.index(create)
+    body = create["with"]["body"]
+    assert body.rstrip().endswith("${{ steps.notes.outputs.notes }}")
+    assert "body_path" not in create["with"]

@@ -83,6 +83,10 @@ v2.Y stream is frozen. The only release it can still get is an exit patch:
 - v2.(Y+1).0's `minFrom` moves up to it when the hop needs the fix;
 - it shows up in the upgrade graph with the next release cut from main.
 
+The release commit adds the release's notes as
+`docs/release-notes/<version>.md` (see the README there): the release job
+publishes them as the end of the GitHub release body.
+
 A minor syncs the ReleaseManifest only when the sync is what makes it a
 minor. The decision and the check are in
 [ADR-0010](adr/0010-releases-come-from-main-in-version-order.md).

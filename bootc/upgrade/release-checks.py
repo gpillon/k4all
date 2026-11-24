@@ -6,6 +6,7 @@
     release-checks.py published VERSION < releases
     release-checks.py graph upgrade-graph.json
     release-checks.py latest VERSION < tags
+    release-checks.py notes VERSION [--dir DIR]
 
 new-version  Fails when VERSION is already a tag. A build with that
              version pushes the images of a published release again, and
@@ -26,6 +27,10 @@ latest       Prints true when VERSION is a release (not a prerelease) and
              no release tag is higher, false otherwise: the make_latest of
              its GitHub release. softprops/action-gh-release otherwise
              makes Latest whichever release it writes last.
+notes        Prints docs/release-notes/VERSION.md (or DIR/VERSION.md),
+             ending with a newline: the end of the GitHub release's body.
+             Without the file it prints nothing and warns: the release
+             job published v2.6.7 without notes, added by hand later.
 
 Tags come one per line on stdin, as `git tag -l` or `git ls-remote --tags`
 prints them. Releases come as `gh release list --json tagName,isDraft`
@@ -176,6 +181,35 @@ def graph_errors(doc, lookup=registry_index):
     return errors
 
 
+NOTES_DIR = os.path.join(HERE, "..", "..", "docs", "release-notes")
+
+
+def release_notes(version, notes_dir, is_version):
+    """(text, warning) for the notes of ``version``: the file's text ending
+    with a newline, or "" and why. ValueError for a version that is not one
+    (the name of the file is the version, never a path)."""
+    if (not version.startswith("v") or not is_version(version)
+            or os.path.basename(version) != version):
+        raise ValueError("not a release version: %r" % (version,))
+    path = os.path.join(notes_dir, version + ".md")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        shown = os.path.relpath(path, os.path.join(HERE, "..", ".."))
+        return "", "%s has no release notes (%s): its release body ends without them" % (
+            version, shown)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text, None
+
+
+def warning(message):
+    """A warning line; a GitHub Actions annotation under Actions."""
+    prefix = "::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else "warning: "
+    print(prefix + message, file=sys.stderr)
+
+
 def error(message):
     """An error line; a GitHub Actions annotation under Actions."""
     prefix = "::error::" if os.environ.get("GITHUB_ACTIONS") == "true" else "error: "
@@ -197,6 +231,11 @@ def main(argv=None):
     latest = sub.add_parser("latest",
                             help="print whether VERSION is the highest release")
     latest.add_argument("version")
+    notes = sub.add_parser("notes",
+                           help="print the release notes of VERSION, if any")
+    notes.add_argument("version")
+    notes.add_argument("--dir", default=NOTES_DIR,
+                       help="the notes directory (default: docs/release-notes)")
     args = parser.parse_args(argv)
 
     if args.command == "new-version":
@@ -233,6 +272,16 @@ def main(argv=None):
         tags = read_tags(sys.stdin.read())
         latest = is_latest(args.version, tags, load_tool().parse_version)
         print("true" if latest else "false")
+    elif args.command == "notes":
+        try:
+            text, problem = release_notes(args.version, args.dir,
+                                          load_tool().is_version)
+        except (OSError, ValueError) as exc:
+            error("release notes: %s" % exc)
+            return 1
+        if problem:
+            warning(problem)
+        sys.stdout.write(text)
     return 0
 
 

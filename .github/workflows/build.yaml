@@ -405,6 +405,25 @@ jobs:
           echo "make_latest=${LATEST}" >> "$GITHUB_OUTPUT"
           echo "${VERSION} becomes Latest: ${LATEST}"
 
+      - name: Release notes of this version
+        # docs/release-notes/<version>.md ends the release body, so the
+        # release appears with its notes: v2.6.7 was published without
+        # them and they were added by hand half an hour later. Without the
+        # file the body ends without notes, and the job warns.
+        id: notes
+        if: steps.published.outputs.published == 'false'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 bootc/upgrade/release-checks.py notes "$VERSION" > release-notes.md
+          DELIMITER="K4ALL_NOTES_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            echo "notes<<${DELIMITER}"
+            cat release-notes.md
+            echo "${DELIMITER}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         if: steps.published.outputs.published == 'false'
         uses: softprops/action-gh-release@v2
@@ -459,6 +478,8 @@ jobs:
             ### Why are the files split?
             - Splitting avoids GitHub Actions timeouts when uploading and downloading the artifacts.
             - It also keeps the release within the free GitHub storage.
+
+            ${{ steps.notes.outputs.notes }}
           files: |
             isos/k4all-*
             isos/upgrade-graph.json
