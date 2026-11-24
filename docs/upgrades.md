@@ -360,6 +360,45 @@ primary with a ready replica on another node.
 
 A single-node cluster is not drained, and is not checked.
 
+#### Pods that declare no controller
+
+A pod that no controller owns makes `kubectl drain` refuse the whole drain
+(`cannot delete Pods that declare no controller (use --force to
+override)`), unless you add `--force`, which deletes it. Nothing recreates
+it. Examples are a pod of `kubectl run` and a `kubectl debug node/<node>`
+pod left running. Up to v2.6.6:
+
+- a ClusterUpgrade (k4all-operator v0.5.0 to v0.5.7) evicted it, and so
+  deleted it, without a word;
+- `k4all-upgrade` on a node that drains itself found out at DRAIN. That
+  comes after STAGE and PRE_REBOOT, so the node was already cordoned, its
+  image staged, and `kubeadm upgrade` already run on a hop that changes
+  Kubernetes.
+
+From v2.6.7 (k4all-operator v0.5.8,
+[#99](https://github.com/gpillon/k4all/issues/99)) the drivers name such
+pods before anything changes, and a hop waits instead of deleting them.
+Finished pods, static pods' mirrors, DaemonSet pods and terminating pods do
+not count.
+
+- `k4all-upgrade` on a node that drains itself stops in HOLD in the
+  preflight: `the drain of <node> would refuse the pods that declare no
+  controller: <namespace>/<pod> ...`. Nothing was changed.
+- A worker that waits for its drain names them first in `Waiting:`.
+- A ClusterUpgrade does not cordon the node while it runs one, and its
+  status message names them. A pod without a controller on a node already
+  being drained is not evicted either: the drain waits for it until its
+  timeout.
+
+This is a change: a ClusterUpgrade that used to delete such a pod now waits
+for you. Delete the pods (`kubectl delete pod -n <namespace> <pod>`), or
+recreate them under a controller (a Deployment, a Job) first. Then run
+`sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume` on the node, or
+let the ClusterUpgrade go on by itself. A single-node cluster is not drained:
+kubelet starts such a pod again after the reboot. The CLI check helps the
+hops that start from v2.6.7 or later
+([ADR-0004](adr/0004-one-upgrade-tool-in-every-release.md)).
+
 #### VMs on a single node
 
 A single node is not drained, so its VMs run until the reboot. From v2.6.7

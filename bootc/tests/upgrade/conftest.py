@@ -128,7 +128,7 @@ class FakeHost(ku.Host):
         self.unschedulable = False  # this Node is cordoned
         self.labels = {}            # labels of this Node
         self.pdbs = []              # PodDisruptionBudgets; None: the list fails
-        self.pods = []              # pods of the cluster, with spec.nodeName
+        self.pods = []              # pods of the cluster, with spec.nodeName; None: the list fails
         self.extra_nodes = []       # more Node objects for `get nodes`
         self.kubelet_running = True
         self.k4all_config = None    # the ClusterConfig CR, None: none listed
@@ -511,6 +511,10 @@ class FakeHost(ku.Host):
                             "unable to handle the request")
             return Proc(json.dumps({"items": self.pdbs}))
         if args[:3] == ["get", "pods", "-A"]:
+            if self.pods is None:
+                return Proc(returncode=1, stderr="Error from server "
+                            "(ServiceUnavailable): the server is currently "
+                            "unable to handle the request")
             items = self.pods
             for i, arg in enumerate(args):
                 if arg == "--field-selector":

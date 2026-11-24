@@ -1265,6 +1265,50 @@ def long_grace_warning(most, pods):
             % (GRACE_WARNING_PREFIX, most, ", ".join(named), CONFIG_FILE))
 
 
+def declares_no_controller(pod):
+    """Whether ``pod`` makes `kubectl drain` without --force refuse the
+    drain (kubectl's unreplicatedFilter): no ownerReference is its
+    controller, so nothing recreates it once evicted. A finished pod (the
+    drain deletes it), a static pod's mirror and a pod already terminating
+    do not count."""
+    meta = pod.get("metadata") or {}
+    if meta.get("deletionTimestamp") \
+            or (pod.get("status") or {}).get("phase") in ("Succeeded", "Failed") \
+            or MIRROR_ANNOTATION in (meta.get("annotations") or {}):
+        return False
+    return not any(o.get("controller") for o in meta.get("ownerReferences") or [])
+
+
+def bare_pods(pods):
+    """namespace/name of the pods among ``pods`` that declare no controller,
+    sorted."""
+    return sorted("%s/%s" % ((p.get("metadata") or {}).get("namespace"),
+                             (p.get("metadata") or {}).get("name"))
+                  for p in pods if declares_no_controller(p))
+
+
+def _some(names):
+    shown = ", ".join(names[:3])
+    return shown if len(names) <= 3 else "%s and %d more" % (shown, len(names) - 3)
+
+
+def bare_pods_message(node, names):
+    """The HOLD of a hop whose drain would refuse pods without a controller."""
+    return ("the drain of %s would refuse the pods that declare no controller: "
+            "%s. Nothing recreates such a pod once it is gone, and `kubectl "
+            "drain` deletes it only with --force. Nothing was changed. Delete "
+            "them, or recreate them under a controller (a Deployment, a Job), "
+            "see %s" % (node, _some(names), DRAIN_DOCS))
+
+
+def bare_pods_note(node, names):
+    """What a node that waits for its drain says about its bare pods."""
+    return ("Node %s runs pods that declare no controller: %s. Its drain "
+            "refuses them, and with --force deletes them for good: delete them "
+            "or recreate them under a controller first (see %s)."
+            % (node, _some(names), DRAIN_DOCS))
+
+
 def cluster_kubernetes_version(host, kubeconfig):
     cm = kubectl_json(host, kubeconfig,
                       ["-n", "kube-system", "get", "configmap", "kubeadm-config"])
@@ -1919,6 +1963,10 @@ class Upgrader:
         if not operator_driven(state) and self._needs_outside_drain():
             problem = self._cordon_problem("the hop can start")
             if problem:
+                bare = bare_pods(self._node_pods(
+                    kc, "the pods that declare no controller") or [])
+                if bare:
+                    problem = bare_pods_note(self._node_name(), bare) + " " + problem
                 raise NotYet(problem)
         # A drain this node runs itself would never end on a pod whose
         # budget allows no disruption: stop before anything is downloaded,
@@ -1927,9 +1975,19 @@ class Upgrader:
         if not operator_driven(state) and kc == ADMIN_KUBECONFIG \
                 and not self._single_node():
             blockers = self._drain_blockers(kc)
+            # So would a drain on a pod that declares no controller: kubectl
+            # refuses the whole drain, after STAGE and PRE_REBOOT and with
+            # the node cordoned (k4all#99). Deleting it is the admin's call.
+            bare = bare_pods(self._node_pods(
+                kc, "the pods that declare no controller") or [])
             if blockers:
-                raise UpgradeError(drain_blocked_message(self._node_name(),
-                                                         blockers))
+                message = drain_blocked_message(self._node_name(), blockers)
+                if bare:
+                    message += ("; the drain would also refuse the pods that "
+                                "declare no controller: %s" % _some(bare))
+                raise UpgradeError(message)
+            if bare:
+                raise UpgradeError(bare_pods_message(self._node_name(), bare))
         # A single node is not drained: right before its reboot every pod
         # gets at most podStopMaxSeconds to stop. Name the ones that ask for
         # more, a VM above all, before anything changes.
