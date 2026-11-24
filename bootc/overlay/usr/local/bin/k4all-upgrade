@@ -71,6 +71,24 @@ ANNOTATION_DONE = "k4all.magesgate.com/upgrade-done"
 # the k4all-operator's ClusterUpgrade, or the admin): the operator's pod
 # tolerates the cordon, and prefers the nodes without this label.
 LABEL_DRAINING = "k4all.magesgate.com/draining"
+# Node settings (ClusterConfig spec.nodes, k4all v2.7.0): the operator asks
+# for a settings hash, the agent answers once kubelet is Ready with it.
+ANNOTATION_NS_TARGET = "k4all.magesgate.com/node-settings-target"
+ANNOTATION_NS_APPLIED = "k4all.magesgate.com/node-settings-applied"
+ANNOTATION_NS_MESSAGE = "k4all.magesgate.com/node-settings-message"
+# On kube-system/kubelet-config: the operator's JSON record of the settings
+# (hash, the kubelet fields it wrote, hugepages, iommu).
+NODE_SETTINGS_ANNOTATION = "k4all.magesgate.com/node-settings"
+# What this node applied and the kernel arguments k4all added. In /etc on
+# purpose: like the kernel arguments it travels with the ostree deployment,
+# so a rollback boots both as they were.
+NODE_SETTINGS_FILE = "/etc/k4all/node-settings.json"
+KUBELET_CONFIG = "/var/lib/kubelet/config.yaml"
+KUBELET_STATE_FILES = ("/var/lib/kubelet/cpu_manager_state",
+                       "/var/lib/kubelet/memory_manager_state")
+PROC_CMDLINE = "/proc/cmdline"
+PROC_CPUINFO = "/proc/cpuinfo"
+BOOT_ID_FILE = "/proc/sys/kernel/random/boot_id"
 PHASE_HOLD = "HOLD"
 PHASE_ABANDONED = "ABANDONED"
 # upgrade-reason next to HOLD; without it the operator sees a HostHold.
@@ -1587,6 +1605,536 @@ def desired_kube_vip(existing, ha, interface, version, kubeconfig):
 
 
 # =========================================================================
+# Node settings (ClusterConfig spec.nodes, k4all#60)
+# =========================================================================
+# The k4all-operator writes the kubelet fields it owns into
+# kube-system/kubelet-config and the whole node-level state (hash,
+# hugepages, iommu) into its NODE_SETTINGS_ANNOTATION; it drains the node
+# when the change needs it and writes node-settings-target. The agent
+# pulls the kubelet config, resets the CPU manager state when its policy or
+# reserved CPUs change, sets the kernel arguments k4all owns, restarts
+# kubelet or reboots, and answers node-settings-applied once kubelet is
+# Ready. node-settings-message says why it waits ("waiting: ...") or
+# refuses (anything else: the operator shows the rollout Blocked).
+
+# Page sizes of spec.nodes.hugepages and their kernel names, in the order
+# their kernel arguments are written.
+HUGEPAGE_SIZES = (("1Gi", "1G"), ("2Mi", "2M"))
+HUGEPAGE_KEYS = ("hugepagesz", "hugepages", "default_hugepagesz")
+IOMMU_VENDOR_KARGS = {"GenuineIntel": "intel_iommu=on",
+                      "AuthenticAMD": "amd_iommu=on"}
+IOMMU_KEYS = ("intel_iommu", "amd_iommu", "iommu")
+NODE_SETTINGS_KARG_KEYS = HUGEPAGE_KEYS + IOMMU_KEYS
+# How long one pass waits for kubelet to be Ready after a restart; the next
+# pass looks again, without restarting it again.
+NODE_SETTINGS_READY_SECONDS = 180
+NODE_SETTINGS_CONFIG_BACKUP = STATE_DIR + "/node-settings-kubelet-config.yaml"
+WAITING = "waiting: "
+
+
+def karg_key(arg):
+    return arg.split("=", 1)[0]
+
+
+def desired_kargs(settings, vendor):
+    """(kargs, None): the kernel arguments k4all wants for the node settings
+    of the kubelet-config annotation, in order; (None, why) when it cannot
+    tell them. ``vendor`` is /proc/cpuinfo's vendor_id."""
+    pages = settings.get("hugepages") or {}
+    known = [size for size, _ in HUGEPAGE_SIZES]
+    unknown = sorted(set(pages) - set(known))
+    if unknown:
+        return None, ("hugepages: page size %s is not one of %s"
+                      % (", ".join(unknown), ", ".join(known)))
+    out = []
+    for size, kernel in HUGEPAGE_SIZES:
+        try:
+            count = int(pages.get(size) or 0)
+        except (TypeError, ValueError):
+            return None, ("hugepages %s: %r is not a number of pages"
+                          % (size, pages.get(size)))
+        if count > 0:
+            out += ["hugepagesz=" + kernel, "hugepages=%d" % count]
+    if settings.get("iommu"):
+        arg = IOMMU_VENDOR_KARGS.get(vendor)
+        if not arg:
+            return None, ("iommu: unknown CPU vendor %r (k4all knows %s): set "
+                          "the IOMMU kernel arguments by hand and leave "
+                          "spec.nodes.iommu unset"
+                          % (vendor, " and ".join(sorted(IOMMU_VENDOR_KARGS))))
+        out += [arg, "iommu=pt"]
+    return out, None
+
+
+def _split_owned(args, owned):
+    """args, in order, split into the ones the multiset ``owned`` covers and
+    the others."""
+    left = collections.Counter(owned)
+    ours, others = [], []
+    for arg in args:
+        if left[arg] > 0:
+            left[arg] -= 1
+            ours.append(arg)
+        else:
+            others.append(arg)
+    return ours, others
+
+
+def karg_plan(current, recorded, desired):
+    """How to bring ``current``, the kernel arguments of the next boot
+    (`rpm-ostree kargs`), to ``desired``, touching only the ones k4all
+    added (``recorded``). A dict:
+
+    - delete, append, append_if_missing: the arguments of one
+      `rpm-ostree kargs` call (--delete, --append, --append-if-missing);
+    - final: ``current`` after that call; record: what k4all has added then;
+    - problem: why nothing may change (arguments set by hand in the way).
+
+    rpm-ostree applies --delete first and --append next, then
+    --append-if-missing and last --delete-if-present (against the arguments
+    before the call). Hugepages are pairs whose order matters, and both
+    sizes may carry the same "hugepages=N": k4all's are deleted with --delete
+    (only ones ``current`` has) and written again with --append. An IOMMU
+    argument already set by hand is not added, nor recorded, so k4all never
+    removes it."""
+    ours, hand = _split_owned(current, recorded)
+    plan = {"delete": [], "append": [], "append_if_missing": [], "record": [],
+            "final": list(current), "problem": None}
+    want_pages = [a for a in desired if karg_key(a) in HUGEPAGE_KEYS]
+    want_iommu = [a for a in desired if karg_key(a) in IOMMU_KEYS]
+    our_pages = [a for a in ours if karg_key(a) in HUGEPAGE_KEYS]
+    hand_pages = [a for a in hand if karg_key(a) in HUGEPAGE_KEYS]
+    if hand_pages and (want_pages or our_pages):
+        plan["problem"] = (
+            "hugepage kernel arguments set by hand (%s): k4all does not mix its "
+            "own with them; remove them (`rpm-ostree kargs --delete=...`) or "
+            "leave spec.nodes.hugepages unset" % " ".join(hand_pages))
+        return plan
+    for arg in want_iommu:
+        clash = [h for h in hand if karg_key(h) == karg_key(arg) and h != arg]
+        if clash:
+            plan["problem"] = ("%s set by hand where k4all would add %s: remove "
+                               "it or leave spec.nodes.iommu unset"
+                               % (" ".join(clash), arg))
+            return plan
+    if our_pages != want_pages:
+        plan["delete"] += our_pages
+        plan["append"] += want_pages
+    plan["record"] += want_pages
+    for arg in ours:
+        if karg_key(arg) not in HUGEPAGE_KEYS and arg not in want_iommu:
+            plan["delete"].append(arg)
+    for arg in want_iommu:
+        if arg in ours:
+            plan["record"].append(arg)
+        elif arg not in hand:
+            plan["append_if_missing"].append(arg)
+            plan["record"].append(arg)
+    final = list(current)
+    for arg in plan["delete"]:
+        final.remove(arg)
+    final += plan["append"]
+    final += [a for a in plan["append_if_missing"] if a not in final]
+    plan["final"] = final
+    return plan
+
+
+def settings_kargs(kargs):
+    """The arguments of ``kargs`` with a key node settings may set, in order:
+    what /proc/cmdline must show for the next boot's to be booted."""
+    return [a for a in kargs if karg_key(a) in NODE_SETTINGS_KARG_KEYS]
+
+
+def kubelet_cpu_fields(config):
+    """The CPU manager settings of a KubeletConfiguration (a dict), with the
+    kubelet's defaults: a change of either needs its state files gone."""
+    config = config if isinstance(config, dict) else {}
+    return {"cpuManagerPolicy": str(config.get("cpuManagerPolicy") or "none"),
+            "reservedSystemCPUs": str(config.get("reservedSystemCPUs") or "")}
+
+
+def read_kubelet_cpu_fields(host):
+    if not host.exists(KUBELET_CONFIG):
+        return kubelet_cpu_fields({})
+    return kubelet_cpu_fields(load_yaml_text(host, host.read(KUBELET_CONFIG)))
+
+
+def cpu_state_policy(host):
+    """policyName of the kubelet's CPU manager checkpoint, None without one."""
+    path = KUBELET_STATE_FILES[0]
+    try:
+        return str(json.loads(host.read(path)).get("policyName") or "none") \
+            if host.exists(path) else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def remove_kubelet_state(host):
+    """Remove the CPU and memory manager checkpoints; the ones removed."""
+    removed = []
+    for path in KUBELET_STATE_FILES:
+        if host.exists(path):
+            os.remove(host.path(path))
+            removed.append(path)
+    return removed
+
+
+def load_node_settings(host):
+    """/etc/k4all/node-settings.json: kargs (what k4all added), applied,
+    kubeletCPU (the CPU manager fields kubelet runs with), inflight."""
+    if not host.exists(NODE_SETTINGS_FILE):
+        return {"kargs": []}
+    try:
+        record = json.loads(host.read(NODE_SETTINGS_FILE))
+    except ValueError as exc:
+        raise UpgradeError("%s is not JSON (%s): fix it; it lists the kernel "
+                           "arguments k4all added" % (NODE_SETTINGS_FILE, exc))
+    if not isinstance(record, dict):
+        raise UpgradeError("%s is not a JSON object" % NODE_SETTINGS_FILE)
+    record.setdefault("kargs", [])
+    return record
+
+
+def save_node_settings(host, record):
+    host.write(NODE_SETTINGS_FILE, json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+
+def configmap_settings(cm):
+    """(settings, None) from kubelet-config's NODE_SETTINGS_ANNOTATION, or
+    (None, why)."""
+    raw = ((cm.get("metadata") or {}).get("annotations") or {}).get(
+        NODE_SETTINGS_ANNOTATION)
+    if not raw:
+        return None, ("kube-system/kubelet-config has no %s annotation: is the "
+                      "k4all-operator v0.6.0 or later running?"
+                      % NODE_SETTINGS_ANNOTATION)
+    try:
+        settings = json.loads(raw)
+    except ValueError as exc:
+        return None, ("kube-system/kubelet-config: %s is not JSON (%s)"
+                      % (NODE_SETTINGS_ANNOTATION, exc))
+    if not isinstance(settings, dict) or not settings.get("hash"):
+        return None, ("kube-system/kubelet-config: %s has no hash"
+                      % NODE_SETTINGS_ANNOTATION)
+    return settings, None
+
+
+def cpu_vendor(host):
+    if not host.exists(PROC_CPUINFO):
+        return ""
+    for line in host.read(PROC_CPUINFO).splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() == "vendor_id":
+            return value.strip()
+    return ""
+
+
+def boot_id(host):
+    return host.read(BOOT_ID_FILE).strip() if host.exists(BOOT_ID_FILE) else ""
+
+
+def file_digest(host, path):
+    if not host.exists(path):
+        return ""
+    return hashlib.sha256(host.read(path).encode()).hexdigest()
+
+
+def kubelet_state_guard(host):
+    """Before a hop's reboot, with kubelet and every pod stopped.
+
+    The kubeadm of a hop that changes Kubernetes writes config.yaml from
+    kube-system/kubelet-config: on a node the node-settings rollout has not
+    reached yet (paused, or older than the release that brings it) that is
+    a new CPU manager policy or set of reserved CPUs without the reset of
+    its checkpoint, and kubelet refuses to start after the reboot. Remove
+    the checkpoints when config.yaml's CPU manager fields differ from the
+    ones kubelet ran with (the record, or the checkpoint's policy). Never
+    fails the hop: a problem is logged. True when it removed them."""
+    try:
+        fields = read_kubelet_cpu_fields(host)
+        record = load_node_settings(host)
+        seen = record.get("kubeletCPU")
+        policy = cpu_state_policy(host)
+        stale = (seen is not None and seen != fields) or (
+            policy is not None
+            and policy.lower() != fields["cpuManagerPolicy"].lower())
+        if not stale:
+            return False
+        removed = remove_kubelet_state(host)
+        record["kubeletCPU"] = fields
+        save_node_settings(host, record)
+        host.log("before the reboot: kubelet's CPU manager settings changed "
+                 "(%s): removed %s" % (fields, ", ".join(removed) or "nothing"))
+        return True
+    except (UpgradeError, OSError, ValueError) as exc:
+        host.log("before the reboot: cannot check kubelet's CPU manager "
+                 "state: %s" % exc)
+        return False
+
+
+def _read_kubelet_configmap(host, kc):
+    """(kube-system/kubelet-config, None), or (None, why)."""
+    got = kubectl(host, kc, ["-n", "kube-system", "get", "configmap",
+                             "kubelet-config", "-o", "json", KUBECTL_TIMEOUT],
+                  check=False)
+    if got.returncode != 0:
+        return None, (got.stderr or got.stdout or "").strip()[-300:] or \
+            "kubectl rc=%d" % got.returncode
+    try:
+        return json.loads(got.stdout), None
+    except ValueError as exc:
+        return None, "unreadable ConfigMap: %s" % exc
+
+
+def _other_staged(host):
+    """The image of a staged deployment that is not the booted image (a hop's,
+    or one staged by hand), None when there is none: the reboot for kernel
+    arguments would boot it."""
+    status = bootc_status(host)
+    staged = _deployment(status, "staged")
+    if not staged:
+        return None
+    booted = _deployment(status, "booted")
+    ref, digest = deployment_image(staged)
+    if booted and deployment_image(booted)[1] == digest and digest:
+        return None
+    return ref or "unknown"
+
+
+def _rpm_ostree_kargs(host):
+    got = host.run(["rpm-ostree", "kargs"], check=False, timeout=120)
+    if got.returncode != 0:
+        raise UpgradeError("rpm-ostree kargs: %s" % (
+            (got.stderr or got.stdout or "").strip()[-300:]
+            or "rc=%d" % got.returncode))
+    return got.stdout.split()
+
+
+def _wait_kubelet_ready(host, upgrader):
+    """(True, "") once kubelet is active and this Node Ready, else (False,
+    why) after NODE_SETTINGS_READY_SECONDS."""
+    deadline = host.now() + datetime.timedelta(seconds=NODE_SETTINGS_READY_SECONDS)
+    while True:
+        active = host.run(["systemctl", "is-active", "kubelet"], check=False)
+        state = active.stdout.strip()
+        if state == "active":
+            node, why = upgrader.read_node()
+            if node is not None and node_ready(node):
+                return True, ""
+            why = why or "Node %s is not Ready" % upgrader._node_name()
+        else:
+            why = "kubelet is %s" % (state or "inactive")
+        if host.now() >= deadline:
+            return False, why
+        host.sleep(READY_POLL_SECONDS)
+
+
+def _restore_kubelet_config(host):
+    if host.exists(NODE_SETTINGS_CONFIG_BACKUP):
+        host.copy(NODE_SETTINGS_CONFIG_BACKUP, KUBELET_CONFIG)
+
+
+def _pull_kubelet_config(host, kc, target):
+    """`kubeadm upgrade node phase kubelet-config` (kubelet.conf on a worker,
+    admin.conf on a control plane: kubeadm chooses). None when config.yaml
+    now has the kubelet settings of ``target``, else why not (config.yaml
+    is put back)."""
+    if host.exists(KUBELET_CONFIG):
+        host.copy(KUBELET_CONFIG, NODE_SETTINGS_CONFIG_BACKUP)
+    argv = ["kubeadm", "upgrade", "node", "phase", "kubelet-config"]
+    got = host.run(argv, check=False, timeout=600)
+    if got.returncode != 0:
+        _restore_kubelet_config(host)
+        return ("%s failed (rc %d): %s" % (" ".join(argv), got.returncode,
+                                          short_message(got.stderr or got.stdout)[-300:]))
+    # The operator never rewrites kubelet-config while a node has a target
+    # it has not applied; checked anyway, as kubeadm read it on its own.
+    cm, why = _read_kubelet_configmap(host, kc)
+    settings = configmap_settings(cm)[0] if cm else None
+    if not settings or settings["hash"] != target:
+        _restore_kubelet_config(host)
+        return (WAITING + "kube-system/kubelet-config changed during the pull "
+                "(%s): kubelet keeps its config" % (
+                    "it now carries %s" % settings["hash"] if settings
+                    else why or "no node settings"))
+    return None
+
+
+def node_settings_pass(host, upgrader, node, state):
+    """The node-settings side of one agent pass, after the upgrade part."""
+    annotations = ((node or {}).get("metadata") or {}).get("annotations") or {}
+    target = str(annotations.get(ANNOTATION_NS_TARGET) or "").strip()
+    applied = str(annotations.get(ANNOTATION_NS_APPLIED) or "").strip()
+    if not target or target == applied:
+        if target and ANNOTATION_NS_MESSAGE in annotations:
+            upgrader.patch_annotations({ANNOTATION_NS_MESSAGE: None})
+        return
+    try:
+        message = _apply_node_settings(host, upgrader, node, state, target)
+    except (UpgradeError, OSError, ValueError) as exc:
+        message = "node settings %s: %s" % (target, exc)
+    if message is None:
+        return
+    message = short_message(message)
+    if annotations.get(ANNOTATION_NS_MESSAGE) != message:
+        host.log("node settings %s: %s" % (target, message))
+        upgrader.patch_annotations({ANNOTATION_NS_MESSAGE: message})
+
+
+def _hop_running(annotations, state):
+    """What hop runs on this node, None when none does. A plan parked
+    between hops (waiting for its window) does not count."""
+    if annotations.get(ANNOTATION_IN_PROGRESS):
+        return annotations[ANNOTATION_IN_PROGRESS]
+    if _active(state) and not _parked(state):
+        hop = state.get("hop") or {}
+        return "%s -> %s, %s" % (hop.get("from"), hop.get("to"),
+                                 "HOLD" if state.get("hold") else state.get("phase"))
+    return None
+
+
+def _apply_node_settings(host, upgrader, node, state, target):
+    """Bring this node to the node settings ``target``. None once applied
+    (or rebooting for them, the message already on the Node), else the
+    message for node-settings-message."""
+    annotations = (node.get("metadata") or {}).get("annotations") or {}
+    hop = _hop_running(annotations, state)
+    if hop:
+        return WAITING + "an upgrade hop runs on this node (%s)" % hop
+    kc = upgrader._kubeconfig()
+    cm, why = _read_kubelet_configmap(host, kc)
+    if cm is None:
+        return WAITING + "cannot read kube-system/kubelet-config: %s" % why
+    settings, problem = configmap_settings(cm)
+    if problem:
+        return problem
+    if settings["hash"] != target:
+        return (WAITING + "kube-system/kubelet-config carries the node settings "
+                "%s, not %s" % (settings["hash"], target))
+    desired, problem = desired_kargs(settings, cpu_vendor(host))
+    if problem:
+        return problem
+
+    record = load_node_settings(host)
+    boot = boot_id(host)
+    inflight = record.get("inflight") or {}
+    if inflight.get("target") != target:
+        inflight = {"target": target, "cpu": read_kubelet_cpu_fields(host),
+                    "config": file_digest(host, KUBELET_CONFIG), "boot": boot}
+    plan = karg_plan(_rpm_ostree_kargs(host), record["kargs"], desired)
+    if plan["problem"]:
+        return plan["problem"]
+    cmdline = host.read(PROC_CMDLINE).split() if host.exists(PROC_CMDLINE) else []
+    booted = settings_kargs(cmdline) == settings_kargs(plan["final"])
+    if not booted and inflight.get("rebootBoot") and inflight["rebootBoot"] != boot:
+        if inflight.get("failedBoot") in (None, boot):
+            inflight["failedBoot"] = boot
+            record["inflight"] = inflight
+            save_node_settings(host, record)
+            return ("the node rebooted for the kernel arguments of %s but booted "
+                    "without them (it runs %s, the next boot gets %s): see "
+                    "`rpm-ostree status`; the agent tries again after the next "
+                    "boot" % (target, " ".join(settings_kargs(cmdline)) or "none",
+                              " ".join(settings_kargs(plan["final"])) or "none"))
+        # rebooted again since (by hand): one more try
+        inflight.pop("rebootBoot")
+        inflight.pop("failedBoot")
+    karg_change = bool(plan["delete"] or plan["append"] or plan["append_if_missing"])
+    cpu_want = kubelet_cpu_fields(load_yaml_text(
+        host, (cm.get("data") or {}).get("kubelet") or "{}"))
+    cpu_change = cpu_want != inflight["cpu"] and not inflight.get("cpuReset")
+    cordoned = bool((node.get("spec") or {}).get("unschedulable"))
+    if (cpu_change or karg_change or not booted) and not cordoned:
+        what = "the CPU manager settings" if cpu_change else "the kernel arguments"
+        return ("%s change, which needs the node drained, and Node %s is not "
+                "cordoned: the k4all-operator drains it first"
+                % (what, upgrader._node_name()))
+    if karg_change or not booted:
+        staged = _other_staged(host)
+        if staged:
+            return ("another deployment is staged (%s): the reboot for the kernel "
+                    "arguments would boot it; finish or remove it first" % staged)
+    record["inflight"] = inflight
+    save_node_settings(host, record)
+
+    if not inflight.get("pulled"):
+        problem = _pull_kubelet_config(host, kc, target)
+        if problem:
+            return problem
+        inflight["pulled"] = True
+        save_node_settings(host, record)
+    # Kernel arguments before the CPU state reset: a failure here leaves
+    # kubelet running.
+    if karg_change:
+        before = list(record["kargs"])
+        # In /etc before the call: the new deployment takes /etc as it is
+        # when it is made or finalized.
+        record["kargs"] = plan["record"]
+        save_node_settings(host, record)
+        argv = (["rpm-ostree", "kargs"] + ["--delete=" + a for a in plan["delete"]]
+                + ["--append=" + a for a in plan["append"]]
+                + ["--append-if-missing=" + a for a in plan["append_if_missing"]])
+        got = host.run(argv, check=False, timeout=600)
+        if got.returncode != 0:
+            # The node as it was: kubelet must not meet the new config.yaml
+            # with the old CPU state if it restarts before the next pass.
+            record["kargs"] = before
+            _restore_kubelet_config(host)
+            inflight["pulled"] = False
+            save_node_settings(host, record)
+            return "%s failed (rc %d): %s" % (" ".join(argv), got.returncode,
+                                              short_message(got.stderr or got.stdout)[-300:])
+    if read_kubelet_cpu_fields(host) != inflight["cpu"] and not inflight.get("cpuReset"):
+        if not cordoned:
+            _restore_kubelet_config(host)
+            inflight["pulled"] = False
+            save_node_settings(host, record)
+            return ("kubeadm wrote other CPU manager settings than "
+                    "kube-system/kubelet-config's, and Node %s is not cordoned"
+                    % upgrader._node_name())
+        # kubelet keeps the checkpoint in memory and writes it back: stop it
+        # first; the node is drained
+        host.run(["systemctl", "stop", "kubelet"], check=False, timeout=120)
+        removed = remove_kubelet_state(host)
+        host.log("node settings %s: the CPU manager settings change: removed %s"
+                 % (target, ", ".join(removed) or "no state file"))
+        inflight.update({"cpuReset": True, "restart": True})
+        save_node_settings(host, record)
+    if file_digest(host, KUBELET_CONFIG) != inflight["config"]:
+        inflight["restart"] = True
+
+    if not booted:
+        inflight["rebootBoot"] = boot
+        save_node_settings(host, record)
+        upgrader.patch_annotations({ANNOTATION_NS_MESSAGE:
+                                    WAITING + "rebooting for the kernel arguments"})
+        host.log("node settings %s: rebooting for the kernel arguments %s"
+                 % (target, " ".join(settings_kargs(plan["final"])) or "(none)"))
+        upgrader.stop_pods()
+        host.run(["systemctl", "reboot"], check=False, timeout=120)
+        return None
+    if inflight.get("restart") and not inflight.get("restarted"):
+        if boot == inflight["boot"]:
+            # restart starts it too when the CPU state reset stopped it
+            host.run(["systemctl", "restart", "kubelet"], check=False, timeout=120)
+            host.sleep(READY_POLL_SECONDS)
+        inflight["restarted"] = True
+        save_node_settings(host, record)
+    ok, why = _wait_kubelet_ready(host, upgrader)
+    if not ok:
+        return WAITING + "kubelet is not Ready after applying %s: %s" % (target, why)
+    if not upgrader.patch_annotations({ANNOTATION_NS_APPLIED: target,
+                                       ANNOTATION_NS_MESSAGE: None}):
+        return WAITING + "cannot write %s on the Node" % ANNOTATION_NS_APPLIED
+    record.pop("inflight", None)
+    record["applied"] = target
+    record["kubeletCPU"] = read_kubelet_cpu_fields(host)
+    save_node_settings(host, record)
+    host.log("node settings %s applied" % target)
+    return None
+
+
+# =========================================================================
 # Phases
 # =========================================================================
 class Upgrader:
@@ -2167,6 +2715,7 @@ class Upgrader:
         self._save(state)
         host.log("rebooting into %s" % state["hop"]["to"])
         self.stop_pods()
+        kubelet_state_guard(host)
         try:
             host.run(["bootc", "upgrade", "--from-downloaded", "--apply"])
         except UpgradeError:
@@ -3786,6 +4335,7 @@ def cmd_agent(host, cfg, args, upgrader):
         if done and observed.get(ANNOTATION_DONE) != done:
             host.log("agent: already on %s: upgrade-done" % done)
         upgrader.patch_annotations(changes)
+    node_settings_pass(host, upgrader, node, state)
     return 0
 
 
