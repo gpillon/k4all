@@ -6,6 +6,7 @@ bootc's auto-update timer left active, scripts that never reach existing
 nodes, kubeadm configs that a newer kubeadm rejects.
 """
 
+import json
 import os
 import re
 import signal
@@ -392,7 +393,7 @@ def test_rook_is_optional():
     for name in ("rook-ceph", "ceph-csi-drivers"):
         assert components[name]["featureGate"] == "rook", name
         assert components[name]["namespace"] == "rook-ceph", name
-    assert components["ceph-csi-drivers"]["dependsOn"] == ["rook-ceph"]
+    assert "rook-ceph" in components["ceph-csi-drivers"]["dependsOn"]
 
 
 def test_rook_runs_under_selinux_with_snapshots():
@@ -404,6 +405,79 @@ def test_rook_runs_under_selinux_with_snapshots():
     rbd = components["ceph-csi-drivers"]["values"]["drivers"]["rbd"]
     assert rbd["name"] == "rook-ceph.rbd.csi.ceph.com"
     assert rbd["snapshotPolicy"] == "volumeSnapshot"
+
+
+SNAPSHOTTER = "https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/{{ version }}/"
+SNAPSHOT_CRDS = [
+    "snapshot.storage.k8s.io_volumesnapshotclasses.yaml",
+    "snapshot.storage.k8s.io_volumesnapshotcontents.yaml",
+    "snapshot.storage.k8s.io_volumesnapshots.yaml",
+    "groupsnapshot.storage.k8s.io_volumegroupsnapshotclasses.yaml",
+    "groupsnapshot.storage.k8s.io_volumegroupsnapshotcontents.yaml",
+    "groupsnapshot.storage.k8s.io_volumegroupsnapshots.yaml",
+]
+
+
+def test_snapshot_controller_comes_with_virt_or_rook():
+    # D13: VM snapshots (KubeVirt, Hangar), CDI's snapshot clones and
+    # ceph-rbd's VolumeSnapshotClass need the snapshot API and its
+    # controller. Gate "snapshots": on with virt or rook; an operator that
+    # does not know it (before k4all v2.7.0) installs nothing.
+    comp = release_components()["snapshot-controller"]
+    assert comp["type"] == "manifest"
+    assert comp["featureGate"] == "snapshots"
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", comp["version"])
+    # The CRDs first (the Deployment's informers need them), then RBAC,
+    # all at the pinned tag.
+    assert comp["sources"] == (
+        [SNAPSHOTTER + "client/config/crd/" + crd for crd in SNAPSHOT_CRDS]
+        + [SNAPSHOTTER + "deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml"])
+    # Upstream's files carry kube-system; a component namespace would also
+    # land on the CRDs and ClusterRoles the operator's list does not know.
+    assert "namespace" not in comp
+    assert set(comp["dependsOn"]) == {"calico", "cilium"}
+
+
+def test_snapshot_controller_runs_the_pinned_image():
+    # The setup file of a tag runs the previous release's image (v8.7.0's
+    # runs v8.6.0): the Deployment is inline, its image bumped with version.
+    comp = release_components()["snapshot-controller"]
+    docs = [yaml.safe_load(m) for m in comp["inlineManifests"]]
+    assert [(d["kind"], d["metadata"]["namespace"], d["metadata"]["name"]) for d in docs] == \
+        [("Deployment", "kube-system", "snapshot-controller")]
+    pod = docs[0]["spec"]["template"]["spec"]
+    assert pod["serviceAccountName"] == "snapshot-controller"
+    [container] = pod["containers"]
+    assert container["image"] == \
+        "registry.k8s.io/sig-storage/snapshot-controller:" + comp["version"]
+    assert "--leader-election=true" in container["args"]
+
+
+def test_snapshot_users_come_after_the_snapshot_controller():
+    # Ordering only (dependsOn of an inactive component is ignored): the
+    # API is there when the Rook hook seeds ceph-rbd's VolumeSnapshotClass,
+    # when the CSI drivers' snapshotter sidecar starts, and when KubeVirt,
+    # CDI and Hangar first look for it.
+    components = release_components()
+    for name in ("rook-ceph", "ceph-csi-drivers", "kubevirt", "hangar"):
+        assert "snapshot-controller" in components[name]["dependsOn"], name
+
+
+def test_kubevirt_live_migrates_its_workloads():
+    # D3: a release invariant. After a KubeVirt update the VMs move to the
+    # new virt-launcher by live migration (those that cannot migrate keep
+    # running on the old one). A merge patch after upstream's CR, whose
+    # workloadUpdateStrategy is {}: the operator's apply does not undo it.
+    patches = [p for p in release_components()["kubevirt"]["patches"]
+               if p["target"]["kind"] == "KubeVirt"]
+    methods = [json.loads(p["patch"]).get("spec", {}).get("workloadUpdateStrategy")
+               for p in patches]
+    methods = [m for m in methods if m]
+    assert methods == [{"workloadUpdateMethods": ["LiveMigrate"]}]
+    patch = next(p for p in patches if "workloadUpdateStrategy" in p["patch"])
+    assert patch["type"] == "merge"
+    assert patch["target"] == {"apiVersion": "kubevirt.io/v1", "kind": "KubeVirt",
+                               "name": "kubevirt", "namespace": "kubevirt"}
 
 
 def test_topolvm_volumes_wait_for_their_pod():
