@@ -783,8 +783,42 @@ sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
   (`cloneStrategy`, `claimPropertySets`, ...) in the ConfigMap
   `topolvm-system/topolvm-storageprofile-saved` and puts it back on the
   profile CDI creates for the new class. Recreations done by older
-  operators (the v2.4.0 hop, Immediate to WaitForFirstConsumer) are not
-  covered: note the profile's spec before that hop.
+  operators are not covered: see the next item.
+- A cluster installed before v2.4.0 (v2.3.x or earlier) with
+  Virtualization on loses the settings of its CDI StorageProfile at the hop
+  to v2.4.0. Its `topolvm-provisioner` class is Immediate. v2.4.0 is a
+  mandatory stop, and its manifest sync installs k4all-operator v0.5.0,
+  which recreates the class as WaitForFirstConsumer without saving the
+  profile: CDI creates an empty one and goes back to its defaults (for
+  TopoLVM, `copy` clones instead of a `cloneStrategy` set by hand). If you
+  changed the profile's spec, save it before the hop to v2.4.0 and put it
+  back once the v2.4.0 sync is done (`topolvm` Installed, the class
+  WaitForFirstConsumer). Only the spec goes back: the new profile has a new
+  uid, so the saved object as a whole cannot be applied.
+  ```sh
+  # before the hop to v2.4.0
+  kubectl get storageprofile topolvm-provisioner -o json | jq '{spec}' > storageprofile-spec.json
+  # after the v2.4.0 sync
+  kubectl patch storageprofile topolvm-provisioner --type merge --patch-file storageprofile-spec.json
+  ```
+  The clone strategy alone can also live on the class, where no
+  recreation loses it: CDI uses the class's annotation
+  `cdi.kubevirt.io/clone-strategy` (`copy`, `snapshot` or `csi-clone`)
+  when the profile's spec sets no `cloneStrategy`. Set it through
+  `componentOverrides.topolvm` after the v2.4.0 sync. The override's
+  `storageClasses` replaces the manifest's whole list, so build it from the
+  ReleaseManifest the cluster runs: a list copied from v2.3.0 would keep
+  the class Immediate. An annotation is changed in place, the class is not
+  recreated. The override then pins the list: compare it with the
+  ReleaseManifest's after a release that changes TopoLVM's
+  `storageClasses`.
+  ```sh
+  kubectl get releasemanifest k4all -o json | jq '{spec:{componentOverrides:{topolvm:{values:{storageClasses:
+    (.spec.components.topolvm.values.storageClasses
+     | map(if .name == "topolvm-provisioner"
+           then .storageClass.annotations["cdi.kubevirt.io/clone-strategy"] = "csi-clone" else . end))}}}}}' > topolvm-override.json
+  kubectl patch clusterconfig k4all-cluster-config --type merge --patch-file topolvm-override.json
+  ```
 - From v2.6.6 a fresh KubeVirt or CDI shows `Pending` ("reports no version
   yet; waiting for it") while its operator starts, instead of `Failed` until
   the next 5-minute reconcile.
