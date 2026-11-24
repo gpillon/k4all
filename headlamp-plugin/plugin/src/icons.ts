@@ -17,15 +17,22 @@ import mdiCheck from '@iconify/icons-mdi/check';
 import mdiCheckCircleOutline from '@iconify/icons-mdi/check-circle-outline';
 import mdiChevronDown from '@iconify/icons-mdi/chevron-down';
 import mdiChevronRight from '@iconify/icons-mdi/chevron-right';
+import mdiChip from '@iconify/icons-mdi/chip';
 import mdiCloudAlertOutline from '@iconify/icons-mdi/cloud-alert-outline';
 import mdiCloudDownloadOutline from '@iconify/icons-mdi/cloud-download-outline';
+import mdiCloudOutline from '@iconify/icons-mdi/cloud-outline';
 import mdiCogOutline from '@iconify/icons-mdi/cog-outline';
 import mdiContentCopy from '@iconify/icons-mdi/content-copy';
+import mdiDatabaseCheckOutline from '@iconify/icons-mdi/database-check-outline';
+import mdiDatabaseOutline from '@iconify/icons-mdi/database-outline';
+import mdiDatabasePlusOutline from '@iconify/icons-mdi/database-plus-outline';
+import mdiDatabaseRemoveOutline from '@iconify/icons-mdi/database-remove-outline';
 import mdiDeleteOutline from '@iconify/icons-mdi/delete-outline';
 import mdiEyeOutline from '@iconify/icons-mdi/eye-outline';
 import mdiFedora from '@iconify/icons-mdi/fedora';
 import mdiFileLockOutline from '@iconify/icons-mdi/file-lock-outline';
 import mdiFileQuestionOutline from '@iconify/icons-mdi/file-question-outline';
+import mdiFormatListNumbered from '@iconify/icons-mdi/format-list-numbered';
 import mdiHandBackLeftOutline from '@iconify/icons-mdi/hand-back-left-outline';
 import mdiHelpCircleOutline from '@iconify/icons-mdi/help-circle-outline';
 import mdiHexagonMultipleOutline from '@iconify/icons-mdi/hexagon-multiple-outline';
@@ -39,7 +46,10 @@ import mdiLightningBolt from '@iconify/icons-mdi/lightning-bolt';
 import mdiLockOutline from '@iconify/icons-mdi/lock-outline';
 import mdiMapMarkerOutline from '@iconify/icons-mdi/map-marker-outline';
 import mdiMapMarkerPath from '@iconify/icons-mdi/map-marker-path';
+import mdiMemory from '@iconify/icons-mdi/memory';
+import mdiMonitorDashboard from '@iconify/icons-mdi/monitor-dashboard';
 import mdiMonitorMultiple from '@iconify/icons-mdi/monitor-multiple';
+import mdiOpenInNew from '@iconify/icons-mdi/open-in-new';
 import mdiPackageVariant from '@iconify/icons-mdi/package-variant';
 import mdiPackageVariantClosed from '@iconify/icons-mdi/package-variant-closed';
 import mdiPackageVariantClosedRemove from '@iconify/icons-mdi/package-variant-closed-remove';
@@ -47,6 +57,7 @@ import mdiPause from '@iconify/icons-mdi/pause';
 import mdiPencilOutline from '@iconify/icons-mdi/pencil-outline';
 import mdiPlay from '@iconify/icons-mdi/play';
 import mdiProgressUpload from '@iconify/icons-mdi/progress-upload';
+import mdiProgressWrench from '@iconify/icons-mdi/progress-wrench';
 import mdiPuzzleOutline from '@iconify/icons-mdi/puzzle-outline';
 import mdiRefresh from '@iconify/icons-mdi/refresh';
 import mdiReplay from '@iconify/icons-mdi/replay';
@@ -66,6 +77,7 @@ import mdiTag from '@iconify/icons-mdi/tag';
 import mdiTagOutline from '@iconify/icons-mdi/tag-outline';
 import mdiTimerOutline from '@iconify/icons-mdi/timer-outline';
 import mdiTimerSand from '@iconify/icons-mdi/timer-sand';
+import mdiToggleSwitchOutline from '@iconify/icons-mdi/toggle-switch-outline';
 import mdiTrafficLightOutline from '@iconify/icons-mdi/traffic-light-outline';
 import mdiTrayArrowDown from '@iconify/icons-mdi/tray-arrow-down';
 import mdiTuneVariant from '@iconify/icons-mdi/tune-variant';
@@ -85,15 +97,22 @@ export const ICONS: Record<string, IconifyIcon> = {
   'check-circle-outline': mdiCheckCircleOutline,
   'chevron-down': mdiChevronDown,
   'chevron-right': mdiChevronRight,
+  chip: mdiChip,
   'cloud-alert-outline': mdiCloudAlertOutline,
   'cloud-download-outline': mdiCloudDownloadOutline,
+  'cloud-outline': mdiCloudOutline,
   'cog-outline': mdiCogOutline,
   'content-copy': mdiContentCopy,
+  'database-check-outline': mdiDatabaseCheckOutline,
+  'database-outline': mdiDatabaseOutline,
+  'database-plus-outline': mdiDatabasePlusOutline,
+  'database-remove-outline': mdiDatabaseRemoveOutline,
   'delete-outline': mdiDeleteOutline,
   'eye-outline': mdiEyeOutline,
   fedora: mdiFedora,
   'file-lock-outline': mdiFileLockOutline,
   'file-question-outline': mdiFileQuestionOutline,
+  'format-list-numbered': mdiFormatListNumbered,
   'hand-back-left-outline': mdiHandBackLeftOutline,
   'help-circle-outline': mdiHelpCircleOutline,
   'hexagon-multiple-outline': mdiHexagonMultipleOutline,
@@ -107,7 +126,10 @@ export const ICONS: Record<string, IconifyIcon> = {
   'lock-outline': mdiLockOutline,
   'map-marker-outline': mdiMapMarkerOutline,
   'map-marker-path': mdiMapMarkerPath,
+  memory: mdiMemory,
+  'monitor-dashboard': mdiMonitorDashboard,
   'monitor-multiple': mdiMonitorMultiple,
+  'open-in-new': mdiOpenInNew,
   'package-variant': mdiPackageVariant,
   'package-variant-closed': mdiPackageVariantClosed,
   'package-variant-closed-remove': mdiPackageVariantClosedRemove,
@@ -115,6 +137,7 @@ export const ICONS: Record<string, IconifyIcon> = {
   'pencil-outline': mdiPencilOutline,
   play: mdiPlay,
   'progress-upload': mdiProgressUpload,
+  'progress-wrench': mdiProgressWrench,
   'puzzle-outline': mdiPuzzleOutline,
   refresh: mdiRefresh,
   replay: mdiReplay,
@@ -134,6 +157,7 @@ export const ICONS: Record<string, IconifyIcon> = {
   'tag-outline': mdiTagOutline,
   'timer-outline': mdiTimerOutline,
   'timer-sand': mdiTimerSand,
+  'toggle-switch-outline': mdiToggleSwitchOutline,
   'traffic-light-outline': mdiTrafficLightOutline,
   'tray-arrow-down': mdiTrayArrowDown,
   'tune-variant': mdiTuneVariant,

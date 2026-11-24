@@ -11,6 +11,16 @@
 #                 upgrades (ClusterUpgrade, k4all v2.4.0+). An upgrade reboots
 #                 every node, so it is a role of its own.
 # Bind them with a ClusterRoleBinding: the k4all resources are cluster-scoped.
+#
+# The k4all v2.7.0 settings pages also read, where present: the KubeVirt CR
+# (gates, version), StorageClasses and CDI StorageProfiles (VM state),
+# CephClusters (Rook), and what the kubevirt-manager removal kept. Two reads
+# are left out on purpose, and the pages say "unknown" without them: the
+# node k4all-operator runs on (list pods in k4all-operator-system, for the
+# node-settings rollout order) and the disks of Hangar's node agent (list
+# pods and get pods/proxy in hangar-system; Hangar's hangar-hardware-admin
+# role has them), and the ConfigMap kube-system/kubelet-config (what a
+# cleared kubelet field goes back to; the page then gives the rule).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -27,7 +37,32 @@ rules:
   # "Ingresses still on the nginx class" (Settings > Ingress, Overview).
   - apiGroups: [networking.k8s.io]
     resources: [ingresses]
-    verbs: [get, list, watch]
+    verbs: [get, list, watch]  # k4all v2.7.0 settings pages (virtualization, storage) and the
+  # kubevirt-manager component page.
+  - apiGroups: [kubevirt.io]
+    resources: [kubevirts]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list]
+  - apiGroups: [cdi.kubevirt.io]
+    resources: [storageprofiles]
+    verbs: [get, list]
+  - apiGroups: [ceph.rook.io]
+    resources: [cephclusters]
+    verbs: [get, list]
+  - apiGroups: [scheduling.k8s.io]
+    resources: [priorityclasses]
+    resourceNames: [vm-standard, vm-preemptible]
+    verbs: [get]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    resourceNames: [images.kubevirt-manager.io]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [namespaces]
+    resourceNames: [kubevirt-manager]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -55,7 +90,32 @@ rules:
     verbs: [get, list, watch, patch]
   - apiGroups: [""]
     resources: [services]
-    verbs: [get, patch]
+    verbs: [get, patch]  # k4all v2.7.0 settings pages (virtualization, storage) and the
+  # kubevirt-manager component page.
+  - apiGroups: [kubevirt.io]
+    resources: [kubevirts]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list]
+  - apiGroups: [cdi.kubevirt.io]
+    resources: [storageprofiles]
+    verbs: [get, list]
+  - apiGroups: [ceph.rook.io]
+    resources: [cephclusters]
+    verbs: [get, list]
+  - apiGroups: [scheduling.k8s.io]
+    resources: [priorityclasses]
+    resourceNames: [vm-standard, vm-preemptible]
+    verbs: [get]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    resourceNames: [images.kubevirt-manager.io]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [namespaces]
+    resourceNames: [kubevirt-manager]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

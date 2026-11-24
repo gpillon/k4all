@@ -8,9 +8,11 @@ import {
 } from './changes';
 import {
   clusterConfigNginx,
+  clusterConfigV270,
   defaultClusterConfig,
   releaseManifest,
   releaseManifestNginx,
+  releaseManifestV270,
 } from './fixtures';
 import { setIn } from './objects';
 import { setIngress, setOverride, setTraefik } from './settings';
@@ -123,7 +125,7 @@ describe('describeChanges', () => {
     ]);
   });
 
-  it('flags a CNI switch and the OVS bridge as dangerous (operator v0.6.0)', () => {
+  it('flags a CNI switch and the OVS bridge as dangerous (operator v0.7.0)', () => {
     const items = describeChanges(
       base(),
       setIn(
@@ -168,6 +170,117 @@ describe('describeChanges', () => {
     expect(items).toEqual([
       expect.objectContaining({ key: 'componentOverrides.traefik', from: 'none', to: 'changed' }),
     ]);
+  });
+});
+
+describe('describeChanges, k4all v2.7.0 settings', () => {
+  const v270 = () => clusterConfigV270().spec!;
+  const c270 = () => releaseManifestV270().spec!.components!;
+  const caps = capabilitiesOf('v0.6.0');
+
+  it('turns Rook on with what it installs, the snapshot controller only when new', () => {
+    const noVirt = setIn(v270(), ['features', 'virt', 'enabled'], false);
+    const [item] = describeChanges(
+      noVirt,
+      setIn(noVirt, ['features', 'rook'], { enabled: true }),
+      c270(),
+      caps
+    );
+    expect(item).toMatchObject({ key: 'features.rook.enabled', label: 'Rook/Ceph storage' });
+    expect(item.consequence).toBe(
+      'Installs cairn, ceph-csi-drivers, rook-ceph, snapshot-controller. This takes a few minutes.'
+    );
+    // virt already brings the snapshot controller
+    const [withVirt] = describeChanges(
+      v270(),
+      setIn(v270(), ['features', 'rook'], { enabled: true }),
+      c270(),
+      caps
+    );
+    expect(withVirt.consequence).toBe(
+      'Installs cairn, ceph-csi-drivers, rook-ceph. This takes a few minutes.'
+    );
+  });
+
+  it('turns Rook off as dangerous, kept while a CephCluster exists', () => {
+    const on = setIn(v270(), ['features', 'rook'], { enabled: true });
+    const [item] = describeChanges(
+      on,
+      setIn(on, ['features', 'rook', 'enabled'], false),
+      c270(),
+      caps
+    );
+    expect(item).toMatchObject({ severity: 'danger', to: 'off' });
+    expect(item.consequence).toMatch(/while a CephCluster exists/);
+    expect(item.consequence).toMatch(/never wipes disks/);
+  });
+
+  it('describes each gate k4all turns on or off, once', () => {
+    const draft = setIn(v270(), ['features', 'virt', 'kubevirt'], {
+      featureGates: ['Sidecar'],
+      disabledFeatureGates: ['Snapshot'],
+    });
+    const items = describeChanges(v270(), draft, c270(), caps);
+    expect(items.map(i => [i.key, i.from, i.to, i.severity])).toEqual([
+      ['features.virt.kubevirt.gates.Sidecar', 'not set by k4all', 'on', 'info'],
+      ['features.virt.kubevirt.gates.Snapshot', 'not set by k4all', 'off', 'warning'],
+    ]);
+    expect(items[1].consequence).toMatch(/even where Hangar or an admin set it/);
+  });
+
+  it('describes node settings by what the nodes do', () => {
+    const items = describeChanges(
+      v270(),
+      setIn(v270(), ['nodes'], { kubelet: { maxPods: 250 }, hugepages: { '1Gi': 2 } }),
+      c270(),
+      caps
+    );
+    expect(items.map(i => [i.key, i.label, i.from, i.to, i.severity])).toEqual([
+      ['nodes.hugepages.1Gi', '1 GiB hugepages per node', 'not set by k4all', '2', 'danger'],
+      ['nodes.kubelet.maxPods', 'Max pods per node', 'not set by k4all', '250', 'danger'],
+    ]);
+    expect(items[0].consequence).toMatch(/drained and reboots/);
+    // maxPods alone: kubelet restarts without a drain, a warning
+    const [only] = describeChanges(
+      v270(),
+      setIn(v270(), ['nodes', 'kubelet', 'maxPods'], 250),
+      c270(),
+      caps
+    );
+    expect(only).toMatchObject({ severity: 'warning' });
+    expect(only.consequence).toMatch(/without a drain/);
+    // clearing it: kubelet-config gets back what it had before k4all
+    const set = setIn(v270(), ['nodes', 'kubelet', 'maxPods'], 200);
+    const [cleared] = describeChanges(set, v270(), c270(), caps);
+    expect(cleared).toMatchObject({ from: '200', to: 'value before k4all', severity: 'warning' });
+    expect(cleared.consequence).toMatch(
+      /^kube-system\/kubelet-config gets back the value maxPods had before k4all set it .*without a drain/
+    );
+    const [known] = describeChanges(set, v270(), c270(), caps, {
+      kubeletPrior: { maxPods: '250' },
+    });
+    expect(known).toMatchObject({ to: '250 (before k4all)' });
+    expect(known.consequence).toMatch(/gets back maxPods: 250/);
+  });
+
+  it('labels the virtualization and storage fields', () => {
+    const draft = setIn(
+      setIn(
+        setIn(v270(), ['features', 'virt', 'hangar', 'nodeAgent'], false),
+        ['features', 'virt', 'kubevirt', 'vmStateStorageClass'],
+        'ceph-rbd'
+      ),
+      ['features', 'virt', 'metadata'],
+      { enabled: true, scope: 'All' }
+    );
+    const items = describeChanges(v270(), draft, c270(), caps);
+    expect(items.map(i => [i.key, i.label, i.to])).toEqual([
+      ['features.virt.hangar.nodeAgent', 'Hangar node agent', 'off'],
+      ['features.virt.kubevirt.vmStateStorageClass', 'VM state StorageClass', 'ceph-rbd'],
+      ['features.virt.metadata.enabled', 'Metadata service', 'on'],
+      ['features.virt.metadata.scope', 'Metadata service: which VMs', 'All'],
+    ]);
+    expect(items[0].consequence).toMatch(/Uninstalls hangar-node-agent/);
   });
 });
 
@@ -219,5 +332,24 @@ describe('reappliedComponents', () => {
 
   it('is empty without changes', () => {
     expect(reappliedComponents(base(), base(), components())).toEqual([]);
+  });
+
+  // Every component with a hook in the operator's registry (v0.6.0) hashes the
+  // whole settings: CDI and the Rook charts too.
+  it('includes CDI and the Rook charts', () => {
+    const on = setIn(setIn(base(), ['features', 'virt', 'enabled'], true), ['features', 'rook'], {
+      enabled: true,
+    });
+    const draft = setIn(on, ['features', 'argocd', 'enabled'], true);
+    expect(reappliedComponents(on, draft, releaseManifestV270().spec!.components!)).toEqual([
+      'calico',
+      'cdi',
+      'ceph-csi-drivers',
+      'headlamp',
+      'kubevirt',
+      'metallb',
+      'rook-ceph',
+      'traefik',
+    ]);
   });
 });

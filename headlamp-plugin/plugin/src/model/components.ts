@@ -13,21 +13,37 @@ import {
   ReleaseManifestObject,
 } from './types';
 
+/** The ClusterConfig features that install components (the operator's feature gates). */
+export type Feature = 'virt' | 'argocd' | 'ovsCni' | 'rook';
+
+export const FEATURES: Feature[] = ['virt', 'argocd', 'ovsCni', 'rook'];
+
 export interface Activation {
   active: boolean;
   /** Why an inactive component is not installed. */
   reason?: string;
   /** The ClusterConfig feature that turns it on, when there is one. */
-  feature?: 'virt' | 'argocd' | 'ovsCni';
+  feature?: Feature;
+  /** Any of these features turns it on (the snapshot controller: virt or Rook). */
+  anyOf?: Feature[];
 }
 
-const FEATURE_LABEL: Record<string, string> = {
+export const FEATURE_LABEL: Record<Feature, string> = {
   virt: 'Virtualization',
   argocd: 'Argo CD',
   ovsCni: 'OVS secondary networks',
+  rook: 'Rook/Ceph storage',
 };
 
-function featureEnabled(feature: string, config: ClusterConfigSpec): boolean {
+/** Where the plugin turns each feature on and off. */
+const FEATURE_PLACE: Record<Feature, string> = {
+  virt: 'Settings',
+  argocd: 'Settings',
+  ovsCni: 'Settings',
+  rook: 'Settings > Storage',
+};
+
+export function featureEnabled(feature: string, config: ClusterConfigSpec): boolean {
   switch (feature) {
     case 'virt':
       return config.features?.virt?.enabled === true;
@@ -35,9 +51,37 @@ function featureEnabled(feature: string, config: ClusterConfigSpec): boolean {
       return config.features?.argocd?.enabled === true;
     case 'ovsCni':
       return config.features?.ovsCni?.enabled === true;
+    case 'rook':
+      // features.rook exists from operator v0.6.0 (k4all v2.7.0); older CRDs prune it.
+      return config.features?.rook?.enabled === true;
   }
   return false;
 }
+
+/**
+ * Gates of operator v0.6.0 that are not a ClusterConfig feature of their own
+ * (engine.FeatureEnabled): snapshots (the CSI snapshot controller) is on
+ * with virt or Rook; virtMetadata (k4all-metadata) is virt plus
+ * features.virt.metadata.enabled.
+ */
+const ANY_OF_GATE: Record<string, Feature[]> = {
+  snapshots: ['virt', 'rook'],
+};
+const VIRT_METADATA_GATE = 'virtMetadata';
+
+/** Hangar's node agent: the operator leaves it out by name when nodeAgent is false (D6). */
+const HANGAR_NODE_AGENT = 'hangar-node-agent';
+
+/** Why a component the release set to Removed is gone, and what its removal keeps. */
+export const REMOVED_REASON: Record<string, string> = {
+  // k4all v2.7.0 (operator v0.6.0, its Remover hook, spec §10.3). The operator
+  // only logs what it kept (D25); the component page checks which are left.
+  'kubevirt-manager':
+    'Removed: replaced by Hangar. k4all removed its console and roles; it keeps the ' +
+    'PriorityClasses vm-standard and vm-preemptible while VMs or pods name them, the image ' +
+    'catalog CRD images.kubevirt-manager.io while it holds images, and the namespace ' +
+    'kubevirt-manager while your objects are in it. VMs are untouched.',
+};
 
 /**
  * The start of the message of a component k4all-operator keeps installed
@@ -45,6 +89,13 @@ function featureEnabled(feature: string, config: ClusterConfigSpec): boolean {
  * uninstall would break what runs on it (v0.5.7: KubeVirt while VMs exist).
  */
 export const UNINSTALL_REFUSED = 'uninstall refused: ';
+
+/**
+ * The start of the message of a component that waits for something before
+ * the operator goes on (v0.6.0, D23): Rook below 3 nodes with smallCluster
+ * Refuse, a feature group held by one of its members. Neutral, not a failure.
+ */
+export const WAITING = 'waiting: ';
 
 /** Why k4all-operator refuses to uninstall the component, if it does. */
 export function uninstallRefusal(status: ComponentStatus | undefined): string | undefined {
@@ -54,14 +105,80 @@ export function uninstallRefusal(status: ComponentStatus | undefined): string | 
     : undefined;
 }
 
+/**
+ * The start of the message of a component whose uninstall waits for another
+ * member of its group to go first (operator v0.6.0, #96): it is uninstalling.
+ */
+export const UNINSTALL_QUEUED = 'uninstall queued: ';
+
+export interface ComponentNotice {
+  kind: 'refused' | 'waiting' | 'queued';
+  /** The operator's message after the prefix, as written. */
+  text: string;
+}
+
+/** A refused uninstall or a wait, from the component's status message. */
+export function componentNotice(status: ComponentStatus | undefined): ComponentNotice | undefined {
+  const refused = uninstallRefusal(status);
+  if (refused !== undefined) {
+    return { kind: 'refused', text: refused };
+  }
+  const message = status?.message;
+  if (message?.startsWith(UNINSTALL_QUEUED)) {
+    return { kind: 'queued', text: message.slice(UNINSTALL_QUEUED.length) };
+  }
+  return message?.startsWith(WAITING)
+    ? { kind: 'waiting', text: message.slice(WAITING.length) }
+    : undefined;
+}
+
+export interface NoticeGroup {
+  kind: ComponentNotice['kind'];
+  /** The components that carry this message, by name. */
+  names: string[];
+  text: string;
+  /** The text, prefixed with the names unless it already names one ("kubevirt: …"). */
+  label: string;
+}
+
+/**
+ * Notices grouped by message: every member of a feature group the operator
+ * holds (#96) carries the same "uninstall refused: <member>: <reason>; …".
+ */
+export function groupNotices(notices: (ComponentNotice & { name: string })[]): NoticeGroup[] {
+  const groups: NoticeGroup[] = [];
+  for (const n of notices) {
+    const g = groups.find(x => x.kind === n.kind && x.text === n.text);
+    if (g) {
+      g.names.push(n.name);
+    } else {
+      groups.push({ kind: n.kind, names: [n.name], text: n.text, label: n.text });
+    }
+  }
+  for (const g of groups) {
+    g.names.sort();
+    const named = g.names.some(name => g.text.startsWith(`${name}: `));
+    g.label = named ? g.text : `${g.names.join(', ')}: ${g.text}`;
+  }
+  return groups;
+}
+
+/** Every component with a refused uninstall or a wait, by name. */
+export function componentNotices(
+  rm: ReleaseManifestObject | null | undefined
+): (ComponentNotice & { name: string })[] {
+  return Object.entries(rm?.status?.components ?? {})
+    .map(([name, status]) => ({ name, notice: componentNotice(status) }))
+    .filter((e): e is { name: string; notice: ComponentNotice } => !!e.notice)
+    .map(e => ({ name: e.name, ...e.notice }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** The feature that gates a component: its featureGate, or the operator's name-based fallback. */
-export function componentFeature(
-  name: string,
-  spec: ComponentSpec
-): Activation['feature'] | undefined {
+export function componentFeature(name: string, spec: ComponentSpec): Feature | undefined {
   if (spec.featureGate) {
-    return ['virt', 'argocd', 'ovsCni'].includes(spec.featureGate)
-      ? (spec.featureGate as Activation['feature'])
+    return (FEATURES as string[]).includes(spec.featureGate)
+      ? (spec.featureGate as Feature)
       : undefined;
   }
   switch (name) {
@@ -107,7 +224,10 @@ export function componentActivation(
     return { active: false, reason: 'Unmanaged: the operator leaves it alone.' };
   }
   if (spec.management === 'Removed') {
-    return { active: false, reason: 'Removed: the operator uninstalls it.' };
+    return {
+      active: false,
+      reason: REMOVED_REASON[name] ?? 'Removed: the operator uninstalls it.',
+    };
   }
   const cni = config.networking?.cni?.type ?? '';
   switch (name) {
@@ -137,26 +257,45 @@ export function componentActivation(
       break;
     }
   }
-  if (spec.featureGate === 'rook') {
-    // The operator's rook gate is off until the ClusterConfig has a Rook switch.
-    return { active: false, reason: 'Needs Rook, which this k4all release cannot turn on yet.' };
+  const gate = spec.featureGate;
+  const anyOf = gate ? ANY_OF_GATE[gate] : undefined;
+  if (anyOf) {
+    return anyOf.some(f => featureEnabled(f, config))
+      ? { active: true, anyOf }
+      : {
+          active: false,
+          anyOf,
+          reason: `Needs ${anyOf.map(f => FEATURE_LABEL[f]).join(' or ')}.`,
+        };
   }
-  if (spec.featureGate) {
-    const feature = componentFeature(name, spec);
-    if (!feature) {
-      return { active: false, reason: `Unknown feature gate "${spec.featureGate}".` };
-    }
-    return featureEnabled(feature, config)
-      ? { active: true, feature }
-      : { active: false, feature, reason: `${FEATURE_LABEL[feature]} is off.` };
+  const feature = gate === VIRT_METADATA_GATE ? 'virt' : componentFeature(name, spec);
+  if (gate && !feature) {
+    return { active: false, reason: `Unknown feature gate "${gate}".` };
   }
-  const feature = componentFeature(name, spec);
-  if (feature) {
-    return featureEnabled(feature, config)
-      ? { active: true, feature }
-      : { active: false, feature, reason: `${FEATURE_LABEL[feature]} is off.` };
+  if (feature && !featureEnabled(feature, config)) {
+    return { active: false, feature, reason: `${FEATURE_LABEL[feature]} is off.` };
   }
-  return { active: true };
+  if (gate === VIRT_METADATA_GATE && config.features?.virt?.metadata?.enabled !== true) {
+    return {
+      active: false,
+      feature,
+      reason: 'The metadata service is off (features.virt.metadata.enabled).',
+    };
+  }
+  // By name, whatever the gate, as engine.shouldInstall does.
+  if (name === HANGAR_NODE_AGENT && config.features?.virt?.hangar?.nodeAgent === false) {
+    return {
+      active: false,
+      ...(feature ? { feature } : {}),
+      reason: "Hangar's node agent is turned off (features.virt.hangar.nodeAgent: false).",
+    };
+  }
+  return feature ? { active: true, feature } : { active: true };
+}
+
+/** Whether a component belongs to the feature (its gate, or one of the features that install it). */
+export function belongsTo(activation: Activation, feature: Feature): boolean {
+  return activation.feature === feature || !!activation.anyOf?.includes(feature);
 }
 
 // -------------------------------------------------------------- Categories
@@ -174,6 +313,9 @@ export const CATEGORIES: Record<string, string> = {
   'ingress-nginx': 'Ingress',
   traefik: 'Ingress',
   topolvm: 'Storage',
+  'rook-ceph': 'Storage',
+  'ceph-csi-drivers': 'Storage',
+  'snapshot-controller': 'Storage',
   'cert-manager': 'Security',
   headlamp: 'Dashboard',
   'metrics-server': 'Monitoring',
@@ -183,6 +325,7 @@ export const CATEGORIES: Record<string, string> = {
   'kubevirt-manager': 'Virtualization',
   hangar: 'Virtualization',
   'hangar-node-agent': 'Virtualization',
+  'k4all-metadata': 'Virtualization',
   cairn: 'Storage',
   argocd: 'GitOps',
   'k4all-operator': 'Platform',
@@ -246,6 +389,9 @@ export function displayState(
   activation: Activation
 ): DisplayState {
   const state = status?.state;
+  if (status?.message?.startsWith(UNINSTALL_QUEUED)) {
+    return { label: 'Uninstall queued', tone: 'info', busy: true };
+  }
   switch (state) {
     case 'Installed':
       return { label: 'Installed', tone: 'success', busy: false };
@@ -411,7 +557,8 @@ export function removalBlockers(row: ComponentRow, config: ClusterConfigSpec): s
     blockers.push('It is the cluster CNI.');
   }
   if (row.activation.feature && row.management === 'Managed') {
-    blockers.push(`Turn off ${FEATURE_LABEL[row.activation.feature]} in Settings instead.`);
+    const f = row.activation.feature;
+    blockers.push(`Turn off ${FEATURE_LABEL[f]} in ${FEATURE_PLACE[f]} instead.`);
   }
   if (row.requiredBy.length > 0) {
     blockers.push(`Required by ${row.requiredBy.join(', ')}.`);

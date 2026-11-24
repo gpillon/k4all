@@ -78,6 +78,26 @@ export function setIn<T>(doc: T, path: Path, value: unknown): T {
   return base as unknown as T;
 }
 
+/**
+ * setIn, then removes the objects on the path that the change left empty
+ * (deepest first), so clearing the last field of a setting leaves the
+ * setting absent ("not owned"), not an empty object.
+ */
+export function setPruned<T>(doc: T, path: Path, value: unknown): T {
+  let out = setIn(doc, path, value);
+  if (value !== undefined) {
+    return out;
+  }
+  for (let depth = path.length - 1; depth > 0; depth--) {
+    const parent = getIn(out, path.slice(0, depth));
+    if (!isPlainObject(parent) || Object.keys(parent).length > 0) {
+      break;
+    }
+    out = setIn(out, path.slice(0, depth), undefined);
+  }
+  return out;
+}
+
 export function deleteIn<T>(doc: T, path: Path): T {
   if (path.length === 0 || getIn(doc, path) === undefined) {
     return doc;

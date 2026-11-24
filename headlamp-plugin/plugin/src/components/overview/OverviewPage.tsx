@@ -19,6 +19,7 @@ import {
 import React from 'react';
 import { useHistory } from 'react-router-dom';
 import { useK4allData, useNow } from '../../api/hooks';
+import { Capabilities, capabilities } from '../../model/capabilities';
 import { buildRows, ComponentRow, releaseVersion, summarize, Tone } from '../../model/components';
 import {
   clusterHealth,
@@ -34,9 +35,10 @@ import {
   INGRESS_LABEL,
   IngressController,
 } from '../../model/settings';
-import { ClusterConfigObject } from '../../model/types';
+import { ClusterConfigObject, CONDITION_ROOK_READY } from '../../model/types';
 import { hostPhaseLabel } from '../../model/upgrades';
 import { LiveStatusBar } from '../common/live';
+import { CAIRN_URL, clusterURL, HANGAR_URL } from '../common/nav';
 import { K4allGate } from '../common/states';
 import { Metric, Mono, PageHeader, Panel, SegmentBar, TonePill } from '../common/ui';
 import { useIngresses } from '../settings/NginxIngresses';
@@ -60,6 +62,8 @@ function FeatureLine(props: {
   enabled: boolean;
   ready?: boolean;
   note?: string;
+  /** The console of the feature (Hangar, Cairn), linked while it is on. */
+  console?: { label: string; href: string };
 }) {
   const tone: Tone = !props.enabled ? 'neutral' : props.ready === false ? 'info' : 'success';
   const label = !props.enabled ? 'Off' : props.ready === false ? 'Installing' : 'On';
@@ -76,6 +80,11 @@ function FeatureLine(props: {
               {props.note}
             </Typography>
           )}
+          {props.console && props.enabled && (
+            <Typography variant="caption" sx={{ display: 'block' }}>
+              <a href={props.console.href}>{props.console.label}</a>
+            </Typography>
+          )}
         </Box>
       </Stack>
       <TonePill tone={tone} label={label} busy={props.enabled && props.ready === false} />
@@ -83,10 +92,11 @@ function FeatureLine(props: {
   );
 }
 
-function FeaturesPanel(props: { cc: ClusterConfigObject }) {
+function FeaturesPanel(props: { cc: ClusterConfigObject; caps: Capabilities }) {
   const history = useHistory();
   const spec = props.cc.spec ?? {};
   const status = props.cc.status?.features ?? {};
+  const rookReady = findCondition(props.cc.status?.conditions, CONDITION_ROOK_READY);
   return (
     <Panel
       title="Features"
@@ -107,7 +117,26 @@ function FeaturesPanel(props: { cc: ClusterConfigObject }) {
             ? `emulation: ${spec.features?.virt?.emulation || 'auto'}`
             : undefined
         }
+        console={
+          props.caps.virtSettings
+            ? { label: 'Hangar, the VM console', href: clusterURL(HANGAR_URL) }
+            : undefined
+        }
       />
+      {(props.caps.rookStorage || spec.features?.rook) && (
+        <FeatureLine
+          icon="mdi:database-outline"
+          label="Rook/Ceph storage"
+          enabled={!!spec.features?.rook?.enabled}
+          ready={rookReady ? rookReady.status === 'True' : undefined}
+          note={
+            spec.features?.rook?.enabled && rookReady?.status !== 'True'
+              ? rookReady?.reason
+              : undefined
+          }
+          console={{ label: 'Cairn, the Ceph console', href: clusterURL(CAIRN_URL) }}
+        />
+      )}
       <FeatureLine
         icon="mdi:source-branch-sync"
         label="Argo CD"
@@ -330,7 +359,16 @@ export function OverviewPage() {
   );
 }
 
+/** Where a banner's button goes. */
+const BANNER_TARGET: Record<string, { route: string; label: string }> = {
+  nodeSettings: { route: 'k4all-settings-nodes', label: 'Node settings' },
+  refused: { route: 'k4all-components', label: 'Components' },
+  waiting: { route: 'k4all-components', label: 'Components' },
+  queued: { route: 'k4all-components', label: 'Components' },
+};
+
 function OverviewContent({ data, now }: { data: ReturnType<typeof useK4allData>; now: number }) {
+  const history = useHistory();
   const cc = data.cc!;
   const rm = data.rm!;
   const rows = React.useMemo(() => buildRows(rm, cc.spec ?? {}), [rm, cc]);
@@ -366,12 +404,29 @@ function OverviewContent({ data, now }: { data: ReturnType<typeof useK4allData>;
 
       <LiveStatusBar />
       <Stack spacing={1.5} sx={{ mb: 2 }}>
-        {health.banners.map(b => (
-          <Alert key={b.id} severity={b.severity}>
-            <AlertTitle>{b.title}</AlertTitle>
-            {b.detail}
-          </Alert>
-        ))}
+        {health.banners.map(b => {
+          const target = BANNER_TARGET[b.id];
+          return (
+            <Alert
+              key={b.id}
+              severity={b.severity}
+              action={
+                target ? (
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() => history.push(Router.createRouteURL(target.route))}
+                  >
+                    {target.label}
+                  </Button>
+                ) : undefined
+              }
+            >
+              <AlertTitle>{b.title}</AlertTitle>
+              {b.detail}
+            </Alert>
+          );
+        })}
       </Stack>
 
       <Grid container spacing={2}>
@@ -382,7 +437,7 @@ function OverviewContent({ data, now }: { data: ReturnType<typeof useK4allData>;
           <ComponentsPanel rows={rows} />
         </Grid>
         <Grid item xs={12} md={6} lg={3}>
-          <FeaturesPanel cc={cc} />
+          <FeaturesPanel cc={cc} caps={capabilities(rm)} />
         </Grid>
         <Grid item xs={12} md={6} lg={3}>
           <IngressPanel cc={cc} controller={activeIngress(rm.spec?.components, cc.spec)} />
