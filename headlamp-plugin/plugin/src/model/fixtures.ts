@@ -9,6 +9,7 @@
 import {
   ClusterConfigObject,
   ClusterUpgradeObject,
+  KubeVirtLike,
   NodeLike,
   ReleaseInfo,
   ReleaseManifestObject,
@@ -220,6 +221,104 @@ export function releaseManifestV240(): ReleaseManifestObject {
   rm.spec!.components!['k4all-operator'] = { type: 'manifest', version: 'v0.5.0' };
   rm.status!.components!['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.5.0' };
   return rm;
+}
+
+/**
+ * The ReleaseManifest of k4all v2.7.0 (operator v0.6.0): Hangar and Cairn,
+ * Rook/Ceph behind the rook gate, the snapshot controller, the metadata
+ * service, kubevirt-manager Removed.
+ */
+export function releaseManifestV270(): ReleaseManifestObject {
+  const rm = releaseManifest();
+  rm.spec!.osImage!.imageTag = 'v2.7.0-amd64';
+  const components = rm.spec!.components!;
+  components['rook-ceph'] = {
+    type: 'helm',
+    version: '1.21.2',
+    featureGate: 'rook',
+    dependsOn: ['calico', 'cilium'],
+  };
+  components['ceph-csi-drivers'] = {
+    type: 'helm',
+    version: '1.1.0',
+    featureGate: 'rook',
+    dependsOn: ['rook-ceph'],
+  };
+  components['snapshot-controller'] = { type: 'manifest', version: 'v8.4.0' };
+  components['k4all-metadata'] = {
+    type: 'manifest',
+    version: 'v0.6.0',
+    featureGate: 'virt',
+    dependsOn: ['kubevirt'],
+  };
+  components['k4all-operator'] = { type: 'manifest', version: 'v0.6.0' };
+  rm.status!.components!['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.6.0' };
+  return rm;
+}
+
+/** A k4all v2.7.0 ClusterConfig after the hop from v2.6.x: virt on, none of the new fields set. */
+export function clusterConfigV270(): ClusterConfigObject {
+  const cc = defaultClusterConfig();
+  cc.spec!.features!.virt = { enabled: true, emulation: 'auto' };
+  return cc;
+}
+
+/** A Node with capacity: cpus logical CPUs, memory in GiB. */
+export function nodeWithCapacity(
+  name: string,
+  cpus: number,
+  memoryGi: number,
+  opts: { worker?: boolean; type?: string; hugepages1Gi?: string } = {}
+): NodeLike {
+  const n = node(
+    name,
+    {
+      labels: opts.worker ? {} : { 'node-role.kubernetes.io/control-plane': '' },
+      annotations: opts.type ? { 'k4all.magesgate.com/node-type': opts.type } : undefined,
+    },
+    '192.168.1.' + (10 + name.length)
+  );
+  n.status!.capacity = {
+    cpu: String(cpus),
+    memory: `${memoryGi * 1024 * 1024}Ki`,
+    'hugepages-1Gi': opts.hugepages1Gi ?? '0',
+    'hugepages-2Mi': '0',
+    pods: '110',
+  };
+  return n;
+}
+
+/** The KubeVirt CR of a cluster running KubeVirt version (developerConfiguration lists, k4all annotations). */
+export function kubevirtCR(
+  version = 'v1.9.1',
+  opts: {
+    featureGates?: string[];
+    disabledFeatureGates?: string[];
+    k4allOn?: string;
+    k4allOff?: string;
+    vmStateStorageClass?: string;
+  } = {}
+): KubeVirtLike {
+  const annotations: Record<string, string> = {};
+  if (opts.k4allOn !== undefined) {
+    annotations['k4all.magesgate.com/feature-gates'] = opts.k4allOn;
+  }
+  if (opts.k4allOff !== undefined) {
+    annotations['k4all.magesgate.com/disabled-feature-gates'] = opts.k4allOff;
+  }
+  return {
+    metadata: { name: 'kubevirt', namespace: 'kubevirt', annotations },
+    spec: {
+      configuration: {
+        developerConfiguration: {
+          featureGates: opts.featureGates,
+          disabledFeatureGates: opts.disabledFeatureGates,
+        },
+        vmStateStorageClass: opts.vmStateStorageClass,
+      },
+    },
+    status: { observedKubeVirtVersion: version, phase: 'Deployed' },
+  };
 }
 
 /** The fixture graph: a linear ladder, every release one hop after the previous one. */

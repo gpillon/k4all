@@ -14,9 +14,12 @@ import { K4allLive } from './api/live';
 import { ComponentDetailPage } from './components/components/ComponentDetailPage';
 import { ComponentsPage } from './components/components/ComponentsPage';
 import { NodeSection } from './components/nodes/NodeSection';
+import { NodeSettingsPage } from './components/nodes/NodeSettingsPage';
 import { OverviewPage } from './components/overview/OverviewPage';
 import { SettingsPage } from './components/settings/SettingsPage';
+import { StorageSettingsPage } from './components/storage/StorageSettingsPage';
 import { UpgradesPage } from './components/upgrades/UpgradesPage';
+import { VirtualizationPage } from './components/virtualization/VirtualizationPage';
 import { registerIcons } from './icons';
 import { NodeLike } from './model/types';
 
@@ -42,6 +45,25 @@ registerSidebarEntry({
   name: 'k4all-settings',
   label: 'Settings',
   url: '/k4all/settings',
+});
+// The k4all v2.7.0 settings pages; Hangar and Cairn link to these paths.
+registerSidebarEntry({
+  parent: 'k4all',
+  name: 'k4all-settings-virtualization',
+  label: 'Virtualization',
+  url: '/k4all/settings/virtualization',
+});
+registerSidebarEntry({
+  parent: 'k4all',
+  name: 'k4all-settings-nodes',
+  label: 'Node settings',
+  url: '/k4all/settings/nodes',
+});
+registerSidebarEntry({
+  parent: 'k4all',
+  name: 'k4all-settings-storage',
+  label: 'Storage',
+  url: '/k4all/settings/storage',
 });
 registerSidebarEntry({
   parent: 'k4all',
@@ -82,6 +104,42 @@ registerRoute({
   component: () => (
     <K4allLive>
       <SettingsPage />
+    </K4allLive>
+  ),
+});
+
+registerRoute({
+  path: '/k4all/settings/virtualization',
+  exact: true,
+  name: 'k4all-settings-virtualization',
+  sidebar: 'k4all-settings-virtualization',
+  component: () => (
+    <K4allLive>
+      <VirtualizationPage />
+    </K4allLive>
+  ),
+});
+
+registerRoute({
+  path: '/k4all/settings/nodes',
+  exact: true,
+  name: 'k4all-settings-nodes',
+  sidebar: 'k4all-settings-nodes',
+  component: () => (
+    <K4allLive>
+      <NodeSettingsPage />
+    </K4allLive>
+  ),
+});
+
+registerRoute({
+  path: '/k4all/settings/storage',
+  exact: true,
+  name: 'k4all-settings-storage',
+  sidebar: 'k4all-settings-storage',
+  component: () => (
+    <K4allLive>
+      <StorageSettingsPage />
     </K4allLive>
   ),
 });

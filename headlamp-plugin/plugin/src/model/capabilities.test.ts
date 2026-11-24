@@ -27,7 +27,7 @@ describe('operator capabilities', () => {
     expect(atLeast('main', 'v0.4.0')).toBe(false);
   });
 
-  it('gates ClusterUpgrade on v0.4.0, CNI and OVS bridge on v0.6.0', () => {
+  it('gates ClusterUpgrade on v0.4.0, CNI and OVS bridge on v0.7.0', () => {
     const v030 = capabilities(releaseManifest());
     expect(v030).toMatchObject({
       operatorVersion: 'v0.3.0',
@@ -43,7 +43,26 @@ describe('operator capabilities', () => {
       ovsBridgeToggle: false,
     });
     expect(capabilitiesOf('v0.5.9')).toMatchObject({ cniSwitch: false, ovsBridgeToggle: false });
-    expect(capabilitiesOf('v0.6.0')).toMatchObject({ cniSwitch: true, ovsBridgeToggle: true });
+    // v0.6.0 (k4all v2.7.0) has neither: the CNI switch and OVS bridge removal moved to v0.7.0
+    expect(capabilitiesOf('v0.6.0')).toMatchObject({ cniSwitch: false, ovsBridgeToggle: false });
+    expect(capabilitiesOf('v0.7.0')).toMatchObject({ cniSwitch: true, ovsBridgeToggle: true });
+  });
+
+  it('has the k4all v2.7.0 settings from v0.6.0', () => {
+    for (const v of ['v0.5.7', 'v0.5.99', 'v0.6.0-rc.1']) {
+      expect(capabilitiesOf(v)).toMatchObject({
+        virtSettings: false,
+        nodeSettings: false,
+        rookStorage: false,
+      });
+    }
+    expect(capabilitiesOf('v0.6.0')).toMatchObject({
+      virtSettings: true,
+      nodeSettings: true,
+      rookStorage: true,
+    });
+    expect(capabilitiesOf(null).nodeSettings).toBe(false);
+    expect(capabilityNote('nodeSettings')).toBe('coming with k4all-operator v0.6.0 (k4all v2.7.0)');
   });
 
   it('has the virtualization uninstall guard from v0.5.7 (k4all v2.6.6)', () => {
@@ -56,7 +75,7 @@ describe('operator capabilities', () => {
   });
 
   it('names the operator (and k4all release) that brings a capability', () => {
-    expect(capabilityNote('cniSwitch')).toBe('coming with k4all-operator v0.6.0');
+    expect(capabilityNote('cniSwitch')).toBe('coming with k4all-operator v0.7.0');
     expect(capabilityNote('clusterUpgrade')).toBe(
       'coming with k4all-operator v0.4.0 (k4all v2.4.0)'
     );

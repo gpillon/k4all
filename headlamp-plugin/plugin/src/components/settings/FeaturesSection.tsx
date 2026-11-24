@@ -19,25 +19,38 @@ import {
 } from '@mui/material';
 import React from 'react';
 import { featureOffConsequence } from '../../model/changes';
-import { componentActivation, uninstallRefusal } from '../../model/components';
+import {
+  belongsTo,
+  componentActivation,
+  ComponentNotice,
+  componentNotice,
+  Feature,
+  FEATURE_LABEL,
+} from '../../model/components';
 import { applyModeOf, FIELDS } from '../../model/fields';
-import { setIn } from '../../model/objects';
+import { getIn, setIn, setPruned } from '../../model/objects';
 import { emulationMode } from '../../model/settings';
 import { ComponentSpec, ComponentStatus } from '../../model/types';
 import { ApplyBadge, CapabilityChip, Mono, TonePill } from '../common/ui';
 import { isChanged, SectionProps } from './common';
 
-type FeatureKey = 'virt' | 'argocd' | 'ovsCni';
-
-interface FeatureDef {
-  key: FeatureKey;
+export interface FeatureDef {
+  key: Feature;
   icon: string;
   label: string;
   help: string;
-  readyKey: 'virtReady' | 'argocdReady' | 'ovsCniReady';
+  /** status.features key; features without one pass `ready` to the card. */
+  readyKey?: 'virtReady' | 'argocdReady' | 'ovsCniReady';
 }
 
-const FEATURES: FeatureDef[] = [
+export const ROOK_FEATURE: FeatureDef = {
+  key: 'rook',
+  icon: 'mdi:database-outline',
+  label: FEATURE_LABEL.rook,
+  help: FIELDS.rookEnabled.help,
+};
+
+export const FEATURES: FeatureDef[] = [
   {
     key: 'virt',
     icon: 'mdi:monitor-multiple',
@@ -61,21 +74,30 @@ const FEATURES: FeatureDef[] = [
   },
 ];
 
-function componentsFor(feature: FeatureKey, components: Record<string, ComponentSpec>): string[] {
+function componentsFor(feature: Feature, components: Record<string, ComponentSpec>): string[] {
   return Object.entries(components)
-    .filter(([name, spec]) => componentActivation(name, spec, {}).feature === feature)
+    .filter(
+      ([name, spec]) =>
+        spec.management !== 'Removed' && belongsTo(componentActivation(name, spec, {}), feature)
+    )
     .map(([name]) => name)
     .sort();
 }
 
-interface FeatureCardProps extends SectionProps {
+export interface FeatureCardProps extends SectionProps {
   def: FeatureDef;
   components: Record<string, ComponentSpec>;
   /** The ReleaseManifest status of each component. */
   statuses?: Record<string, ComponentStatus>;
+  /** Readiness for features without a status.features key (Rook: the RookReady condition). */
+  ready?: boolean;
+  /** More content under the switch. */
+  children?: React.ReactNode;
 }
 
-function FeatureCard(props: FeatureCardProps) {
+type Notice = ComponentNotice & { name: string };
+
+export function FeatureCard(props: FeatureCardProps) {
   const theme = useTheme();
   const { def, draft, base, update, disabled } = props;
   const path = ['features', def.key, 'enabled'];
@@ -83,13 +105,24 @@ function FeatureCard(props: FeatureCardProps) {
   const wasEnabled = base.features?.[def.key]?.enabled === true;
   const changed =
     isChanged(props, path) || (def.key === 'virt' && isChanged(props, FIELDS.virtEmulation.path));
-  const ready = props.status?.features?.[def.readyKey];
+  const ready = def.readyKey ? props.status?.features?.[def.readyKey] : props.ready;
   const names = componentsFor(def.key, props.components);
   const id = `k4all-feature-${def.key}`;
-  // Components k4all-operator keeps installed though the feature is off.
-  const refusals = names
-    .map(name => ({ name, reason: uninstallRefusal(props.statuses?.[name]) }))
-    .filter((r): r is { name: string; reason: string } => !!r.reason);
+  // Components k4all-operator keeps installed though the feature is off
+  // ("uninstall refused: "), or that wait for something ("waiting: ").
+  const notices = names
+    .map(name => ({ name, notice: componentNotice(props.statuses?.[name]) }))
+    .filter((r): r is { name: string; notice: ComponentNotice } => !!r.notice)
+    .map((r): Notice => ({ name: r.name, ...r.notice }));
+  // What turning it off removes: not what another feature keeps (the snapshot controller).
+  const removed = names.filter(name => {
+    const spec = props.components[name];
+    return (
+      componentActivation(name, spec, base).active && !componentActivation(name, spec, draft).active
+    );
+  });
+  const refusals = notices.filter(n => n.kind === 'refused');
+  const waits = notices.filter(n => n.kind === 'waiting');
 
   let status: React.ReactNode;
   if (enabled !== wasEnabled) {
@@ -146,18 +179,28 @@ function FeatureCard(props: FeatureCardProps) {
             id={id}
             checked={enabled}
             disabled={disabled}
-            onChange={(_, checked) => update(d => setIn(d, path, checked))}
+            onChange={(_, checked) =>
+              // Off where the spec had no value (features.rook on most clusters) leaves none.
+              update(d =>
+                checked || getIn(base, path) !== undefined
+                  ? setIn(d, path, checked)
+                  : setPruned(d, path, undefined)
+              )
+            }
             inputProps={{ 'aria-label': def.label }}
           />
         </Stack>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
           {def.help}
         </Typography>
-        {def.key === 'virt' && wasEnabled && !enabled && (
-          <Alert severity={props.caps.virtUninstallGuard ? 'warning' : 'error'} sx={{ mt: 1.5 }}>
+        {(def.key === 'virt' || def.key === 'rook') && wasEnabled && !enabled && (
+          <Alert
+            severity={def.key === 'rook' || props.caps.virtUninstallGuard ? 'warning' : 'error'}
+            sx={{ mt: 1.5 }}
+          >
             {featureOffConsequence(
               def.key,
-              names.length ? names.join(', ') : 'its components',
+              removed.length ? removed.join(', ') : 'its components',
               props.caps
             )}
           </Alert>
@@ -168,7 +211,19 @@ function FeatureCard(props: FeatureCardProps) {
             <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2 }}>
               {refusals.map(r => (
                 <li key={r.name}>
-                  <Mono>{r.name}</Mono>: <span>{r.reason}</span>
+                  <Mono>{r.name}</Mono>: <span>{r.text}</span>
+                </li>
+              ))}
+            </Stack>
+          </Alert>
+        )}
+        {waits.length > 0 && (
+          <Alert severity="info" sx={{ mt: 1.5 }}>
+            <AlertTitle>Waiting</AlertTitle>
+            <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2 }}>
+              {waits.map(r => (
+                <li key={r.name}>
+                  <Mono>{r.name}</Mono>: <span>{r.text}</span>
                 </li>
               ))}
             </Stack>
@@ -199,6 +254,7 @@ function FeatureCard(props: FeatureCardProps) {
             </Select>
           </FormControl>
         )}
+        {props.children}
       </CardContent>
     </Card>
   );

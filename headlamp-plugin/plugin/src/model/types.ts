@@ -1,6 +1,8 @@
 /*
  * TypeScript mirror of the k4all-operator API (group k4all.magesgate.com,
- * version v1alpha1), as of k4all-operator v0.4.0 (api/v1alpha1/*.go).
+ * version v1alpha1), as of k4all-operator v0.6.0 (api/v1alpha1/*.go, branch
+ * release-v0.6.0): the v2.7.0 settings (features.virt.kubevirt, .hangar,
+ * .metadata, features.rook, nodes) and status.nodes.
  *
  * Every field is optional: the operator's Go types use omitempty, so a field
  * the user never set is simply missing from the object the API server returns.
@@ -65,13 +67,92 @@ export interface ComponentOverride {
   helmArgs?: string[];
 }
 
+/**
+ * KubeVirt settings k4all owns in the KubeVirt CR (operator v0.6.0). A field
+ * left out is not owned: k4all writes nothing for it.
+ */
+export interface KubeVirtSettings {
+  /** Gates k4all turns on, added to the ones others set (union). */
+  featureGates?: string[];
+  /** Gates k4all turns off: removed from featureGates, and on KubeVirt 1.8+ written to disabledFeatureGates. */
+  disabledFeatureGates?: string[];
+  /** StorageClass of the persistent VM state (EFI variables, TPM). */
+  vmStateStorageClass?: string;
+}
+
+export interface HangarSettings {
+  /** Hangar's privileged node agent; absent: the release default (installed with virt). */
+  nodeAgent?: boolean;
+}
+
+export type MetadataScope = 'Labelled' | 'All';
+
+export interface MetadataSettings {
+  enabled?: boolean;
+  /** "" means Labelled. */
+  scope?: MetadataScope | string;
+  tokens?: {
+    audiences?: string[];
+    /** At least 600 (kubelet's minimum for a projected token). */
+    expirationSeconds?: number;
+  };
+  /** A ConfigMap in each VM's namespace with cloud-init vendor-data. */
+  vendorDataConfigMap?: string;
+}
+
+export interface VirtConfig {
+  enabled?: boolean;
+  emulation?: EmulationMode | string;
+  kubevirt?: KubeVirtSettings;
+  hangar?: HangarSettings;
+  metadata?: MetadataSettings;
+}
+
+export type RookSmallCluster = 'Refuse' | 'Allow';
+
+export interface RookConfig {
+  enabled?: boolean;
+  /** Creation input: read once, when k4all creates the CephCluster. */
+  storage?: { deviceFilter?: string };
+  /** "" means Refuse. */
+  smallCluster?: RookSmallCluster | string;
+}
+
+export type CPUManagerPolicy = 'none' | 'static';
+export type TopologyManagerPolicy = 'none' | 'best-effort' | 'restricted' | 'single-numa-node';
+export type TopologyManagerScope = 'container' | 'pod';
+
+export interface KubeletSettings {
+  /** 10 to 1000. */
+  maxPods?: number;
+  cpuManagerPolicy?: CPUManagerPolicy | string;
+  /** A cpuset ("0-1"); required with the static CPU manager. */
+  reservedSystemCPUs?: string;
+  topologyManagerPolicy?: TopologyManagerPolicy | string;
+  topologyManagerScope?: TopologyManagerScope | string;
+}
+
+/** Page sizes the operator accepts in nodes.hugepages. */
+export const HUGEPAGE_SIZES = ['1Gi', '2Mi'] as const;
+export type HugepageSize = (typeof HUGEPAGE_SIZES)[number];
+
+export interface NodesConfig {
+  kubelet?: KubeletSettings;
+  /** Page size ("1Gi", "2Mi") to pages per node; a size left out is not owned. */
+  hugepages?: Partial<Record<HugepageSize | string, number>>;
+  iommu?: boolean;
+  rollout?: { paused?: boolean };
+}
+
 export interface ClusterConfigSpec {
   networking?: {
     cni?: { type?: CNIType | string; cilium?: CiliumConfig };
     firewalld?: { enabled?: boolean };
   };
   features?: {
-    virt?: { enabled?: boolean; emulation?: EmulationMode | string };
+    virt?: VirtConfig;
+    /** A pointer in Go: absent on clusters without Rook. */
+    rook?: RookConfig;
     argocd?: { enabled?: boolean };
     ovsCni?: { enabled?: boolean };
     ovsBridge?: { enabled?: boolean };
@@ -95,7 +176,39 @@ export interface ClusterConfigSpec {
   };
   proxy?: { httpProxy?: string; httpsProxy?: string; noProxy?: string };
   componentOverrides?: Record<string, ComponentOverride>;
+  /** Node settings k4all owns, the same on every node (operator v0.6.0). */
+  nodes?: NodesConfig;
 }
+
+/** status.nodes.rollout.phase values. */
+export type NodeRolloutPhase = 'Idle' | 'Rolling' | 'Paused' | 'Blocked';
+
+export interface NodesStatus {
+  /** Hash of the node settings the nodes must have (spec.nodes and its action class). */
+  settingsHash?: string;
+  rollout?: { phase?: NodeRolloutPhase | string; currentNode?: string; message?: string };
+  perNode?: { name: string; appliedHash?: string; phase?: string; message?: string }[];
+}
+
+/** ClusterConfig condition types besides Reconciled and Degraded (operator v0.6.0). */
+export const CONDITION_POD_NETWORK_OVERLAP = 'PodNetworkOverlap';
+export const CONDITION_KUBEVIRT_SETTINGS = 'KubeVirtSettings';
+export const CONDITION_NODE_SETTINGS_ROLLOUT = 'NodeSettingsRollout';
+export const CONDITION_ROOK_READY = 'RookReady';
+export const CONDITION_METADATA_SERVICE = 'MetadataService';
+
+/** On the KubeVirt CR: the gates k4all added last time (comma-separated), R6 of the v2.7.0 spec. */
+export const KUBEVIRT_GATES_ANNOTATION = 'k4all.magesgate.com/feature-gates';
+export const KUBEVIRT_DISABLED_GATES_ANNOTATION = 'k4all.magesgate.com/disabled-feature-gates';
+
+/** Node annotations of the node-settings rollout (operator and host agent). */
+export const NODE_SETTINGS_TARGET_ANNOTATION = 'k4all.magesgate.com/node-settings-target';
+export const NODE_SETTINGS_APPLIED_ANNOTATION = 'k4all.magesgate.com/node-settings-applied';
+export const NODE_SETTINGS_MESSAGE_ANNOTATION = 'k4all.magesgate.com/node-settings-message';
+
+/** The VM template labels of the metadata service opt-in. */
+export const METADATA_OPT_IN_LABEL = 'k4all.magesgate.com/metadata';
+export const METADATA_SERVICE_ACCOUNT_LABEL = 'k4all.magesgate.com/service-account';
 
 export interface ClusterConfigStatus {
   conditions?: Condition[];
@@ -108,6 +221,8 @@ export interface ClusterConfigStatus {
     ovsBridgeReady?: boolean;
   };
   lastReconcileTime?: string;
+  /** Rollout of spec.nodes; absent until spec.nodes sets something. */
+  nodes?: NodesStatus;
 }
 
 export interface ClusterConfigObject {
@@ -211,6 +326,9 @@ export interface NodeLike {
   status?: {
     addresses?: { type: string; address: string }[];
     conditions?: Condition[];
+    /** cpu, memory, hugepages-1Gi, hugepages-2Mi, pods as quantities ("8", "16303412Ki"). */
+    capacity?: Record<string, string>;
+    allocatable?: Record<string, string>;
     nodeInfo?: {
       kubeletVersion?: string;
       osImage?: string;
@@ -350,4 +468,47 @@ export interface ClusterUpgradeObject {
   metadata: ObjectMeta;
   spec?: ClusterUpgradeSpec;
   status?: ClusterUpgradeStatus;
+}
+
+// ------------------------------------------------- Other APIs the pages read
+
+/** The part of a KubeVirt CR (kubevirt.io/v1) the virtualization page reads. */
+export interface KubeVirtLike {
+  metadata: ObjectMeta & { namespace?: string };
+  spec?: {
+    configuration?: {
+      developerConfiguration?: {
+        featureGates?: string[];
+        disabledFeatureGates?: string[];
+        useEmulation?: boolean;
+      };
+      vmStateStorageClass?: string;
+    };
+  };
+  status?: {
+    observedKubeVirtVersion?: string;
+    targetKubeVirtVersion?: string;
+    phase?: string;
+  };
+}
+
+/** The part of a StorageClass (storage.k8s.io/v1) the pages read. */
+export interface StorageClassLike {
+  metadata: ObjectMeta;
+  provisioner?: string;
+  volumeBindingMode?: string;
+}
+
+/** The part of a CDI StorageProfile (cdi.kubevirt.io/v1beta1): the access modes a StorageClass offers. */
+export interface StorageProfileLike {
+  metadata: ObjectMeta;
+  status?: {
+    claimPropertySets?: { accessModes?: string[]; volumeMode?: string }[];
+  };
+}
+
+/** The part of a CephCluster (ceph.rook.io/v1) the storage page reads. */
+export interface CephClusterLike {
+  metadata: ObjectMeta & { namespace?: string };
+  status?: { phase?: string; message?: string; state?: string; ceph?: { health?: string } };
 }

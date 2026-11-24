@@ -1,6 +1,8 @@
 import {
   buildRows,
   componentActivation,
+  componentNotice,
+  componentNotices,
   displayState,
   releaseVersion,
   removalBlockers,
@@ -8,7 +10,7 @@ import {
   upgradeProgress,
   visibleRows,
 } from './components';
-import { defaultClusterConfig, releaseManifest } from './fixtures';
+import { defaultClusterConfig, releaseManifest, releaseManifestV270 } from './fixtures';
 import { setIn } from './objects';
 import { compareSemver, parseSemver, sameVersion } from './semver';
 import { ClusterConfigSpec, ComponentSpec } from './types';
@@ -85,13 +87,100 @@ describe('componentActivation (port of the operator shouldInstall)', () => {
     expect(componentActivation('traefik', spec(), calico()).active).toBe(true);
   });
 
-  // Operator engine.FeatureEnabled: the rook gate (Cairn) stays off until the
-  // ClusterConfig has a Rook switch; Settings has none to point to yet.
-  it('keeps components behind the rook gate off', () => {
-    expect(componentActivation('cairn', spec({ featureGate: 'rook' }), calico())).toEqual({
+  // Operator v0.6.0 engine.FeatureEnabled: the rook gate is features.rook.enabled
+  // (a pointer: absent on clusters without Rook, and pruned by older CRDs).
+  it('follows features.rook.enabled for the rook gate', () => {
+    const rook = spec({ featureGate: 'rook' });
+    expect(componentActivation('cairn', rook, calico())).toEqual({
       active: false,
-      reason: 'Needs Rook, which this k4all release cannot turn on yet.',
+      feature: 'rook',
+      reason: 'Rook/Ceph storage is off.',
     });
+    const on = setIn(calico(), ['features', 'rook', 'enabled'], true);
+    expect(componentActivation('rook-ceph', rook, on)).toEqual({ active: true, feature: 'rook' });
+  });
+
+  it("leaves Hangar's node agent out when features.virt.hangar.nodeAgent is false", () => {
+    const virt = spec({ featureGate: 'virt' });
+    const on = setIn(calico(), ['features', 'virt', 'enabled'], true);
+    // absent: the release default installs it with virt
+    expect(componentActivation('hangar-node-agent', virt, on).active).toBe(true);
+    expect(
+      componentActivation(
+        'hangar-node-agent',
+        virt,
+        setIn(on, ['features', 'virt', 'hangar', 'nodeAgent'], true)
+      ).active
+    ).toBe(true);
+    expect(
+      componentActivation(
+        'hangar-node-agent',
+        virt,
+        setIn(on, ['features', 'virt', 'hangar', 'nodeAgent'], false)
+      )
+    ).toEqual({
+      active: false,
+      feature: 'virt',
+      reason: "Hangar's node agent is turned off (features.virt.hangar.nodeAgent: false).",
+    });
+    // virt off says so first
+    expect(componentActivation('hangar-node-agent', virt, calico()).reason).toBe(
+      'Virtualization is off.'
+    );
+  });
+
+  it('installs the metadata service only with features.virt.metadata.enabled', () => {
+    const virt = spec({ featureGate: 'virt' });
+    const on = setIn(calico(), ['features', 'virt', 'enabled'], true);
+    expect(componentActivation('k4all-metadata', virt, on)).toEqual({
+      active: false,
+      feature: 'virt',
+      reason: 'The metadata service is off (features.virt.metadata.enabled).',
+    });
+    expect(
+      componentActivation(
+        'k4all-metadata',
+        virt,
+        setIn(on, ['features', 'virt', 'metadata', 'enabled'], true)
+      ).active
+    ).toBe(true);
+  });
+
+  it('installs the snapshot controller with virt or Rook', () => {
+    const sc = spec({ type: 'manifest' });
+    expect(componentActivation('snapshot-controller', sc, calico())).toEqual({
+      active: false,
+      anyOf: ['virt', 'rook'],
+      reason: 'Needs Virtualization or Rook/Ceph storage.',
+    });
+    for (const feature of ['virt', 'rook']) {
+      expect(
+        componentActivation(
+          'snapshot-controller',
+          sc,
+          setIn(calico(), ['features', feature, 'enabled'], true)
+        )
+      ).toEqual({ active: true, anyOf: ['virt', 'rook'] });
+    }
+    // the same with a featureGate on the component: either feature turns it on
+    expect(
+      componentActivation(
+        'snapshot-controller',
+        spec({ featureGate: 'virt' }),
+        setIn(calico(), ['features', 'rook', 'enabled'], true)
+      ).active
+    ).toBe(true);
+  });
+
+  it('says what the kubevirt-manager removal keeps (k4all v2.7.0)', () => {
+    const removed = spec({ type: 'manifest', management: 'Removed', featureGate: 'virt' });
+    const reason = componentActivation('kubevirt-manager', removed, calico()).reason!;
+    expect(reason).toMatch(/^Removed: replaced by Hangar\./);
+    expect(reason).toMatch(/vm-standard and vm-preemptible while VMs or pods name them/);
+    expect(reason).toMatch(/images\.kubevirt-manager\.io/);
+    expect(componentActivation('traefik', spec({ management: 'Removed' }), calico()).reason).toBe(
+      'Removed: the operator uninstalls it.'
+    );
   });
 
   it('leaves Unmanaged and Removed components out', () => {
@@ -175,6 +264,49 @@ describe('buildRows and summarize', () => {
   });
 });
 
+describe('componentNotice', () => {
+  // The prefixes k4all-operator v0.6.0 writes (release_controller.go): a refused
+  // uninstall keeps the component installed; "waiting: " is a neutral wait (D23).
+  it('reads refused uninstalls and waits from the status message', () => {
+    expect(
+      componentNotice({ state: 'Installed', message: 'uninstall refused: 2 VirtualMachines exist' })
+    ).toEqual({ kind: 'refused', text: '2 VirtualMachines exist' });
+    expect(
+      componentNotice({ state: 'Installed', message: 'waiting: fewer than 3 schedulable nodes' })
+    ).toEqual({ kind: 'waiting', text: 'fewer than 3 schedulable nodes' });
+    expect(componentNotice({ state: 'Failed', message: 'helm: timeout' })).toBeUndefined();
+    expect(componentNotice(undefined)).toBeUndefined();
+  });
+
+  it('lists every component with one, by name', () => {
+    const rm = releaseManifestV270();
+    rm.status!.components!.kubevirt = {
+      state: 'Installed',
+      message: 'uninstall refused: VMs exist',
+    };
+    rm.status!.components!['rook-ceph'] = { state: 'Installed', message: 'waiting: 1 node' };
+    expect(componentNotices(rm)).toEqual([
+      { name: 'kubevirt', kind: 'refused', text: 'VMs exist' },
+      { name: 'rook-ceph', kind: 'waiting', text: '1 node' },
+    ]);
+  });
+});
+
+describe('categories', () => {
+  it('files the k4all v2.7.0 components', () => {
+    const rows = buildRows(releaseManifestV270(), calico());
+    const category = (name: string) => rows.find(r => r.name === name)!.category;
+    expect(category('hangar')).toBe('Virtualization');
+    expect(category('hangar-node-agent')).toBe('Virtualization');
+    expect(category('k4all-metadata')).toBe('Virtualization');
+    expect(category('cairn')).toBe('Storage');
+    expect(category('rook-ceph')).toBe('Storage');
+    expect(category('ceph-csi-drivers')).toBe('Storage');
+    expect(category('snapshot-controller')).toBe('Storage');
+    expect(rows.filter(r => r.category === 'Other').map(r => r.name)).toEqual([]);
+  });
+});
+
 describe('displayState', () => {
   it('maps operator states to labels and tones', () => {
     expect(displayState({ state: 'Failed' }, { active: true }).tone).toBe('error');
@@ -197,6 +329,10 @@ describe('removalBlockers', () => {
 
   it('points feature components to the feature switch', () => {
     expect(blockers('kubevirt')).toEqual(['Turn off Virtualization in Settings instead.']);
+    const v270 = buildRows(releaseManifestV270(), calico());
+    expect(removalBlockers(v270.find(r => r.name === 'rook-ceph')!, calico())).toEqual([
+      'Turn off Rook/Ceph storage in Settings > Storage instead.',
+    ]);
   });
 
   it('allows removing a leaf component', () => {

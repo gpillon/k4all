@@ -203,41 +203,50 @@ describe('the Virtualization switch', () => {
   });
 });
 
-describe('settings that need k4all-operator v0.6.0', () => {
+describe('settings that need k4all-operator v0.7.0', () => {
   const components = releaseManifest().spec!.components!;
 
   it('keeps the OVS bridge and the CNI read-only with an older operator', () => {
     const draft = defaultClusterConfig().spec!;
     render(<FeaturesSection {...sectionProps(draft)} components={components} />);
     expect(screen.queryByRole('checkbox', { name: 'OVS bridge on every node' })).toBeNull();
-    expect(screen.getByText('Coming with k4all-operator v0.6.0')).toBeTruthy();
+    expect(screen.getByText('Coming with k4all-operator v0.7.0')).toBeTruthy();
     render(<NetworkingSection {...sectionProps(draft)} nodeConfigs={[]} />);
     expect(screen.queryByRole('combobox', { name: 'CNI' })).toBeNull();
-    expect(screen.getAllByText('Coming with k4all-operator v0.6.0')).toHaveLength(2);
+    expect(screen.getAllByText('Coming with k4all-operator v0.7.0')).toHaveLength(2);
   });
 
-  it('keeps them read-only with k4all-operator v0.5.0, the one k4all v2.4.0 pins', () => {
-    // v0.5.0 cannot switch the CNI of a running cluster: a cni.type change
-    // would re-create every pod network. Plugin 0.1.1 unlocked both here.
-    const draft = defaultClusterConfig().spec!;
-    const caps = capabilitiesOf('v0.5.0');
-    render(<FeaturesSection {...sectionProps(draft, vi.fn(), caps)} components={components} />);
-    expect(screen.queryByRole('checkbox', { name: 'OVS bridge on every node' })).toBeNull();
-    render(<NetworkingSection {...sectionProps(draft, vi.fn(), caps)} nodeConfigs={[]} />);
-    expect(screen.queryByRole('combobox', { name: 'CNI' })).toBeNull();
-    expect(screen.getAllByText('Coming with k4all-operator v0.6.0')).toHaveLength(2);
+  it('keeps them read-only with k4all-operator v0.5.0 and v0.6.0 (k4all v2.4.0, v2.7.0)', () => {
+    // Neither can switch the CNI of a running cluster: a cni.type change
+    // would re-create every pod network. Plugin 0.1.1 unlocked both with
+    // v0.5.0; 0.1.2 waited for v0.6.0, which the v2.7.0 spec left without them.
+    for (const version of ['v0.5.0', 'v0.6.0']) {
+      const draft = defaultClusterConfig().spec!;
+      const caps = capabilitiesOf(version);
+      const features = render(
+        <FeaturesSection {...sectionProps(draft, vi.fn(), caps)} components={components} />
+      );
+      expect(screen.queryByRole('checkbox', { name: 'OVS bridge on every node' })).toBeNull();
+      const networking = render(
+        <NetworkingSection {...sectionProps(draft, vi.fn(), caps)} nodeConfigs={[]} />
+      );
+      expect(screen.queryByRole('combobox', { name: 'CNI' })).toBeNull();
+      expect(screen.getAllByText('Coming with k4all-operator v0.7.0')).toHaveLength(2);
+      features.unmount();
+      networking.unmount();
+    }
   });
 
   it('turns them into controls once the operator has the capability', () => {
     const draft = defaultClusterConfig().spec!;
     const update = vi.fn();
-    const caps = capabilitiesOf('v0.6.0');
+    const caps = capabilitiesOf('v0.7.0');
     render(<FeaturesSection {...sectionProps(draft, update, caps)} components={components} />);
     fireEvent.click(screen.getByRole('checkbox', { name: 'OVS bridge on every node' }));
     expect(applied(update, draft).features?.ovsBridge?.enabled).toBe(false);
     render(<NetworkingSection {...sectionProps(draft, update, caps)} nodeConfigs={[]} />);
     expect(screen.getByRole('combobox', { name: 'CNI' })).toBeTruthy();
-    expect(screen.queryByText('Coming with k4all-operator v0.6.0')).toBeNull();
+    expect(screen.queryByText('Coming with k4all-operator v0.7.0')).toBeNull();
   });
 });
 

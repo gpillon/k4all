@@ -21,9 +21,10 @@ import {
 import { useSnackbar } from 'notistack';
 import React from 'react';
 import { useHistory, useParams } from 'react-router-dom';
+import { KUBEVIRT_MANAGER_KEPT, useKubevirtManagerKept } from '../../api/clusterObjects';
 import { K4allData, useK4allData, usePermissions } from '../../api/hooks';
 import { forceResync } from '../../api/k4allApi';
-import { acceptsValues, buildRows, ComponentRow } from '../../model/components';
+import { acceptsValues, buildRows, ComponentRow, REMOVED_REASON } from '../../model/components';
 import { editorReducer, initialEditorState } from '../../model/editor';
 import { classifyError } from '../../model/errors';
 import { toYaml } from '../../model/textDiff';
@@ -35,6 +36,37 @@ import { useSaveFlow } from '../review/useSaveFlow';
 import { ManagementChip } from './ManagementChip';
 import { ManagementDialog } from './ManagementDialog';
 import { OverridesEditor } from './OverridesEditor';
+
+/** What the kubevirt-manager removal kept: each object, there or gone, checked on the cluster. */
+function KubevirtManagerKept() {
+  const kept = useKubevirtManagerKept(true);
+  const states = kept.value;
+  return (
+    <Panel title="What the removal kept" icon="mdi:package-variant" dense>
+      <Stack spacing={0.75}>
+        {KUBEVIRT_MANAGER_KEPT.map((k, i) => {
+          const state = states?.[i] ?? 'unknown';
+          return (
+            <Stack key={k.what} direction="row" spacing={1} alignItems="center">
+              <TonePill
+                tone={state === 'kept' ? 'warning' : state === 'gone' ? 'success' : 'neutral'}
+                label={state === 'kept' ? 'kept' : state === 'gone' ? 'removed' : 'unknown'}
+              />
+              <Mono>{k.what}</Mono>
+              <Typography variant="body2" color="text.secondary">
+                {k.why}
+              </Typography>
+            </Stack>
+          );
+        })}
+        <Typography variant="caption" color="text.secondary">
+          Kept ones are still in use, or k4all-operator could not tell. Once nothing uses them,
+          delete them by hand if you want them gone; k4all never deletes what may still be in use.
+        </Typography>
+      </Stack>
+    </Panel>
+  );
+}
 
 export function ComponentDetailPage() {
   const { name } = useParams<{ name: string }>();
@@ -247,10 +279,12 @@ function ComponentDetail({ name, data }: { name: string; data: K4allData }) {
         )}
         {row.management === 'Removed' && (
           <Alert severity="warning">
-            k4all-operator uninstalls this component. A future k4all release can set it back to
-            Managed: the release sync only keeps Unmanaged choices.
+            {REMOVED_REASON[row.name] ??
+              'k4all-operator uninstalls this component. A future k4all release can set it back ' +
+                'to Managed: the release sync only keeps Unmanaged choices.'}
           </Alert>
         )}
+        {row.name === 'kubevirt-manager' && row.management === 'Removed' && <KubevirtManagerKept />}
       </Stack>
 
       <Grid container spacing={2}>
