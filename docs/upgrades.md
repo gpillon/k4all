@@ -769,7 +769,7 @@ Otherwise it is False, and its reason says why:
 | `Invalid` | the settings do not fit a node |
 | `UpgradeInProgress` | a ClusterUpgrade or a hop runs |
 | `NodeRefused` | a node's agent refuses the settings |
-| `DrainBlocked` | a budget that allows no disruption keeps a node's drain from ending |
+| `DrainBlocked` | a budget that allows no disruption, or a pod that declares no controller, keeps a node's drain from ending (the message names them; see [Drains that never end](#drains-that-never-end) and [Pods that declare no controller](#pods-that-declare-no-controller)) |
 | `DrainTimeout` | a drain took longer than the timeout; the node stays cordoned and the drain goes on |
 | `NodesSkipped` | the nodes left are older than v2.7.0 |
 | `KubeletConfigMissing` | there is no `kube-system/kubelet-config` |
@@ -943,6 +943,26 @@ ships.
   drain and every namespace deletion, and the ReleaseManifest still said
   Ready. A cluster already hit: see issue #94 for the recovery, which keeps
   the VM disks.
+- From v2.7.0 (k4all-operator v0.6.0) the operator never moves a component
+  below the version it has installed. A release that pins a component
+  lower leaves it as it runs: the component is `Failed` with "not
+  downgrading: the release pins <version>, older than the installed
+  <version> (...)", and the ReleaseManifest has the condition
+  `DowngradeRefused`, which names the components. To allow one downgrade,
+  annotate the ReleaseManifest with
+  `k4all.magesgate.com/allow-downgrade: "<component>=<version>"` (entries
+  separated by commas); an entry allows exactly that version, so a stale
+  annotation allows nothing else. A pin that is not a version (`latest`)
+  is never refused (#77).
+- From v2.7.0 (k4all-operator v0.6.0) an operator that finds more
+  migrations recorded on the ClusterConfig than it knows (an older
+  operator after a newer one) reconciles no component. The ClusterConfig
+  and the ReleaseManifest get the condition `MigrationsAhead`, the
+  ReleaseManifest is not Ready, and the operator does not update itself
+  either: put the newer operator back by hand (#77). The k4all-operator
+  component is refused like any other, so a manifest sync that pins an
+  older operator does not get Ready, and the hop stops in HOLD on the
+  bootstrap node.
 
 ## Ingress: Traefik (v2.4.0)
 
