@@ -364,6 +364,7 @@ const BANNER_TARGET: Record<string, { route: string; label: string }> = {
   nodeSettings: { route: 'k4all-settings-nodes', label: 'Node settings' },
   refused: { route: 'k4all-components', label: 'Components' },
   waiting: { route: 'k4all-components', label: 'Components' },
+  queued: { route: 'k4all-components', label: 'Components' },
 };
 
 function OverviewContent({ data, now }: { data: ReturnType<typeof useK4allData>; now: number }) {

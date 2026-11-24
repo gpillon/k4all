@@ -4,6 +4,7 @@ import {
   componentNotice,
   componentNotices,
   displayState,
+  groupNotices,
   releaseVersion,
   removalBlockers,
   summarize,
@@ -292,6 +293,43 @@ describe('componentNotice', () => {
     ).toEqual({ kind: 'waiting', text: 'fewer than 3 schedulable nodes' });
     expect(componentNotice({ state: 'Failed', message: 'helm: timeout' })).toBeUndefined();
     expect(componentNotice(undefined)).toBeUndefined();
+  });
+
+  it('reads an uninstall queued behind another component (#96) as uninstalling', () => {
+    const status = {
+      state: 'Installed',
+      message: 'uninstall queued: waiting for hangar to be uninstalled first',
+    };
+    expect(componentNotice(status)).toEqual({
+      kind: 'queued',
+      text: 'waiting for hangar to be uninstalled first',
+    });
+    expect(displayState(status, { active: false })).toEqual({
+      label: 'Uninstall queued',
+      tone: 'info',
+      busy: true,
+    });
+  });
+
+  // #96: every member of a held group carries the same message.
+  it('groups the members that carry the same message, naming them only when it does not', () => {
+    const same = 'kubevirt: 2 VirtualMachines exist; cdi: 1 DataVolume exists';
+    expect(
+      groupNotices([
+        { name: 'cdi', kind: 'refused', text: same },
+        { name: 'kubevirt', kind: 'refused', text: same },
+        { name: 'hangar', kind: 'refused', text: same },
+        { name: 'rook-ceph', kind: 'refused', text: 'a CephCluster exists' },
+      ])
+    ).toEqual([
+      { kind: 'refused', names: ['cdi', 'hangar', 'kubevirt'], text: same, label: same },
+      {
+        kind: 'refused',
+        names: ['rook-ceph'],
+        text: 'a CephCluster exists',
+        label: 'rook-ceph: a CephCluster exists',
+      },
+    ]);
   });
 
   it('lists every component with one, by name', () => {

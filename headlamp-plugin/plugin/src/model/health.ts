@@ -3,7 +3,7 @@
  * explain it.
  */
 
-import { componentNotices, ComponentRow, summarize } from './components';
+import { componentNotices, ComponentRow, groupNotices, summarize } from './components';
 import {
   ClusterConfigObject,
   Condition,
@@ -141,27 +141,36 @@ export function clusterHealth({ rm, cc, rows, nodes, now }: HealthInput): Health
 
   // Operator v0.5.7+: a component kept installed though it should go
   // ("uninstall refused: "), v0.6.0: one that waits ("waiting: ").
+  // A held group (#96) carries one message on every member: name it once.
   const notices = componentNotices(rm);
-  const refused = notices.filter(n => n.kind === 'refused');
-  const waiting = notices.filter(n => n.kind === 'waiting');
-  if (refused.length > 0) {
+  const banner = (
+    kind: 'refused' | 'waiting' | 'queued',
+    severity: Banner['severity'],
+    title: (names: string) => string,
+    tail = ''
+  ) => {
+    const list = notices.filter(n => n.kind === kind);
+    if (list.length === 0) {
+      return;
+    }
     banners.push({
-      id: 'refused',
-      severity: 'warning',
-      title: `k4all-operator keeps ${refused.map(n => n.name).join(', ')} installed`,
+      id: kind,
+      severity,
+      title: title(list.map(n => n.name).join(', ')),
       detail:
-        refused.map(n => `${n.name}: ${n.text}`).join('; ') +
-        `. It removes ${refused.length === 1 ? 'it' : 'them'} once that is gone.`,
+        groupNotices(list)
+          .map(g => g.label)
+          .join('; ') + tail.replace('$', list.length === 1 ? 'it' : 'them'),
     });
-  }
-  if (waiting.length > 0) {
-    banners.push({
-      id: 'waiting',
-      severity: 'info',
-      title: `Waiting: ${waiting.map(n => n.name).join(', ')}`,
-      detail: waiting.map(n => `${n.name}: ${n.text}`).join('; '),
-    });
-  }
+  };
+  banner(
+    'refused',
+    'warning',
+    names => `k4all-operator keeps ${names} installed`,
+    '. It removes $ once that is gone.'
+  );
+  banner('queued', 'info', names => `Uninstalling in order: ${names}`);
+  banner('waiting', 'info', names => `Waiting: ${names}`);
 
   // Node settings (operator v0.6.0), from status.nodes.
   const rollout = cc.status?.nodes?.rollout;

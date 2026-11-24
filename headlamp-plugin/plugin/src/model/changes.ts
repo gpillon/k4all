@@ -291,10 +291,13 @@ export function describeChanges(
     }
     const isCilium = leaf.startsWith('networking.cni.cilium');
     const fieldKey = info ? dottedPath(info.path) : leaf;
-    const effect =
+    let effect =
       path[0] === 'nodes' && path[1] !== 'rollout' && nodeAction
         ? NODE_ACTION_EFFECT[nodeAction]
         : FIELD_EFFECT[fieldKey]?.(after);
+    if (effect && fieldKey === 'nodes.kubelet.maxPods' && after === undefined) {
+      effect = { ...effect, consequence: `${MAX_PODS_CLEARED} ${effect.consequence}` };
+    }
     if (effect) {
       add({
         key: fieldKey,
@@ -374,6 +377,10 @@ const NODE_ACTION_EFFECT: Record<NodeAction, Effect> = {
 };
 
 const NEXT_START = 'Applies to the VM pods created from now on (VM starts and live migrations).';
+
+/** What clearing maxPods does with k4all-operator v0.6.0. */
+const MAX_PODS_CLEARED =
+  'k4all removes maxPods from kube-system/kubelet-config: kubelet runs its default, 110 pods per node.';
 const CREATION_INPUT =
   'Read once, when k4all creates the Ceph cluster; once the cluster exists it does nothing ' +
   '(manage the cluster in Cairn).';

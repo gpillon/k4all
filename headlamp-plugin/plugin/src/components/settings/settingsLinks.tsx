@@ -98,11 +98,20 @@ export function SettingsPagesLinks(props: { caps: Capabilities }) {
 
 /**
  * PodNetworkOverlap (operator v0.6.0, Cilium only, report-only): True with
- * what overlaps and what to do, Unknown when the check failed. False says
- * nothing, even with an informational note in its message.
+ * what overlaps and what to do, Unknown when the check failed; False only
+ * shows the informational "Note: …" of its message, when there is one.
  */
 export function PodNetworkOverlapBanner(props: { status?: ClusterConfigStatus }) {
   const c = findCondition(props.status?.conditions, CONDITION_POD_NETWORK_OVERLAP);
+  if (c?.status === 'False') {
+    // No overlap, maybe with a note (the 10.0.0.0/8 pool holding the service network).
+    const at = c.message?.indexOf('Note:') ?? -1;
+    return at < 0 ? null : (
+      <Alert severity="info" sx={{ mb: 2 }}>
+        {c.message!.slice(at)}
+      </Alert>
+    );
+  }
   if (!c || (c.status !== 'True' && c.status !== 'Unknown')) {
     return null;
   }

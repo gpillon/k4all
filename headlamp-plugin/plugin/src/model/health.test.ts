@@ -84,6 +84,32 @@ describe('clusterHealth', () => {
     expect(h.level).toBe('healthy');
   });
 
+  it('names a held group once, and queued uninstalls', () => {
+    const rm = releaseManifest();
+    rm.status!.components!['cert-manager'] = { state: 'Installed', installedVersion: 'v1.21.3' };
+    const held = 'uninstall refused: kubevirt: 2 VirtualMachines exist';
+    rm.status!.components!.kubevirt = { state: 'Installed', message: held };
+    rm.status!.components!.cdi = { state: 'Installed', message: held };
+    rm.status!.components!.hangar = {
+      state: 'Installed',
+      message: 'uninstall queued: waiting for kubevirt to be uninstalled first',
+    };
+    const cc = defaultClusterConfig();
+    const h = clusterHealth(input({ rm, rows: buildRows(rm, cc.spec!) }));
+    expect(h.banners.find(b => b.id === 'refused')).toEqual({
+      id: 'refused',
+      severity: 'warning',
+      title: 'k4all-operator keeps cdi, kubevirt installed',
+      detail: 'kubevirt: 2 VirtualMachines exist. It removes them once that is gone.',
+    });
+    expect(h.banners.find(b => b.id === 'queued')).toEqual({
+      id: 'queued',
+      severity: 'info',
+      title: 'Uninstalling in order: hangar',
+      detail: 'hangar: waiting for kubevirt to be uninstalled first',
+    });
+  });
+
   it('follows the node-settings rollout', () => {
     const cc = defaultClusterConfig();
     cc.spec!.nodes = { iommu: true };

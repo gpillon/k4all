@@ -20,6 +20,7 @@ import {
   ClusterConfigSpec,
   Condition,
   CONDITION_NODE_SETTINGS_ROLLOUT,
+  NODE_TYPE_ANNOTATION,
   NodeConfigObject,
   NodeLike,
   NodesConfig,
@@ -122,8 +123,22 @@ export function changedNodeFields(
   return fields.filter(f => {
     const dot = f.indexOf('.');
     const path = dot < 0 ? [f] : [f.slice(0, dot), f.slice(dot + 1)];
-    return !jsonEqual(getIn(base, path), getIn(draft, path));
+    return !jsonEqual(nodeValue(f, getIn(base, path)), nodeValue(f, getIn(draft, path)));
   });
+}
+
+/**
+ * A node field as the operator reads it (nodesettings.FromSpec): 0 hugepages
+ * and IOMMU false mean what absent does, no kernel argument from k4all.
+ */
+function nodeValue(field: string, value: unknown): unknown {
+  if (field === 'iommu') {
+    return value === true ? true : undefined;
+  }
+  if (field.startsWith('hugepages.')) {
+    return typeof value === 'number' && value > 0 ? value : undefined;
+  }
+  return value;
 }
 
 /** The strongest action of the changed fields; null when none. */
@@ -188,10 +203,34 @@ function olderThan(release: string | undefined, than: string): boolean {
   return !!r && !!t && compareSemver(r, t) < 0;
 }
 
+/** The operator's rollout order by node-type annotation (nodesettings.roleRank). */
+const ROLE_RANK: Record<string, number> = { worker: 0, '': 1, control: 2, bootstrap: 3 };
+
+/**
+ * The nodes in the order the operator gives them the settings
+ * (nodesettings.ordered): workers, nodes without a known node-type
+ * annotation, control planes, the bootstrap node, by name; the node running
+ * k4all-operator last of all, so the operator moves once (k4all#97).
+ */
+export function rolloutOrder<
+  T extends { metadata: { name: string; annotations?: Record<string, string> } }
+>(nodes: T[], operatorNode?: string): T[] {
+  const rank = (n: T) => {
+    if (n.metadata.name === operatorNode) {
+      return Object.keys(ROLE_RANK).length + 1;
+    }
+    return ROLE_RANK[n.metadata.annotations?.[NODE_TYPE_ANNOTATION] ?? ''] ?? ROLE_RANK[''];
+  };
+  return [...nodes].sort(
+    (a, b) =>
+      rank(a) - rank(b) ||
+      (a.metadata.name < b.metadata.name ? -1 : a.metadata.name > b.metadata.name ? 1 : 0)
+  );
+}
+
 /**
  * The plan of a change of spec.nodes, before it is saved: the action, and
- * the nodes in the order the operator goes (bootstrap, control planes,
- * workers, by name; the node running k4all-operator last, as with upgrades).
+ * the nodes in the order the operator goes (rolloutOrder).
  */
 export function rolloutPlan(input: {
   base: ClusterConfigSpec;
@@ -206,12 +245,11 @@ export function rolloutPlan(input: {
   if (!action) {
     return { action, fields, steps: [], singleNode: false, summary: '', downtime: '' };
   }
-  const rows = nodeRows(input.nodes, input.nodeConfigs ?? []);
-  const singleNode = rows.length === 1;
-  const ordered = [
-    ...rows.filter(r => r.name !== input.operatorNode),
-    ...rows.filter(r => r.name === input.operatorNode),
-  ];
+  const rows = new Map(nodeRows(input.nodes, input.nodeConfigs ?? []).map(r => [r.name, r]));
+  const singleNode = rows.size === 1;
+  const ordered = rolloutOrder(input.nodes, input.operatorNode).map(
+    n => rows.get(n.metadata.name)!
+  );
   const steps = ordered.map((r): PlanStep => {
     const skipped = olderThan(r.release, NODE_SETTINGS_RELEASE);
     const notes: string[] = [];
@@ -407,14 +445,27 @@ export function nodeSettingsIssues(spec: ClusterConfigSpec, ctx: { nodes: NodeLi
 
 // ------------------------------------------------------------- The rollout
 
+/** Per-node phases of status.nodes.perNode (operator v0.6.0). */
+export type NodeSettingsPhase = 'Done' | 'Pending' | 'Draining' | 'Applying' | 'Skipped';
+
 export interface RolloutNodeRow {
   name: string;
-  phase?: string;
+  phase?: NodeSettingsPhase | string;
   message?: string;
   /** The node reported the current settings hash applied. */
   applied: boolean;
   current: boolean;
+  /** A pending node: what it does next ("next: <class>"). */
+  next?: NodeAction;
+  /**
+   * The node agent's message while Applying: "waiting: …" is progress,
+   * anything else is a refusal (the rollout is Blocked, NodeRefused).
+   */
+  kind?: 'progress' | 'refusal';
 }
+
+const NEXT_PREFIX = 'next: ';
+const NODE_WAITING_PREFIX = 'waiting: ';
 
 export interface RolloutView {
   phase: string;
@@ -435,13 +486,26 @@ export function rolloutView(cc: ClusterConfigObject): RolloutView {
   const status = cc.status?.nodes;
   const hash = status?.settingsHash;
   const current = status?.rollout?.currentNode;
-  const nodes = (status?.perNode ?? []).map(n => ({
-    name: n.name,
-    phase: n.phase,
-    message: n.message,
-    applied: !!hash && n.appliedHash === hash,
-    current: n.name === current,
-  }));
+  const nodes = (status?.perNode ?? []).map((n): RolloutNodeRow => {
+    const message = n.message || undefined;
+    const next = message?.startsWith(NEXT_PREFIX)
+      ? (message.slice(NEXT_PREFIX.length) as NodeAction)
+      : undefined;
+    const kind = message?.startsWith(NODE_WAITING_PREFIX)
+      ? 'progress'
+      : n.phase === 'Applying' && message
+      ? 'refusal'
+      : undefined;
+    return {
+      name: n.name,
+      phase: n.phase,
+      message,
+      applied: !!hash && n.appliedHash === hash,
+      current: n.name === current,
+      next: next && next in RANK ? next : undefined,
+      kind,
+    };
+  });
   const generation = cc.metadata.generation;
   const observed = cc.status?.observedGeneration;
   return {
@@ -455,6 +519,33 @@ export function rolloutView(cc: ClusterConfigObject): RolloutView {
     nodes,
     condition: findCondition(cc.status?.conditions, CONDITION_NODE_SETTINGS_ROLLOUT),
   };
+}
+
+/** What to do when the NodeSettingsRollout condition holds the rollout, by its reason. */
+const ROLLOUT_GUIDANCE: Record<string, string> = {
+  Invalid:
+    'The settings do not fit the nodes (the message says why): fix them on this page; nothing was applied.',
+  UpgradeInProgress:
+    'A cluster upgrade runs: the rollout goes on by itself once it is done (they never run together).',
+  NodeRefused:
+    'The node refuses the settings (its message says why): fix the settings here, or the node, and the rollout goes on.',
+  DrainBlocked:
+    'Pods on the node can never be evicted (no other node can take them, or a PodDisruptionBudget allows no eviction). ' +
+    'See them with kubectl get pods -A -o wide --field-selector spec.nodeName=<node> and kubectl get pdb -A.',
+  DrainTimeout:
+    'The drain ran out of time (the drain settings of the ClusterUpgrade k4all, Upgrades page): move or delete the pods left, or allow it to go on at the timeout.',
+  NodesSkipped:
+    'Nodes on a k4all release before v2.7.0 get the settings after their upgrade; the others have them.',
+  KubeletConfigMissing:
+    'kube-system/kubelet-config is missing: kubeadm keeps the kubelet settings of every node there. Restore it (kubeadm init phase upload-config kubelet).',
+  KubeletConfigUnreadable:
+    'kube-system/kubelet-config cannot be read as a KubeletConfiguration (the message says why): fix it by hand first.',
+};
+
+/** Guidance for the reason the rollout is held, if it is. */
+export function rolloutGuidance(view: RolloutView): string | undefined {
+  const reason = view.condition?.reason;
+  return reason ? ROLLOUT_GUIDANCE[reason] : undefined;
 }
 
 /** The spec with spec.nodes.rollout.paused set (true) or removed (false), no empty object left. */

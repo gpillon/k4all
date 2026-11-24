@@ -26,6 +26,7 @@ import {
   componentNotice,
   Feature,
   FEATURE_LABEL,
+  groupNotices,
 } from '../../model/components';
 import { applyModeOf, FIELDS } from '../../model/fields';
 import { getIn, setIn, setPruned } from '../../model/objects';
@@ -121,8 +122,9 @@ export function FeatureCard(props: FeatureCardProps) {
       componentActivation(name, spec, base).active && !componentActivation(name, spec, draft).active
     );
   });
-  const refusals = notices.filter(n => n.kind === 'refused');
-  const waits = notices.filter(n => n.kind === 'waiting');
+  // A held group (#96) carries one message on every member: list it once.
+  const refusals = groupNotices(notices.filter(n => n.kind === 'refused'));
+  const waits = groupNotices(notices.filter(n => n.kind !== 'refused'));
 
   let status: React.ReactNode;
   if (enabled !== wasEnabled) {
@@ -210,8 +212,8 @@ export function FeatureCard(props: FeatureCardProps) {
             <AlertTitle>k4all-operator keeps these installed</AlertTitle>
             <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2 }}>
               {refusals.map(r => (
-                <li key={r.name}>
-                  <Mono>{r.name}</Mono>: <span>{r.text}</span>
+                <li key={r.text}>
+                  <Mono>{r.names.join(', ')}</Mono>: <span>{r.text}</span>
                 </li>
               ))}
             </Stack>
@@ -222,8 +224,9 @@ export function FeatureCard(props: FeatureCardProps) {
             <AlertTitle>Waiting</AlertTitle>
             <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2 }}>
               {waits.map(r => (
-                <li key={r.name}>
-                  <Mono>{r.name}</Mono>: <span>{r.text}</span>
+                <li key={`${r.kind}:${r.text}`}>
+                  <Mono>{r.names.join(', ')}</Mono>:{' '}
+                  <span>{r.kind === 'queued' ? `uninstall queued, ${r.text}` : r.text}</span>
                 </li>
               ))}
             </Stack>

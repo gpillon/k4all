@@ -6,6 +6,7 @@ import {
   nodeSettingsIssues,
   parseCpuSet,
   parseQuantity,
+  rolloutGuidance,
   rolloutPlan,
   rolloutView,
   withRolloutPaused,
@@ -63,6 +64,15 @@ describe('the action a change makes the nodes take', () => {
     ).toBe('drain-reboot');
   });
 
+  // The operator's FromSpec: 0 hugepages and iommu false mean what absent does.
+  it('reads 0 hugepages and IOMMU off as absent, like the operator', () => {
+    expect(changedNodeFields({}, { iommu: false, hugepages: { '1Gi': 0 } })).toEqual([]);
+    expect(changedNodeFields({ iommu: true }, {})).toEqual(['iommu']);
+    expect(changedNodeFields({ hugepages: { '2Mi': 0 } }, { hugepages: { '2Mi': 8 } })).toEqual([
+      'hugepages.2Mi',
+    ]);
+  });
+
   it('clearing a field is a change; pausing is not', () => {
     expect(changedNodeFields({ kubelet: { maxPods: 250 } }, {})).toEqual(['kubelet.maxPods']);
     expect(changedNodeFields({}, { rollout: { paused: true } })).toEqual([]);
@@ -78,7 +88,10 @@ describe('rolloutPlan', () => {
   ];
   const base: ClusterConfigSpec = {};
 
-  it('goes one node at a time, bootstrap, control planes, workers, the operator node last', () => {
+  // The operator's order (nodesettings.ordered): workers, nodes without a
+  // node-type annotation, control planes, the bootstrap node, by name; the
+  // node running k4all-operator last of all.
+  it('goes workers, control planes, then the bootstrap node, the operator node last', () => {
     const plan = rolloutPlan({
       base,
       draft: { nodes: { hugepages: { '1Gi': 2 } } },
@@ -86,18 +99,31 @@ describe('rolloutPlan', () => {
       operatorNode: 'cp-1',
     });
     expect(plan.action).toBe('drain-reboot');
-    expect(plan.steps.map(s => s.node)).toEqual(['cp-2', 'w-1', 'cp-1']);
+    expect(plan.steps.map(s => s.node)).toEqual(['w-1', 'cp-2', 'cp-1']);
     expect(plan.steps[0]).toMatchObject({ drain: 'drain', restart: 'reboot' });
     expect(plan.steps[2].note).toMatch(/runs k4all-operator/);
     expect(plan.singleNode).toBe(false);
+    const more = [
+      ...nodes,
+      nodeWithCapacity('w-2', 8, 32, { worker: true, type: 'worker' }),
+      nodeWithCapacity('x-1', 8, 32), // no node-type annotation
+    ];
+    expect(
+      rolloutPlan({
+        base,
+        draft: { nodes: { iommu: true } },
+        nodes: more,
+        operatorNode: 'w-1',
+      }).steps.map(s => s.node)
+    ).toEqual(['w-2', 'x-1', 'cp-2', 'cp-1', 'w-1']);
   });
 
   it('restarts kubelet without a drain for maxPods only', () => {
     const plan = rolloutPlan({ base, draft: { nodes: { kubelet: { maxPods: 250 } } }, nodes });
     expect(plan.steps.map(s => [s.node, s.drain, s.restart])).toEqual([
-      ['cp-1', 'none', 'kubelet'],
-      ['cp-2', 'none', 'kubelet'],
       ['w-1', 'none', 'kubelet'],
+      ['cp-2', 'none', 'kubelet'],
+      ['cp-1', 'none', 'kubelet'],
     ]);
     expect(plan.summary).toMatch(/without a drain/);
   });
@@ -236,6 +262,53 @@ describe('rolloutView', () => {
       ['cp-1', true],
       ['w-1', false],
     ]);
+  });
+
+  it('reads the next action of pending nodes and tells progress from a refusal', () => {
+    const cc = clusterConfigV270();
+    cc.status!.nodes = {
+      settingsHash: 'h',
+      rollout: { phase: 'Blocked', currentNode: 'w-1', message: 'w-1 refuses the settings: x' },
+      perNode: [
+        { name: 'w-1', phase: 'Applying', message: 'reserved CPUs 0-3 do not exist' },
+        { name: 'w-2', phase: 'Applying', message: 'waiting: the upgrade hop ends' },
+        { name: 'cp-1', phase: 'Pending', message: 'next: drain-reboot' },
+        { name: 'old', phase: 'Skipped', message: 'runs k4all v2.6.6' },
+      ],
+    };
+    cc.status!.conditions = [
+      { type: 'NodeSettingsRollout', status: 'False', reason: 'NodeRefused' },
+    ];
+    const rows = rolloutView(cc).nodes;
+    expect(rows.map(r => [r.name, r.kind, r.next])).toEqual([
+      ['w-1', 'refusal', undefined],
+      ['w-2', 'progress', undefined],
+      ['cp-1', undefined, 'drain-reboot'],
+      ['old', undefined, undefined],
+    ]);
+    expect(rolloutGuidance(rolloutView(cc))).toMatch(/refuses the settings/);
+  });
+
+  it('explains every NodeSettingsRollout reason that holds the rollout', () => {
+    for (const reason of [
+      'Invalid',
+      'UpgradeInProgress',
+      'NodeRefused',
+      'DrainBlocked',
+      'DrainTimeout',
+      'NodesSkipped',
+      'KubeletConfigMissing',
+      'KubeletConfigUnreadable',
+    ]) {
+      const cc = clusterConfigV270();
+      cc.status!.conditions = [{ type: 'NodeSettingsRollout', status: 'False', reason }];
+      expect(rolloutGuidance(rolloutView(cc))).toBeTruthy();
+    }
+    for (const reason of ['RolledOut', 'Rolling', 'Paused']) {
+      const cc = clusterConfigV270();
+      cc.status!.conditions = [{ type: 'NodeSettingsRollout', status: 'False', reason }];
+      expect(rolloutGuidance(rolloutView(cc))).toBeUndefined();
+    }
   });
 
   it('is idle without status.nodes', () => {

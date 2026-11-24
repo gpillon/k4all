@@ -32,6 +32,8 @@ import {
   HUGEPAGE_WARN_PERCENT,
   hugepageMath,
   nodeCpus,
+  rolloutGuidance,
+  RolloutNodeRow,
   RolloutPlan,
   RolloutView,
 } from '../../model/nodeSettings';
@@ -97,9 +99,9 @@ export function KubeletSection(props: NodeSectionProps) {
         htmlFor="k4all-max-pods"
         help={
           <>
-            {FIELDS.nodesMaxPods.help} Changing only this restarts kubelet, without a drain. Not
-            set: kubeadm&apos;s value (110, or what an admin set in{' '}
-            <Mono>kube-system/kubelet-config</Mono>) stays.
+            {FIELDS.nodesMaxPods.help} Changing only this restarts kubelet, without a drain. Never
+            set here, what an admin set in <Mono>kube-system/kubelet-config</Mono> stays; cleared
+            after k4all set it, kubelet runs its default (110).
           </>
         }
         badge={<ApplyBadge mode="live" />}
@@ -109,7 +111,7 @@ export function KubeletSection(props: NodeSectionProps) {
             id="k4all-max-pods"
             size="small"
             type="number"
-            placeholder="not set by k4all"
+            placeholder="kubelet default"
             value={kubelet.maxPods ?? ''}
             disabled={disabled}
             onChange={e => set('nodesMaxPods', numberOrUndefined(e.target.value))}
@@ -398,6 +400,32 @@ const PHASE_TONE: Record<string, 'success' | 'info' | 'warning' | 'error' | 'neu
   Blocked: 'error',
 };
 
+/** A node's rollout phase (Done, Pending, Draining, Applying, Skipped) as a pill. */
+function nodePhasePill(n: RolloutNodeRow): {
+  label: string;
+  tone: 'success' | 'info' | 'warning' | 'error' | 'neutral';
+  busy: boolean;
+} {
+  if (n.kind === 'refusal') {
+    return { label: 'refused', tone: 'error', busy: false };
+  }
+  switch (n.phase) {
+    case 'Done':
+      return { label: 'done', tone: 'success', busy: false };
+    case 'Draining':
+      return { label: 'draining', tone: 'info', busy: true };
+    case 'Applying':
+      return { label: 'applying', tone: 'info', busy: true };
+    case 'Skipped':
+      return { label: 'skipped', tone: 'warning', busy: false };
+    case 'Pending':
+      return { label: 'pending', tone: 'neutral', busy: false };
+  }
+  return n.applied
+    ? { label: 'done', tone: 'success', busy: false }
+    : { label: n.phase ?? 'pending', tone: 'neutral', busy: false };
+}
+
 /** The rollout as status.nodes reports it, with Pause / Resume. */
 export function RolloutPanel(props: {
   view: RolloutView;
@@ -406,6 +434,7 @@ export function RolloutPanel(props: {
   onPause: (paused: boolean) => void;
 }) {
   const { view } = props;
+  const guidance = rolloutGuidance(view);
   const pausing = view.paused && view.phase === 'Rolling';
   return (
     <Panel
@@ -450,6 +479,12 @@ export function RolloutPanel(props: {
             {view.condition.message}
           </Typography>
         )}
+        {guidance && (
+          <Alert severity={view.phase === 'Blocked' ? 'warning' : 'info'}>
+            {view.condition?.reason && <AlertTitle>{view.condition.reason}</AlertTitle>}
+            {guidance}
+          </Alert>
+        )}
         {pausing && (
           <Typography variant="body2" color="text.secondary">
             Paused: the node in progress finishes, then the rollout stops.
@@ -472,30 +507,30 @@ export function RolloutPanel(props: {
               <TableHead>
                 <TableRow>
                   <TableCell>Node</TableCell>
-                  <TableCell>Settings</TableCell>
                   <TableCell>Phase</TableCell>
                   <TableCell>Message</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {view.nodes.map(n => (
-                  <TableRow key={n.name} selected={n.current}>
-                    <TableCell>{n.name}</TableCell>
-                    <TableCell>
-                      <TonePill
-                        tone={n.applied ? 'success' : n.current ? 'info' : 'neutral'}
-                        busy={n.current && !n.applied}
-                        label={n.applied ? 'applied' : n.current ? 'in progress' : 'pending'}
-                      />
-                    </TableCell>
-                    <TableCell>{n.phase ?? '—'}</TableCell>
-                    <TableCell>
-                      <Typography variant="body2" color="text.secondary">
-                        {n.message ?? ''}
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {view.nodes.map(n => {
+                  const pill = nodePhasePill(n);
+                  return (
+                    <TableRow key={n.name} selected={n.current}>
+                      <TableCell>{n.name}</TableCell>
+                      <TableCell>
+                        <TonePill tone={pill.tone} busy={pill.busy} label={pill.label} />
+                      </TableCell>
+                      <TableCell>
+                        <Typography
+                          variant="body2"
+                          color={n.kind === 'refusal' ? 'error' : 'text.secondary'}
+                        >
+                          {n.next ? `next: ${ACTION_LABEL[n.next]}` : n.message ?? ''}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </>

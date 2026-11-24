@@ -105,8 +105,14 @@ export function uninstallRefusal(status: ComponentStatus | undefined): string | 
     : undefined;
 }
 
+/**
+ * The start of the message of a component whose uninstall waits for another
+ * member of its group to go first (operator v0.6.0, #96): it is uninstalling.
+ */
+export const UNINSTALL_QUEUED = 'uninstall queued: ';
+
 export interface ComponentNotice {
-  kind: 'refused' | 'waiting';
+  kind: 'refused' | 'waiting' | 'queued';
   /** The operator's message after the prefix, as written. */
   text: string;
 }
@@ -118,9 +124,43 @@ export function componentNotice(status: ComponentStatus | undefined): ComponentN
     return { kind: 'refused', text: refused };
   }
   const message = status?.message;
+  if (message?.startsWith(UNINSTALL_QUEUED)) {
+    return { kind: 'queued', text: message.slice(UNINSTALL_QUEUED.length) };
+  }
   return message?.startsWith(WAITING)
     ? { kind: 'waiting', text: message.slice(WAITING.length) }
     : undefined;
+}
+
+export interface NoticeGroup {
+  kind: ComponentNotice['kind'];
+  /** The components that carry this message, by name. */
+  names: string[];
+  text: string;
+  /** The text, prefixed with the names unless it already names one ("kubevirt: …"). */
+  label: string;
+}
+
+/**
+ * Notices grouped by message: every member of a feature group the operator
+ * holds (#96) carries the same "uninstall refused: <member>: <reason>; …".
+ */
+export function groupNotices(notices: (ComponentNotice & { name: string })[]): NoticeGroup[] {
+  const groups: NoticeGroup[] = [];
+  for (const n of notices) {
+    const g = groups.find(x => x.kind === n.kind && x.text === n.text);
+    if (g) {
+      g.names.push(n.name);
+    } else {
+      groups.push({ kind: n.kind, names: [n.name], text: n.text, label: n.text });
+    }
+  }
+  for (const g of groups) {
+    g.names.sort();
+    const named = g.names.some(name => g.text.startsWith(`${name}: `));
+    g.label = named ? g.text : `${g.names.join(', ')}: ${g.text}`;
+  }
+  return groups;
 }
 
 /** Every component with a refused uninstall or a wait, by name. */
@@ -349,6 +389,9 @@ export function displayState(
   activation: Activation
 ): DisplayState {
   const state = status?.state;
+  if (status?.message?.startsWith(UNINSTALL_QUEUED)) {
+    return { label: 'Uninstall queued', tone: 'info', busy: true };
+  }
   switch (state) {
     case 'Installed':
       return { label: 'Installed', tone: 'success', busy: false };

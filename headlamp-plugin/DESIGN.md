@@ -1,6 +1,6 @@
 # k4all Headlamp plugin: design
 
-Status: built and unit-tested (391 tests), not yet run against a live
+Status: built and unit-tested (401 tests), not yet run against a live
 cluster. Ships from k4all v2.4.0 (k4all-operator v0.5.0, Traefik, Headlamp
 chart 0.46.0, Kubernetes 1.35 and later); plugin 0.2.0 adds the k4all v2.7.0
 pages (k4all-operator v0.6.0, section 3.8-3.10). User guide:
@@ -135,10 +135,14 @@ From operator v0.6.0 the Features panel adds Rook/Ceph (readiness from the
 `RookReady` condition) and links the consoles (Hangar under Virtualization,
 Cairn under Rook). Banners, each with a button to its page: components
 k4all-operator keeps installed though they should go (status message
-`uninstall refused: …`, Components), components that wait (`waiting: …`,
-the neutral wait of v0.6.0), and the node-settings rollout while Rolling,
+`uninstall refused: …`, Components), components uninstalled in order
+behind another member of their group (`uninstall queued: …`, #96; their
+state reads "Uninstall queued"), components that wait (`waiting: …`, the
+neutral wait of v0.6.0), and the node-settings rollout while Rolling,
 Paused or Blocked (`status.nodes`, Node settings). The messages after the
-prefixes are shown as the operator writes them.
+prefixes are shown as the operator writes them; every member of a held
+group carries the same message, which is listed once with the components
+it holds (here and on the feature switches).
 
 Health headline: Healthy, Reconciling (components busy, settings not yet
 applied, Ready not True), Upgrading (node annotation or Ready reason
@@ -281,9 +285,9 @@ Every row carries an apply badge: **Live** (the operator applies it),
 - Above the tabs (plugin 0.2.0): cards linking the three v2.7.0 pages (with
   the capability chip on older operators), and the `PodNetworkOverlap`
   banner: True (warning, the operator's message: what overlaps and what to
-  do) or Unknown (the check failed); False shows nothing, even when its
-  message carries an informational note (a pool containing the service
-  network).
+  do) or Unknown (the check failed); False shows only the `Note: …` of its
+  message, as information, when there is one (a 10.0.0.0/8 pool holding the
+  service network).
 
 ### 3.4 Components
 
@@ -420,9 +424,12 @@ devices (info).
 **The plan**, shown under the form while editing and again in the review:
 the action class from the changed fields (max pods only: kubelet restart,
 no drain; CPU manager, reserved CPUs, topology: drain and kubelet restart;
-hugepages, IOMMU: drain and reboot; the strongest wins), the nodes in order
-(bootstrap, control planes, workers, by name; the node running
-k4all-operator last when its pod can be listed), per node the drain (none,
+hugepages, IOMMU: drain and reboot; the strongest wins; 0 hugepages and
+IOMMU off count as absent, as the operator reads them), the nodes in the
+operator's order (`nodesettings.ordered`: workers, nodes without a known
+`node-type` annotation, control planes, the bootstrap node, by name; the
+node running k4all-operator last of all, when its pod can be listed), per
+node the drain (none,
 drain, or on a single node cordon only) and what follows, nodes on a
 release before v2.7.0 skipped until their hop, and what stops (single
 node: the workloads). The review asks for the acknowledgement on drain
@@ -430,8 +437,16 @@ classes.
 
 **Rollout** (when `status.nodes` or `spec.nodes` exists): phase (Idle,
 Rolling, Pausing, Paused, Blocked), the current node and the message, the
-`NodeSettingsRollout` condition, nodes done of total (applied hash equal to
-`settingsHash`), per node phase and message. Pause / Resume write
+`NodeSettingsRollout` condition with what to do for each reason that holds
+the rollout (Invalid, UpgradeInProgress, NodeRefused, DrainBlocked,
+DrainTimeout, NodesSkipped, KubeletConfigMissing, KubeletConfigUnreadable;
+none for RolledOut, Rolling, Paused), nodes done of total (applied hash
+equal to `settingsHash`), per node the phase (done, pending, draining,
+applying, skipped) and the message: a pending node's `next: <class>` in
+words, and while applying the node agent's message, `waiting: …` as
+progress and anything else as a refusal. Clearing max pods after k4all set
+it gives kubelet's default (110): the field reads "kubelet default" and the
+review says so. Pause / Resume write
 `spec.nodes.rollout.paused` at once (a JSON Patch on the latest object,
 guarded by its generation, rebuilt and sent once more on a conflict), like
 Pause on the Upgrades page.
@@ -907,9 +922,9 @@ tagged, if possible).
 23. **Gate ownership from the annotation, maturity from Hangar's tables**,
     copied verbatim (one source for both consoles); the plugin refuses a GA
     gate in the off list, which the operator would write anyway.
-24. **The node plan is predicted from the changed fields**, in the order the
-    upgrades use (bootstrap, control planes, workers, the operator's node
-    last); once saved the rollout shows the operator's real order and state.
+24. **The node plan is predicted from the changed fields**, in the
+    operator's own order (workers, control planes, the bootstrap node, the
+    operator's node last); once saved the rollout shows its real state.
 25. **Pause / Resume of the node rollout apply at once**, like the upgrade's,
     outside the draft.
 
@@ -973,7 +988,7 @@ npm ci
 npm run lint && npm run tsc && npm test && npm run build   # dist/main.js
 ```
 
-Tests: 391 (vitest, jsdom). Plugin 0.2.0 adds model tests for the gates
+Tests: 401 (vitest, jsdom). Plugin 0.2.0 adds model tests for the gates
 (tables by version, the operator's merge, KubeVirt's on/off rules, owner
 from the annotations, pending, the hot-plug pair, GA refusal), the node
 settings (action classes from the changed fields, the plan and its order,

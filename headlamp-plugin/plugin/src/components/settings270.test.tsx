@@ -310,9 +310,10 @@ describe('PlanView and RolloutPanel', () => {
     render(<PlanView plan={plan} />);
     expect(screen.getByText(/What saving does: drain, reboot/)).toBeTruthy();
     const rows = within(screen.getByRole('table', { name: 'Rollout order' })).getAllByRole('row');
+    // the operator's order: workers first, the bootstrap node last
     expect(rows.slice(1).map(r => within(r).getAllByRole('cell')[1].textContent)).toEqual([
-      'cp-1',
       'w-1',
+      'cp-1',
     ]);
   });
 
@@ -343,7 +344,8 @@ describe('PlanView and RolloutPanel', () => {
       <RolloutPanel view={rolloutView(cc)} canPause busy={false} onPause={onPause} />
     );
     expect(screen.getByText('1 of 2 nodes')).toBeTruthy();
-    expect(screen.getByText('in progress')).toBeTruthy();
+    expect(screen.getByText('draining')).toBeTruthy();
+    expect(screen.getByText('done')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     expect(onPause).toHaveBeenCalledWith(true);
     unmount();
@@ -352,6 +354,58 @@ describe('PlanView and RolloutPanel', () => {
     expect(screen.getByText('Pausing')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
     expect(onPause).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('rollout per node', () => {
+  it('shows the phases, the next action and a refusal', () => {
+    const cc = clusterConfigV270();
+    cc.spec!.nodes = { kubelet: { reservedSystemCPUs: '0-3' } };
+    cc.status!.nodes = {
+      settingsHash: 'h',
+      rollout: { phase: 'Blocked', currentNode: 'w-1', message: 'w-1 refuses the settings' },
+      perNode: [
+        { name: 'w-1', phase: 'Applying', message: 'CPUs 2-3 do not exist' },
+        { name: 'cp-1', phase: 'Pending', message: 'next: drain-restart' },
+      ],
+    };
+    cc.status!.conditions = [
+      {
+        type: 'NodeSettingsRollout',
+        status: 'False',
+        reason: 'NodeRefused',
+        message: 'w-1 refuses',
+      },
+    ];
+    render(<RolloutPanel view={rolloutView(cc)} canPause busy={false} onPause={vi.fn()} />);
+    expect(screen.getByText('refused')).toBeTruthy();
+    expect(screen.getByText('next: drain, kubelet restart')).toBeTruthy();
+    expect(
+      screen.getByText(/refuses the settings/, {
+        selector: '.MuiAlert-message, .MuiAlert-message *',
+      })
+    ).toBeTruthy();
+  });
+});
+
+describe('a held uninstall group (#96)', () => {
+  it('lists the shared message once, with the components it holds', () => {
+    const rm = releaseManifestV270();
+    const held = 'uninstall refused: kubevirt: 2 VirtualMachines exist';
+    for (const name of ['kubevirt', 'cdi', 'hangar']) {
+      rm.status!.components![name] = { state: 'Installed', message: held };
+    }
+    const off = setIn(clusterConfigV270().spec!, ['features', 'virt', 'enabled'], false);
+    render(
+      <FeatureCard
+        {...props(off, vi.fn(), off)}
+        def={{ key: 'virt', icon: 'x', label: 'Virtualization', help: '' }}
+        components={rm.spec!.components!}
+        statuses={rm.status!.components}
+      />
+    );
+    expect(screen.getAllByText('kubevirt: 2 VirtualMachines exist')).toHaveLength(1);
+    expect(screen.getByText('cdi, hangar, kubevirt')).toBeTruthy();
   });
 });
 
@@ -532,8 +586,33 @@ describe('banners', () => {
     expect(screen.getByText('Pod addresses overlap another network')).toBeTruthy();
     expect(screen.getByText(/overlaps 10.0.2.0\/24/)).toBeTruthy();
     unmount();
+    // False without a note says nothing
     const { container } = render(<PodNetworkOverlapBanner status={status('False')} />);
     expect(container.textContent).toBe('');
+  });
+
+  it('shows the note of a False PodNetworkOverlap as information', () => {
+    render(
+      <PodNetworkOverlapBanner
+        status={{
+          conditions: [
+            {
+              type: 'PodNetworkOverlap',
+              status: 'False',
+              reason: 'NoOverlap',
+              message:
+                'no overlap. Note: the pool 10.0.0.0/8 holds the service network 10.96.0.0/16; Cilium never allocates it.',
+            },
+          ],
+        }}
+      />
+    );
+    expect(
+      screen.getByText(
+        'Note: the pool 10.0.0.0/8 holds the service network 10.96.0.0/16; Cilium never allocates it.'
+      )
+    ).toBeTruthy();
+    expect(screen.queryByText('Pod addresses overlap another network')).toBeNull();
   });
 
   it('says which operator brings the settings, read-only meanwhile', () => {

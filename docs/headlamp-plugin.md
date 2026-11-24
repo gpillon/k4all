@@ -172,7 +172,8 @@ to it):
 
 **k4all > Node settings** (`/k4all/settings/nodes`) sets the same values on
 every node. Each field starts "not set by k4all": kubeadm's (or your own)
-value stays until you set it, and clearing it gives it back.
+value stays until you set it. Clearing a value k4all set removes it: for max
+pods, kubelet then runs its default of 110.
 
 | Change | What each node does |
 |---|---|
@@ -180,9 +181,9 @@ value stays until you set it, and clearing it gives it back.
 | CPU manager, reserved CPUs, topology manager | drained, kubelet restarts with a fresh CPU manager state |
 | Hugepages, IOMMU | drained, reboots with the new kernel arguments |
 
-Before you save, the page shows the plan: the nodes in order (bootstrap,
-control planes, workers, the node running k4all-operator last), what each
-does, and what stops. On a single node nothing can move: the node is only
+Before you save, the page shows the plan: the nodes in order (workers,
+control planes, the bootstrap node, the node running k4all-operator last),
+what each does, and what stops. On a single node nothing can move: the node is only
 cordoned and the workloads stop while it restarts or reboots. The hugepages
 row shows how much of each node's memory they take: keep it at 50 % or less;
 k4all-operator refuses more than 80 %. Reserved CPUs must exist on every
@@ -190,7 +191,9 @@ node (each node's CPU count is shown).
 
 After saving, the rollout goes one node at a time; **Pause** stops it before
 the next node (the one in progress finishes), **Resume** goes on. It never
-runs during a cluster upgrade.
+runs during a cluster upgrade. When it is held (a node refuses the settings,
+a drain cannot evict a pod, nodes still on an older release), the page says
+why and what to do.
 
 ## Storage (v2.7.0)
 
