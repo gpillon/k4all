@@ -52,6 +52,9 @@ migrate_json_to_yaml() {
     [ "$api_hostname" = "true" ] && api_hostname="true" || api_hostname="false"
 
     cp "$CONFIG_DEFAULT" "$CONFIG_YAML"
+    # What a new v2.7.0 install gets is not this cluster's: absent, k4all
+    # owns none of it, and nothing changes on the running cluster.
+    yq e 'del(.spec.nodes) | del(.spec.features.virt.metadata) | del(.spec.features.rook)' -i "$CONFIG_YAML"
 
     yq e ".spec.networking.cni.type = \"${cni_type}\"" -i "$CONFIG_YAML"
     yq e ".spec.networking.firewalld.enabled = ${firewalld_enabled}" -i "$CONFIG_YAML"

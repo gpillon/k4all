@@ -13,6 +13,7 @@ import subprocess
 import textwrap
 
 import pytest
+import yaml
 
 from conftest import REPO
 
@@ -255,6 +256,67 @@ def test_a_cluster_restored_from_1x_keeps_what_it_runs(deploy):
 def test_a_new_cluster_or_a_2x_restore_changes_nothing(deploy):
     assert deploy(None) == ["kube-vip"]
     assert deploy("2.6.1") == ["kube-vip"]
+
+
+@pytest.fixture
+def restored_config(tmp_path):
+    """deploy-operator.sh's handling of the installer's ClusterConfig on a
+    restored cluster, on a copy of the image's default config."""
+    if YQ is None:
+        pytest.skip("needs mikefarah yq v4 (K4ALL_TEST_YQ or PATH)")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "yq").symlink_to(YQ)
+    config = tmp_path / "k4all-config.yaml"
+    script = read(DEPLOY_OPERATOR)
+    functions = tmp_path / "functions.sh"
+    functions.write_text(script[script.index("RESTORED_FROM_FILE="):
+                                script.index("create_release_manifest_cr() {")])
+    marker = tmp_path / "restored-from-version"
+    env = dict(os.environ, PATH="%s:%s" % (bin_dir, os.environ["PATH"]),
+               RESTORED_FROM_FILE=str(marker), CONFIG_YAML=str(config))
+
+    def run(version, spec_edit=None):
+        default = yaml.safe_load(read(BOOTC, "overlay", "etc", "k4all-config.yaml.default"))
+        if spec_edit:
+            spec_edit(default["spec"])
+        config.write_text(yaml.safe_dump(default))
+        if version:
+            marker.write_text(version + "\n")
+        proc = subprocess.run(
+            ["bash", "-c", 'source "$1"; drop_new_install_defaults', "bash",
+             str(functions)], env=env, capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        return yaml.safe_load(config.read_text())["spec"]
+
+    return run
+
+
+def test_a_cluster_restored_from_1x_gets_no_new_install_settings(restored_config):
+    # The installer wrote the defaults of a new v2.7.0 install. A cluster
+    # restored from 1.x was not made by this release (its components stay
+    # Unmanaged): maxPods 250 would roll its nodes' kubelets, the metadata
+    # service would come with virt. Absent, k4all owns neither (spec §3).
+    spec = restored_config("1.8.0")
+    assert "nodes" not in spec
+    assert "metadata" not in spec["features"]["virt"]
+    assert spec["features"]["rook"] == {"enabled": False}
+
+
+def test_a_new_cluster_or_a_2x_restore_keeps_the_installer_settings(restored_config):
+    for version in (None, "2.6.1"):
+        spec = restored_config(version)
+        assert spec["nodes"] == {"kubelet": {"maxPods": 250}}
+        assert spec["features"]["virt"]["metadata"] == {"enabled": True, "scope": "Labelled"}
+
+
+def test_a_1x_restore_keeps_what_the_kickstart_chose(restored_config):
+    def chosen(spec):
+        spec["nodes"]["kubelet"]["maxPods"] = 300
+        spec["features"]["virt"]["metadata"]["scope"] = "All"
+    spec = restored_config("1.8.0", chosen)
+    assert spec["nodes"] == {"kubelet": {"maxPods": 300}}
+    assert spec["features"]["virt"]["metadata"] == {"enabled": True, "scope": "All"}
 
 
 # --- LVM --------------------------------------------------------------------
