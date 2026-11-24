@@ -658,10 +658,13 @@ spec:
 
 A field left out is not k4all's. k4all writes nothing for it and leaves what
 kubeadm or the admin set. A cluster that moves to v2.7.0 changes nothing until
-someone sets a field. Clearing a field removes what k4all had written for it,
-and only that. A kubelet field k4all wrote is then removed from
-`kubelet-config`, and the kubelet takes its own default. For maxPods that
-default is 110, not the 250 a k4all cluster gets at install.
+someone sets a field. Clearing a field undoes what k4all had written for it,
+and only that. A kubelet field gets back the value `kubelet-config` had
+before k4all first wrote it: a cluster's maxPods goes back to the 250 kubeadm
+gave it, not to the kubelet's default of 110. A field that was not there
+before goes again. The kernel arguments k4all added are removed. Putting a
+value back is a rollout like any other, with the action class of what
+changes back.
 
 | Setting | Where k4all writes it | What the node does (action class) |
 |---|---|---|
@@ -691,8 +694,9 @@ to each node through annotations on its Node, as for upgrades
 
 On `kube-system/kubelet-config` the operator keeps the annotation
 `k4all.magesgate.com/node-settings`. It is JSON with the settings hash, the
-kubelet fields k4all wrote, the hugepages and IOMMU, and the settings of older
-hashes some node still has. The nodes read the kernel arguments from there.
+kubelet fields k4all wrote, what each of them had before k4all first wrote
+it, the hugepages and IOMMU, and the settings of older hashes some node still
+has. The nodes read the kernel arguments from there.
 
 For each node, the operator:
 
