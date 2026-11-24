@@ -52,6 +52,32 @@ Add the following to your kickstart file:
 | `--firewalld` | flag | off | Enable firewalld (the CNI's ports open once the CNI runs on the node: `k4all-cni-firewalld`) |
 
 The JSON body allows fine-grained configuration that will be merged with defaults.
+It takes every field of the ClusterConfig (from k4all v2.7.0:
+`features.virt.kubevirt`, `features.virt.hangar`, `features.virt.metadata`,
+`features.rook`, `nodes`), checked at install as the ClusterConfig CRD checks
+it: an unknown field, a wrong type, a value out of its range or enum, or a
+broken rule (a gate both on and off, the static CPU manager without
+`reservedSystemCPUs`, a hugepage size other than `1Gi`/`2Mi`) stops the
+install with the field in the message, instead of leaving the node with a
+ClusterConfig its first boot cannot apply. Rook's disks and small-cluster
+policy belong in the same body that turns Rook on: k4all creates the Ceph
+cluster once, right after Rook is installed.
+
+```kickstart
+%addon com_k4all_installer --role=bootstrap --cni=cilium --virt
+{
+  "features": {
+    "virt": { "enabled": true, "hangar": { "nodeAgent": true } },
+    "rook": { "enabled": true, "storage": { "deviceFilter": "^sdb$" } }
+  },
+  "nodes": {
+    "kubelet": { "cpuManagerPolicy": "static", "reservedSystemCPUs": "0-1" },
+    "hugepages": { "1Gi": 4 },
+    "iommu": true
+  }
+}
+%end
+```
 
 ## Configuration Output
 

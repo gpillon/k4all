@@ -104,6 +104,29 @@ mark_restored_components_unmanaged() {
         [.key, .value.type, (.value.namespace // ""), (.value.management // "")] | @tsv' "$RELEASE_MANIFEST")
 }
 
+# The installer writes the ClusterConfig of a new install, with the
+# settings k4all v2.7.0 gives new clusters (spec §3): maxPods 250, the
+# metadata service. A cluster restored from a 1.x backup was not made by
+# this release: maxPods would roll its nodes' kubelets, the metadata
+# service would come with virt. While they are still the installer's
+# defaults they go (absent, k4all owns neither); a value the kickstart
+# chose stays. A new cluster or a 2.x restore (whose backup has its own
+# ClusterConfig) keeps them.
+drop_new_install_defaults() {
+    local from
+    from="$(cat "$RESTORED_FROM_FILE" 2>/dev/null || true)"
+    case "$from" in
+        1.*) ;;
+        *) return 0 ;;
+    esac
+    yq -i 'del(.spec.nodes.kubelet.maxPods | select(. == 250)) |
+        del(.spec.nodes.kubelet | select(length == 0)) |
+        del(.spec.nodes | select(length == 0)) |
+        del(.spec.features.virt.metadata |
+            select(.enabled == true and .scope == "Labelled" and length == 2))' "$CONFIG_YAML"
+    echo "Cluster restored from a k4all ${from} backup: the new-install defaults (maxPods, metadata) left out"
+}
+
 POOL_RENAMED_FILE="${POOL_RENAMED_FILE:-/opt/k4all/thin-pool-renamed-from}"
 
 # setup-lvm.sh renamed a thin pool to vg_data/thin-pool (a kept vg_data from a
@@ -218,6 +241,7 @@ wait_for_api_server
 deploy_operator
 
 # Now apply the CRs
+drop_new_install_defaults
 apply_cluster_config
 mark_restored_components_unmanaged
 update_topolvm_after_pool_rename

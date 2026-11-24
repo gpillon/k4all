@@ -233,6 +233,28 @@ def test_the_default_config_of_this_release_is_left_alone(migrate):
     assert not backup.exists()
 
 
+def test_a_legacy_json_config_gets_none_of_the_new_install_defaults(migrate, tmp_path):
+    # A pre-operator node's /etc/k4all-config.json becomes the YAML config
+    # on top of the image's default. The settings a new v2.7.0 install gets
+    # (maxPods, the metadata service, rook) are not that cluster's: absent,
+    # k4all owns none of them (spec §3), and nothing changes on it.
+    run, config, _ = migrate
+    root = config.parent.parent
+    (root / "usr/local/share/k4all-config.yaml.default").write_text(
+        open(os.path.join(REPO, "bootc", "overlay", "etc", "k4all-config.yaml.default"),
+             encoding="utf-8").read())
+    (root / "etc/k4all-config.json").write_text(
+        '{"features": {"virt": {"enabled": "true"}}, "networking": {"cni": {"type": "cilium"}}}')
+
+    run()
+
+    spec = yaml.safe_load(config.read_text())["spec"]
+    assert spec["features"]["virt"] == {"enabled": True, "emulation": "auto"}
+    assert spec["networking"]["cni"]["type"] == "cilium"
+    assert "nodes" not in spec
+    assert "rook" not in spec["features"]
+
+
 @pytest.mark.parametrize("traefik,key", [(None, "nginx"), ("Managed", "traefik")])
 def test_a_missing_ingress_section_is_the_one_of_the_image(migrate, traefik, key):
     # The bridge's script on an ingress-nginx image (v2.2.4, v2.3.0) adds
