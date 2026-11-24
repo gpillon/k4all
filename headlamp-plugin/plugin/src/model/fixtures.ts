@@ -244,11 +244,16 @@ export function releaseManifestV270(): ReleaseManifestObject {
     featureGate: 'rook',
     dependsOn: ['rook-ceph'],
   };
-  components['snapshot-controller'] = { type: 'manifest', version: 'v8.4.0' };
+  components['snapshot-controller'] = {
+    type: 'manifest',
+    version: 'v8.4.0',
+    featureGate: 'snapshots',
+    dependsOn: ['calico', 'cilium'],
+  };
   components['k4all-metadata'] = {
     type: 'manifest',
     version: 'v0.6.0',
-    featureGate: 'virt',
+    featureGate: 'virtMetadata',
     dependsOn: ['kubevirt'],
   };
   components['k4all-operator'] = { type: 'manifest', version: 'v0.6.0' };

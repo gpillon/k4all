@@ -129,10 +129,17 @@ describe('componentActivation (port of the operator shouldInstall)', () => {
     );
   });
 
-  it('installs the metadata service only with features.virt.metadata.enabled', () => {
-    const virt = spec({ featureGate: 'virt' });
+  // Operator v0.6.0 gate virtMetadata (k4all-metadata): virt and
+  // features.virt.metadata.enabled.
+  it('installs the metadata service with the virtMetadata gate', () => {
+    const gated = spec({ type: 'manifest', featureGate: 'virtMetadata' });
     const on = setIn(calico(), ['features', 'virt', 'enabled'], true);
-    expect(componentActivation('k4all-metadata', virt, on)).toEqual({
+    expect(componentActivation('k4all-metadata', gated, calico())).toEqual({
+      active: false,
+      feature: 'virt',
+      reason: 'Virtualization is off.',
+    });
+    expect(componentActivation('k4all-metadata', gated, on)).toEqual({
       active: false,
       feature: 'virt',
       reason: 'The metadata service is off (features.virt.metadata.enabled).',
@@ -140,14 +147,15 @@ describe('componentActivation (port of the operator shouldInstall)', () => {
     expect(
       componentActivation(
         'k4all-metadata',
-        virt,
+        gated,
         setIn(on, ['features', 'virt', 'metadata', 'enabled'], true)
-      ).active
-    ).toBe(true);
+      )
+    ).toEqual({ active: true, feature: 'virt' });
   });
 
-  it('installs the snapshot controller with virt or Rook', () => {
-    const sc = spec({ type: 'manifest' });
+  // Operator v0.6.0 gate snapshots (snapshot-controller): virt or Rook.
+  it('installs what the snapshots gate covers with virt or Rook', () => {
+    const sc = spec({ type: 'manifest', featureGate: 'snapshots' });
     expect(componentActivation('snapshot-controller', sc, calico())).toEqual({
       active: false,
       anyOf: ['virt', 'rook'],
@@ -162,14 +170,22 @@ describe('componentActivation (port of the operator shouldInstall)', () => {
         )
       ).toEqual({ active: true, anyOf: ['virt', 'rook'] });
     }
-    // the same with a featureGate on the component: either feature turns it on
+    // like the operator, the gate decides, not the name
     expect(
       componentActivation(
         'snapshot-controller',
         spec({ featureGate: 'virt' }),
         setIn(calico(), ['features', 'rook', 'enabled'], true)
       ).active
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it("leaves Hangar's node agent out with nodeAgent false whatever its gate (by name, as the operator)", () => {
+    const off = setIn(calico(), ['features', 'virt', 'hangar', 'nodeAgent'], false);
+    expect(componentActivation('hangar-node-agent', spec({ type: 'manifest' }), off)).toEqual({
+      active: false,
+      reason: "Hangar's node agent is turned off (features.virt.hangar.nodeAgent: false).",
+    });
   });
 
   it('says what the kubevirt-manager removal keeps (k4all v2.7.0)', () => {

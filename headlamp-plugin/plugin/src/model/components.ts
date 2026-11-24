@@ -59,22 +59,18 @@ export function featureEnabled(feature: string, config: ClusterConfigSpec): bool
 }
 
 /**
- * Settings below a feature that leave one of its components out (k4all
- * v2.7.0, operator v0.6.0): the reason, or undefined when it is installed.
+ * Gates of operator v0.6.0 that are not a ClusterConfig feature of their own
+ * (engine.FeatureEnabled): snapshots (the CSI snapshot controller) is on
+ * with virt or Rook; virtMetadata (k4all-metadata) is virt plus
+ * features.virt.metadata.enabled.
  */
-function settingBlocks(name: string, config: ClusterConfigSpec): string | undefined {
-  switch (name) {
-    case 'hangar-node-agent':
-      return config.features?.virt?.hangar?.nodeAgent === false
-        ? "Hangar's node agent is turned off (features.virt.hangar.nodeAgent: false)."
-        : undefined;
-    case 'k4all-metadata':
-      return config.features?.virt?.metadata?.enabled === true
-        ? undefined
-        : 'The metadata service is off (features.virt.metadata.enabled).';
-  }
-  return undefined;
-}
+const ANY_OF_GATE: Record<string, Feature[]> = {
+  snapshots: ['virt', 'rook'],
+};
+const VIRT_METADATA_GATE = 'virtMetadata';
+
+/** Hangar's node agent: the operator leaves it out by name when nodeAgent is false (D6). */
+const HANGAR_NODE_AGENT = 'hangar-node-agent';
 
 /** Why a component the release set to Removed is gone, and what its removal keeps. */
 export const REMOVED_REASON: Record<string, string> = {
@@ -85,12 +81,6 @@ export const REMOVED_REASON: Record<string, string> = {
     'PriorityClasses vm-standard and vm-preemptible while VMs or pods name them, the image ' +
     'catalog CRD images.kubevirt-manager.io while it holds images, and the namespace ' +
     'kubevirt-manager while your objects are in it. VMs are untouched.',
-};
-
-/** Components any of several features installs, whatever their featureGate says. */
-const ANY_OF: Record<string, Feature[]> = {
-  // Hangar's snapshots and ceph-rbd's VolumeSnapshotClass both need it (D13).
-  'snapshot-controller': ['virt', 'rook'],
 };
 
 /**
@@ -227,7 +217,8 @@ export function componentActivation(
       break;
     }
   }
-  const anyOf = ANY_OF[name];
+  const gate = spec.featureGate;
+  const anyOf = gate ? ANY_OF_GATE[gate] : undefined;
   if (anyOf) {
     return anyOf.some(f => featureEnabled(f, config))
       ? { active: true, anyOf }
@@ -237,18 +228,29 @@ export function componentActivation(
           reason: `Needs ${anyOf.map(f => FEATURE_LABEL[f]).join(' or ')}.`,
         };
   }
-  if (spec.featureGate && !componentFeature(name, spec)) {
-    return { active: false, reason: `Unknown feature gate "${spec.featureGate}".` };
+  const feature = gate === VIRT_METADATA_GATE ? 'virt' : componentFeature(name, spec);
+  if (gate && !feature) {
+    return { active: false, reason: `Unknown feature gate "${gate}".` };
   }
-  const feature = componentFeature(name, spec);
-  if (feature) {
-    if (!featureEnabled(feature, config)) {
-      return { active: false, feature, reason: `${FEATURE_LABEL[feature]} is off.` };
-    }
-    const blocked = settingBlocks(name, config);
-    return blocked ? { active: false, feature, reason: blocked } : { active: true, feature };
+  if (feature && !featureEnabled(feature, config)) {
+    return { active: false, feature, reason: `${FEATURE_LABEL[feature]} is off.` };
   }
-  return { active: true };
+  if (gate === VIRT_METADATA_GATE && config.features?.virt?.metadata?.enabled !== true) {
+    return {
+      active: false,
+      feature,
+      reason: 'The metadata service is off (features.virt.metadata.enabled).',
+    };
+  }
+  // By name, whatever the gate, as engine.shouldInstall does.
+  if (name === HANGAR_NODE_AGENT && config.features?.virt?.hangar?.nodeAgent === false) {
+    return {
+      active: false,
+      ...(feature ? { feature } : {}),
+      reason: "Hangar's node agent is turned off (features.virt.hangar.nodeAgent: false).",
+    };
+  }
+  return feature ? { active: true, feature } : { active: true };
 }
 
 /** Whether a component belongs to the feature (its gate, or one of the features that install it). */
