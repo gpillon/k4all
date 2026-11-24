@@ -34,10 +34,18 @@ VALID_HA_TYPES = ("none", "keepalived", "kubevip")
 VALID_EMULATION_VALUES = ("true", "false", "auto")
 VALID_INGRESS_CONTROLLERS = ("traefik", "cilium", "both")
 VALID_INGRESS_IP_MODES = ("auto", "dedicated")
+# The bounds and enums of the ClusterConfig CRD (k4all-operator v0.6.0,
+# api/v1alpha1/clusterconfig_types.go), which a kickstart is checked against.
 VALID_ROOK_SMALL_CLUSTER = ("Refuse", "Allow")
 VALID_METADATA_SCOPES = ("Labelled", "All")
-# The kubelet's pods per node the ClusterConfig accepts (its CRD's bounds).
+VALID_CPU_MANAGER_POLICIES = ("none", "static")
+VALID_TOPOLOGY_MANAGER_POLICIES = ("none", "best-effort", "restricted", "single-numa-node")
+VALID_TOPOLOGY_MANAGER_SCOPES = ("container", "pod")
+HUGEPAGE_SIZES = ("1Gi", "2Mi")
 MAX_PODS_RANGE = (10, 1000)
+MAX_FEATURE_GATES = 64
+MIN_TOKEN_EXPIRATION_SECONDS = 600
+INT32_MAX = 2**31 - 1
 
 # Default cluster configuration -- mirrors ClusterConfigSpec in the CRD.
 # This dict is written as `spec:` inside the ClusterConfig CR YAML, and is
@@ -100,15 +108,44 @@ DEFAULT_CLUSTER_CONFIG = {
     "componentOverrides": {}
 }
 
+# In a schema: a mapping whose keys are free, every value of the type given
+# under this key (nodes.hugepages: page size to a count).
+ANY_KEY = "*"
+
 # ClusterConfig fields a kickstart body may set that new installs leave
-# out; the values give their type. Rook's creation inputs belong here: the
+# out: every field of the CRD (k4all v2.7.0, spec §3), so a kickstart sets
+# at install what the ClusterConfig accepts. The values give their type
+# ([""]: a list of strings). Rook's creation inputs matter most: the
 # CephCluster is created once, right after Rook is installed, so a
 # kickstart that turns Rook on sets its disks (deviceFilter) and its
-# small-cluster policy in the same body.
+# small-cluster policy in the same body. The CRD's bounds, enums and rules
+# are checked by cluster_config.check_crd_rules.
 OPTIONAL_CLUSTER_CONFIG = {
     "features": {
-        "virt": {"hangar": {"nodeAgent": True}},
+        "virt": {
+            "kubevirt": {
+                "featureGates": [""],
+                "disabledFeatureGates": [""],
+                "vmStateStorageClass": "",
+            },
+            "hangar": {"nodeAgent": True},
+            "metadata": {
+                "tokens": {"audiences": [""], "expirationSeconds": 3600},
+                "vendorDataConfigMap": "",
+            },
+        },
         "rook": {"smallCluster": "Refuse", "storage": {"deviceFilter": ""}},
+    },
+    "nodes": {
+        "kubelet": {
+            "cpuManagerPolicy": "",
+            "reservedSystemCPUs": "",
+            "topologyManagerPolicy": "",
+            "topologyManagerScope": "",
+        },
+        "hugepages": {ANY_KEY: 0},
+        "iommu": True,
+        "rollout": {"paused": True},
     },
 }
 
