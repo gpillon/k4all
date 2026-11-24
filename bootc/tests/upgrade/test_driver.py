@@ -5,7 +5,6 @@ import http.client
 import json
 import os
 import subprocess
-import time
 
 import pytest
 import yaml
@@ -614,7 +613,8 @@ def test_pods_are_stopped_with_a_deadline_before_the_reboot(make_host):
     reboot = index_of(host, lambda c: c[:3] == ["bootc", "upgrade",
                                                 "--from-downloaded"])
     assert stop < pods < reboot
-    assert "--timeout=30s stopp" in host.calls[pods][2]
+    # each pod with its grace period, at least 30 s (test_pod_stop.py)
+    assert host.pod_stops == ["30 p-dns\n30 p-etcd\n"]
     assert host.pods_stopped == 1
 
 
@@ -751,28 +751,6 @@ def test_a_kubeadm_download_that_fails_is_a_hold(make_host, error):
     assert "cannot download kubeadm v1.35.10: %s" % type(error).__name__ \
         in st["hold"]["reason"]
     assert host.operator_scale_history == [0, 1]
-
-
-def test_the_stop_script_stops_every_pod_at_once(tmp_path):
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    log = tmp_path / "stopp.log"
-    crictl = bin_dir / "crictl"
-    crictl.write_text("#!/bin/bash\n"
-                      'case " $* " in\n'
-                      '  *" pods -q --state ready "*) printf "p1\\np2\\np3\\n" ;;\n'
-                      '  *" stopp "*) sleep 1; echo "$*" >> %s ;;\n'
-                      "esac\n" % log)
-    crictl.chmod(0o755)
-    env = dict(os.environ, PATH="%s:%s" % (bin_dir, os.environ["PATH"]))
-    started = time.monotonic()
-    subprocess.run(["sh", "-c", ku.STOP_PODS_SCRIPT % 30], env=env, check=True)
-    elapsed = time.monotonic() - started
-    lines = sorted(log.read_text().splitlines())
-    assert [l.split()[-1] for l in lines] == ["p1", "p2", "p3"]
-    assert all("--runtime-endpoint unix:///run/crio/crio.sock --timeout=30s "
-               "stopp" in l for l in lines)
-    assert elapsed < 2.5, "the pods stop in parallel"
 
 
 # --- failures ---------------------------------------------------------------

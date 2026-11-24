@@ -18,3 +18,9 @@ window:
   days: [Sat]
   start: "02:30"
   durationMinutes: 120
+
+# Right before a reboot each pod gets its own terminationGracePeriodSeconds
+# to stop, at least 30 s and at most this many seconds (all pods at once, so
+# the reboot waits at most this long). A VM's virt-launcher pod asks for its
+# VMI's grace period plus 30 s.
+podStopMaxSeconds: 300
