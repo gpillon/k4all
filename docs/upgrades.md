@@ -611,6 +611,194 @@ kubectl get node <name> -o jsonpath='{.metadata.annotations}'
 sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
 ```
 
+### The node that runs the operator (from v2.7.0)
+
+From k4all-operator v0.6.0 (k4all v2.7.0) the node that runs the operator's
+pod goes last among the nodes of its type. The bootstrap node still goes
+first, and the workers still go after the control planes. Its drain never
+counts the operator's own pod. Once every other pod has left the node, the
+operator evicts its own pod, and only then asks for the hop (#97). The next
+pod of its Deployment, the next leader, starts on another node: the
+`draining` label keeps it off this one. It waits for the old pod to go, then
+asks for the hop and drives the rest of the upgrade. Before v0.6.0 the leader
+went down with that node's reboot, and nothing drove the upgrade until the
+node was back.
+
+The operator evicts itself once per drain. It does so only when another node
+is Ready and schedulable, and never a pod put back on the node after the
+drain started. A single node is not drained, so nothing changes there.
+
+The node-settings rollout (next section) and a ClusterUpgrade never change two
+nodes at once. A ClusterUpgrade cordons no node while a node is in its
+node-settings step, and a node-settings step does not start during a
+ClusterUpgrade.
+
+## Node settings (from v2.7.0)
+
+From k4all v2.7.0 (k4all-operator v0.6.0) the ClusterConfig sets node
+settings for every node in `spec.nodes` (#60). The k4all addon writes them on
+its Nodes page (`/k4all/settings/nodes`).
+
+```yaml
+spec:
+  nodes:
+    kubelet:
+      maxPods: 250
+      cpuManagerPolicy: static          # none | static
+      reservedSystemCPUs: "0-1"         # required with static
+      topologyManagerPolicy: single-numa-node
+      topologyManagerScope: container   # container | pod
+    hugepages:
+      "1Gi": 4                          # pages per node; 0 or absent: none
+      "2Mi": 0
+    iommu: true                         # intel_iommu=on / amd_iommu=on, iommu=pt
+    rollout:
+      paused: false                     # stop before the next node
+```
+
+A field left out is not k4all's. k4all writes nothing for it and leaves what
+kubeadm or the admin set. A cluster that moves to v2.7.0 changes nothing until
+someone sets a field. Clearing a field undoes what k4all had written for it,
+and only that. A kubelet field gets back the value `kubelet-config` had
+before k4all first wrote it: a cluster's maxPods goes back to the 250 kubeadm
+gave it, not to the kubelet's default of 110. A field that was not there
+before goes again. The kernel arguments k4all added are removed. Putting a
+value back is a rollout like any other, with the action class of what
+changes back.
+
+| Setting | Where k4all writes it | What the node does (action class) |
+|---|---|---|
+| `kubelet.maxPods` | `kube-system/kubelet-config` | `restart`: kubelet restarts; no drain |
+| `kubelet.cpuManagerPolicy`, `reservedSystemCPUs`, `topologyManagerPolicy`, `topologyManagerScope` | `kube-system/kubelet-config` | `drain-restart`: drained; the CPU and memory manager state files are removed; kubelet restarts |
+| `hugepages`, `iommu` | kernel arguments (`rpm-ostree kargs`) | `drain-reboot`: drained, then reboots |
+
+`kube-system/kubelet-config` is kubeadm's KubeletConfiguration for every
+node. Nodes that join later get it, and `kubeadm upgrade` keeps it. A node
+does what its heaviest change needs. Only maxPods changes: a restart. Hugepages
+change too: a drain and a reboot.
+
+### The rollout
+
+The operator takes one node at a time: the workers, then the control planes,
+then the bootstrap node, and the node that runs the operator last. It talks
+to each node through annotations on its Node, as for upgrades
+([ADR-0011](adr/0011-node-settings-roll-out-through-node-annotations.md)).
+
+| Annotation (`k4all.magesgate.com/…`) | Written by | Meaning |
+|---|---|---|
+| `node-settings-target` | operator | settings hash the node must apply, written once it is drained |
+| `node-settings-applied` | node | settings hash the node applied, once kubelet is Ready with it |
+| `node-settings-message` | node | why the node waits (`waiting: …`) or refuses the settings (any other text); removed with `applied` |
+| `node-settings-step` | operator | the node is in its step, from the cordon to the uncordon (JSON: hash, action class, who cordoned it, the drain's start) |
+| `draining` (a label) | operator | from the cordon to the uncordon, as in an upgrade |
+
+On `kube-system/kubelet-config` the operator keeps the annotation
+`k4all.magesgate.com/node-settings`. It is JSON with the settings hash, the
+kubelet fields k4all wrote, what each of them had before k4all first wrote
+it, the hugepages and IOMMU, and the settings of older hashes some node still
+has. The nodes read the kernel arguments from there.
+
+For each node, the operator:
+
+1. writes the settings into `kubelet-config`, the first time for these
+   settings;
+2. cordons and drains the node, with the drain of a ClusterUpgrade and its
+   `spec.drain` (timeout, PDB settle time, `continueOnTimeout`). A single node
+   is cordoned only: its workloads stop for the reboot. A `restart` needs no
+   drain, so the node is not cordoned. A node whose drain could never end
+   (a budget that allows no disruption) is not cordoned, as in an upgrade;
+3. writes `node-settings-target`;
+4. waits for `node-settings-applied` to name the target and the node to be
+   Ready, then uncordons the node;
+5. waits for the PodDisruptionBudgets to have their healthy pods back, at most
+   the settle time, and goes on with the next node.
+
+On the node, `k4all-upgrade agent` (every minute) sees a target other than
+`applied`:
+
+- While an upgrade hop runs on the node, it waits and says so in the message.
+- It checks that `kubelet-config` carries that settings hash.
+- It refuses, with a message, kernel arguments set by hand that would clash
+  (hand-set hugepages, or another IOMMU value), and a CPU manager or kernel
+  argument change on a node that is not cordoned.
+- It runs `kubeadm upgrade node phase kubelet-config`, which writes
+  `/var/lib/kubelet/config.yaml` from `kubelet-config`.
+- When the CPU manager policy or the reserved CPUs change, it stops kubelet
+  and removes `/var/lib/kubelet/cpu_manager_state` and
+  `memory_manager_state`.
+- It sets or removes only the kernel arguments it added itself. It keeps
+  their list in `/etc/k4all/node-settings.json`, and a kernel argument set by
+  hand is never touched.
+- It restarts kubelet, or reboots when the kernel arguments changed, the same
+  way a hop does: kubelet and the pods are stopped first.
+- Once kubelet is Ready, it writes `node-settings-applied`.
+
+`spec.nodes.rollout.paused: true` stops the rollout before the next node; the
+node in progress finishes. Settings changed while a node drains go to that
+node at once. A node that refuses the settings holds the rollout until the
+cause is fixed or the settings change.
+
+The rollout does not start a node while a ClusterUpgrade is Progressing or
+Paused, or while a node runs a hop (also one started by hand). It does not
+write `kubelet-config` then either. A node in its step finishes.
+
+Nodes on a release older than v2.7.0 have no agent for the settings. They
+are skipped, with a message, and get them after their upgrade. A
+Kubernetes hop's kubeadm also writes `config.yaml` from `kubelet-config`.
+So a node the rollout has not reached yet (paused, or older) can get new CPU
+manager settings without their reset. From v2.7.0 the hop then removes the
+two state files before its reboot, when kubelet and every pod are stopped.
+
+### Status and validation
+
+`status.nodes` of the ClusterConfig shows the rollout:
+
+- `settingsHash`: the settings every node must have;
+- `rollout.phase`: `Idle` (every node has them), `Rolling`, `Paused` or
+  `Blocked`, with `currentNode` and `message`;
+- `perNode`: each node's `appliedHash`, `phase` (`Done`, `Pending`,
+  `Draining`, `Applying`, `Skipped`) and `message`.
+
+The condition `NodeSettingsRollout` is True once every node has the settings.
+Otherwise it is False, and its reason says why:
+
+| Reason | Meaning |
+|---|---|
+| `Rolling` | the rollout is moving |
+| `Paused` | `spec.nodes.rollout.paused` |
+| `Invalid` | the settings do not fit a node |
+| `UpgradeInProgress` | a ClusterUpgrade or a hop runs |
+| `NodeRefused` | a node's agent refuses the settings |
+| `DrainBlocked` | a budget that allows no disruption keeps a node's drain from ending |
+| `DrainTimeout` | a drain took longer than the timeout; the node stays cordoned and the drain goes on |
+| `NodesSkipped` | the nodes left are older than v2.7.0 |
+| `KubeletConfigMissing` | there is no `kube-system/kubelet-config` |
+
+The operator refuses settings that do not fit, before it writes anything, and
+names the node:
+
+- the reserved CPUs must exist on every node and leave CPUs for its pods;
+- the hugepages may take at most 80 % of the smallest node's memory (the
+  addon warns from 50 %);
+- maxPods must fit each node's pod CIDR. That is at most 250 with Cilium's
+  /24 (`cluster-pool-ipv4-mask-size` of `cilium-config`), or each node's
+  `spec.podCIDR`. Calico takes its address blocks on demand, so there is no
+  limit.
+
+To follow a rollout:
+
+```bash
+kubectl get clusterconfig -o jsonpath='{.items[0].status.nodes}'
+kubectl get node <name> -o jsonpath='{.metadata.annotations}'
+sudo cat /etc/k4all/node-settings.json; sudo rpm-ostree kargs
+```
+
+Kernel arguments live in the OS deployment, like
+`/etc/k4all/node-settings.json`. A `bootc rollback` therefore boots the
+previous deployment with the kernel arguments it had. Whether a later
+`bootc upgrade` carries them over is checked on a test VM before v2.7.0
+ships.
+
 ## Things to know
 
 - The ReleaseManifest sync keeps `custom` and `management: Unmanaged` from the
