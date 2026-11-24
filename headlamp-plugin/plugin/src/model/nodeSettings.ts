@@ -20,6 +20,7 @@ import {
   ClusterConfigSpec,
   Condition,
   CONDITION_NODE_SETTINGS_ROLLOUT,
+  NODE_SETTINGS_RECORD_ANNOTATION,
   NODE_TYPE_ANNOTATION,
   NodeConfigObject,
   NodeLike,
@@ -289,6 +290,70 @@ export function rolloutPlan(input: {
   }
   return { action, fields, steps, singleNode, summary: SUMMARY[action], downtime };
 }
+
+// --------------------------------------------- Clearing a kubelet field
+
+/** What each kubelet field k4all owns had before k4all first wrote it: text, or null when absent. */
+export type KubeletPrior = Record<string, string | null>;
+
+/** The "prior" of k4all-operator's record on kube-system/kubelet-config; null when unknown. */
+export function kubeletPriorFrom(
+  cm: { metadata: { annotations?: Record<string, string> } } | null | undefined
+): KubeletPrior | null {
+  const text = cm?.metadata.annotations?.[NODE_SETTINGS_RECORD_ANNOTATION];
+  if (!text) {
+    return null;
+  }
+  try {
+    const prior = (JSON.parse(text) as { prior?: unknown }).prior;
+    return prior && typeof prior === 'object' && !Array.isArray(prior)
+      ? (prior as KubeletPrior)
+      : {};
+  } catch {
+    return null;
+  }
+}
+
+/** kubelet's own defaults of the fields k4all owns. */
+const KUBELET_DEFAULT: Record<string, string> = {
+  maxPods: '110',
+  cpuManagerPolicy: 'none',
+  reservedSystemCPUs: 'none',
+  topologyManagerPolicy: 'none',
+  topologyManagerScope: 'container',
+};
+
+/**
+ * What a cleared kubelet field goes back to (operator v0.6.0): the value
+ * kube-system/kubelet-config had before k4all first wrote it, or none
+ * (kubelet's default) when it had none. Without the record, the rule.
+ */
+export function clearedKubeletValue(
+  field: string,
+  prior: KubeletPrior | null | undefined
+): { label: string; text: string } {
+  const def = KUBELET_DEFAULT[field] ?? 'its default';
+  if (prior && field in prior) {
+    const value = prior[field];
+    return value === null
+      ? {
+          label: `kubelet default (${def})`,
+          text: `${field} was not in kube-system/kubelet-config before k4all set it: it is removed, and kubelet's default (${def}) applies.`,
+        }
+      : {
+          label: `${value} (before k4all)`,
+          text: `kube-system/kubelet-config gets back ${field}: ${value}, the value it had before k4all set it.`,
+        };
+  }
+  return {
+    label: 'value before k4all',
+    text: `kube-system/kubelet-config gets back the value ${field} had before k4all set it (kubelet's default, ${def}, if it had none).`,
+  };
+}
+
+/** The rule, for the form. */
+export const KUBELET_NOT_SET =
+  "Not set by k4all: kube-system/kubelet-config keeps the value it had before k4all set it (kubelet's default, 110 pods, if it had none).";
 
 // ----------------------------------------------------------- Capacity
 

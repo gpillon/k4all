@@ -172,8 +172,11 @@ to it):
 
 **k4all > Node settings** (`/k4all/settings/nodes`) sets the same values on
 every node. Each field starts "not set by k4all": kubeadm's (or your own)
-value stays until you set it. Clearing a value k4all set removes it: for max
-pods, kubelet then runs its default of 110.
+value stays until you set it. Clearing a value k4all set gives back what
+`kube-system/kubelet-config` had before k4all set it (kubelet's default,
+such as 110 pods, if it had none); the page names that value when it can
+read it. A clear rolls out like any change: kubelet restarts for max pods,
+the nodes drain for the CPU and topology settings.
 
 | Change | What each node does |
 |---|---|

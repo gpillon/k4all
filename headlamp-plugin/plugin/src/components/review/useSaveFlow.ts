@@ -13,6 +13,7 @@ import { getClusterConfig, patchClusterConfig } from '../../api/k4allApi';
 import { Capabilities } from '../../model/capabilities';
 import {
   Adjustment,
+  ChangeContext,
   ChangeItem,
   describeChanges,
   reappliedComponents,
@@ -67,7 +68,9 @@ export function useSaveFlow(
   dispatch: React.Dispatch<EditorAction>,
   components: Record<string, ComponentSpec>,
   /** What the installed k4all-operator can do, for what the changes do. */
-  caps?: Capabilities
+  caps?: Capabilities,
+  /** Cluster state for the change texts (what cleared kubelet fields go back to). */
+  changeCtx?: ChangeContext
 ): SaveFlow {
   const [phase, setPhaseState] = React.useState<SavePhase>({ kind: 'idle' });
   const { enqueueSnackbar } = useSnackbar();
@@ -103,7 +106,7 @@ export function useSaveFlow(
           draft,
           ops,
           result,
-          items: describeChanges(base.spec ?? {}, draft, components, caps),
+          items: describeChanges(base.spec ?? {}, draft, components, caps, changeCtx),
           adjustments: serverAdjustments(draft, result.spec),
           reapplied: reappliedComponents(base.spec ?? {}, draft, components),
           rebasedFrom,

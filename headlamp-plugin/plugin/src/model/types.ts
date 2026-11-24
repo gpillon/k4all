@@ -206,6 +206,13 @@ export const NODE_SETTINGS_TARGET_ANNOTATION = 'k4all.magesgate.com/node-setting
 export const NODE_SETTINGS_APPLIED_ANNOTATION = 'k4all.magesgate.com/node-settings-applied';
 export const NODE_SETTINGS_MESSAGE_ANNOTATION = 'k4all.magesgate.com/node-settings-message';
 
+/**
+ * On kube-system/kubelet-config: k4all-operator's record of the node
+ * settings, with what each kubelet field had before k4all first wrote it
+ * ("prior": the value's text, null when the field was not there).
+ */
+export const NODE_SETTINGS_RECORD_ANNOTATION = 'k4all.magesgate.com/node-settings';
+
 /** The VM template labels of the metadata service opt-in. */
 export const METADATA_OPT_IN_LABEL = 'k4all.magesgate.com/metadata';
 export const METADATA_SERVICE_ACCOUNT_LABEL = 'k4all.magesgate.com/service-account';

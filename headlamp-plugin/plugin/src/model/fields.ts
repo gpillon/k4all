@@ -157,7 +157,7 @@ export const FIELDS = {
     group: 'nodes',
     mode: 'live',
     help: 'Pods kubelet runs at most on a node (10 to 1000; at most 250 with Cilium, which gives each node a /24).',
-    fallback: 'kubelet default',
+    fallback: 'not set by k4all',
   },
   nodesCpuManager: {
     path: ['nodes', 'kubelet', 'cpuManagerPolicy'],

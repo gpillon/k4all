@@ -7,7 +7,13 @@ import { Capabilities, CAPABILITY_RELEASE, CAPABILITY_SINCE } from './capabiliti
 import { belongsTo, componentActivation, Feature, FEATURE_LABEL } from './components';
 import { fieldForPath, FIELDS } from './fields';
 import { wantedGates } from './gates';
-import { actionFor, changedNodeFields, NodeAction } from './nodeSettings';
+import {
+  actionFor,
+  changedNodeFields,
+  clearedKubeletValue,
+  KubeletPrior,
+  NodeAction,
+} from './nodeSettings';
 import { dottedPath, getIn, isPlainObject, jsonEqual, Path } from './objects';
 import { activeIngress, effectiveIngress, INGRESS_LABEL } from './settings';
 import { ClusterConfigSpec, ComponentSpec } from './types';
@@ -159,12 +165,19 @@ const LIVE_DANGER: Record<string, string> = {
     'Each node loses connectivity for a few seconds; VMs and pods on OVS networks need the bridge.',
 };
 
+/** Cluster state the change texts can use when the page has it. */
+export interface ChangeContext {
+  /** What each kubelet field had before k4all wrote it (kube-system/kubelet-config's record). */
+  kubeletPrior?: KubeletPrior | null;
+}
+
 export function describeChanges(
   base: ClusterConfigSpec,
   draft: ClusterConfigSpec,
   components: Record<string, ComponentSpec> = {},
   /** What the installed k4all-operator can do; unknown: nothing optional. */
-  caps?: Capabilities
+  caps?: Capabilities,
+  ctx: ChangeContext = {}
 ): ChangeItem[] {
   const items: ChangeItem[] = [];
   const seen = new Set<string>();
@@ -295,15 +308,20 @@ export function describeChanges(
       path[0] === 'nodes' && path[1] !== 'rollout' && nodeAction
         ? NODE_ACTION_EFFECT[nodeAction]
         : FIELD_EFFECT[fieldKey]?.(after);
-    if (effect && fieldKey === 'nodes.kubelet.maxPods' && after === undefined) {
-      effect = { ...effect, consequence: `${MAX_PODS_CLEARED} ${effect.consequence}` };
+    // A cleared kubelet field gets back what kubelet-config had before k4all.
+    const cleared =
+      effect && path[0] === 'nodes' && path[1] === 'kubelet' && after === undefined
+        ? clearedKubeletValue(String(path[2]), ctx.kubeletPrior)
+        : undefined;
+    if (effect && cleared) {
+      effect = { ...effect, consequence: `${cleared.text} ${effect.consequence}` };
     }
     if (effect) {
       add({
         key: fieldKey,
         label: info?.label ?? leaf,
         from: formatValue(before, info?.fallback),
-        to: formatValue(after, info?.fallback),
+        to: cleared ? cleared.label : formatValue(after, info?.fallback),
         ...effect,
       });
       continue;
@@ -378,9 +396,6 @@ const NODE_ACTION_EFFECT: Record<NodeAction, Effect> = {
 
 const NEXT_START = 'Applies to the VM pods created from now on (VM starts and live migrations).';
 
-/** What clearing maxPods does with k4all-operator v0.6.0. */
-const MAX_PODS_CLEARED =
-  'k4all removes maxPods from kube-system/kubelet-config: kubelet runs its default, 110 pods per node.';
 const CREATION_INPUT =
   'Read once, when k4all creates the Ceph cluster; once the cluster exists it does nothing ' +
   '(manage the cluster in Cairn).';

@@ -237,7 +237,7 @@ describe('describeChanges, k4all v2.7.0 settings', () => {
     );
     expect(items.map(i => [i.key, i.label, i.from, i.to, i.severity])).toEqual([
       ['nodes.hugepages.1Gi', '1 GiB hugepages per node', 'not set by k4all', '2', 'danger'],
-      ['nodes.kubelet.maxPods', 'Max pods per node', 'kubelet default', '250', 'danger'],
+      ['nodes.kubelet.maxPods', 'Max pods per node', 'not set by k4all', '250', 'danger'],
     ]);
     expect(items[0].consequence).toMatch(/drained and reboots/);
     // maxPods alone: kubelet restarts without a drain, a warning
@@ -249,11 +249,18 @@ describe('describeChanges, k4all v2.7.0 settings', () => {
     );
     expect(only).toMatchObject({ severity: 'warning' });
     expect(only.consequence).toMatch(/without a drain/);
-    // clearing it: kubelet's own default
-    const set = setIn(v270(), ['nodes', 'kubelet', 'maxPods'], 250);
+    // clearing it: kubelet-config gets back what it had before k4all
+    const set = setIn(v270(), ['nodes', 'kubelet', 'maxPods'], 200);
     const [cleared] = describeChanges(set, v270(), c270(), caps);
-    expect(cleared).toMatchObject({ from: '250', to: 'kubelet default' });
-    expect(cleared.consequence).toMatch(/kubelet runs its default, 110 pods per node/);
+    expect(cleared).toMatchObject({ from: '200', to: 'value before k4all', severity: 'warning' });
+    expect(cleared.consequence).toMatch(
+      /^kube-system\/kubelet-config gets back the value maxPods had before k4all set it .*without a drain/
+    );
+    const [known] = describeChanges(set, v270(), c270(), caps, {
+      kubeletPrior: { maxPods: '250' },
+    });
+    expect(known).toMatchObject({ to: '250 (before k4all)' });
+    expect(known.consequence).toMatch(/gets back maxPods: 250/);
   });
 
   it('labels the virtualization and storage fields', () => {

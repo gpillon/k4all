@@ -290,6 +290,16 @@ describe('KubeletSection and MemorySection', () => {
     expect(applied(clear, set).nodes).toBeUndefined();
   });
 
+  it('says what a cleared field goes back to', () => {
+    const set = setIn(clusterConfigV270().spec!, ['nodes', 'kubelet', 'maxPods'], 200);
+    const cleared = clusterConfigV270().spec!;
+    render(<KubeletSection {...nodeProps(cleared)} base={set} kubeletPrior={{ maxPods: '250' }} />);
+    expect(screen.getByText(/gets back maxPods: 250/)).toBeTruthy();
+    expect(
+      screen.getAllByText(/keeps the value it had before k4all set it/).length
+    ).toBeGreaterThan(0);
+  });
+
   it('does the memory math per node and warns above 50 %', () => {
     const draft = setIn(clusterConfigV270().spec!, ['nodes', 'hugepages'], { '1Gi': 5 });
     render(<MemorySection {...nodeProps(draft)} />);

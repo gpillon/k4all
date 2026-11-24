@@ -1,6 +1,6 @@
 # k4all Headlamp plugin: design
 
-Status: built and unit-tested (401 tests), not yet run against a live
+Status: built and unit-tested (405 tests), not yet run against a live
 cluster. Ships from k4all v2.4.0 (k4all-operator v0.5.0, Traefik, Headlamp
 chart 0.46.0, Kubernetes 1.35 and later); plugin 0.2.0 adds the k4all v2.7.0
 pages (k4all-operator v0.6.0, section 3.8-3.10). User guide:
@@ -444,9 +444,16 @@ none for RolledOut, Rolling, Paused), nodes done of total (applied hash
 equal to `settingsHash`), per node the phase (done, pending, draining,
 applying, skipped) and the message: a pending node's `next: <class>` in
 words, and while applying the node agent's message, `waiting: …` as
-progress and anything else as a refusal. Clearing max pods after k4all set
-it gives kubelet's default (110): the field reads "kubelet default" and the
-review says so. Pause / Resume write
+progress and anything else as a refusal.
+
+Clearing a kubelet field is a change like any other (max pods: restart; CPU
+or topology fields: drain and restart). The operator puts back what
+`kube-system/kubelet-config` had before k4all first wrote the field, or
+removes the field when it had none (kubelet's default: 110 pods, CPU
+manager none, ...). It records those values in the ConfigMap's annotation
+`k4all.magesgate.com/node-settings` (`prior`); the page reads it when the
+user may, and the field's note and the review name the value it goes back
+to ("250 (before k4all)", "kubelet default (110)"), else the rule. Pause / Resume write
 `spec.nodes.rollout.paused` at once (a JSON Patch on the latest object,
 guarded by its generation, rebuilt and sent once more on a conflict), like
 Pause on the Upgrades page.
@@ -796,7 +803,7 @@ therefore wrapped in `K4allLive` (`src/api/live.tsx`, logic in
 | Start, pause, resume, stop, retry upgrades; upgrade settings | `patch` on `clusterupgrades`, name `k4all` |
 | Ingresses on the nginx class | `list,watch` on `ingresses` (`networking.k8s.io`); "Switch to traefik": `patch` on `ingresses`, and on `services` for backend-protocol HTTPS |
 | v2.7.0 pages | `list` on `kubevirts` (`kubevirt.io`), `storageclasses`, `storageprofiles` (`cdi.kubevirt.io`), `cephclusters` (`ceph.rook.io`); `get` on the kubevirt-manager leftovers; saving and Pause / Resume: `patch` on `clusterconfigs` |
-| Optional | `list` pods in `k4all-operator-system` (the operator's node, last in the plan), `list` pods and `get` pods/proxy in `hangar-system` (the disks Ceph would take); without them the pages say "unknown" |
+| Optional | `list` pods in `k4all-operator-system` (the operator's node, last in the plan), `list` pods and `get` pods/proxy in `hangar-system` (the disks Ceph would take), `get` the ConfigMap `kube-system/kubelet-config` (what a cleared kubelet field goes back to); without them the pages say "unknown" or give the rule |
 
 The plugin asks the API server (SelfSubjectAccessReview via
 `getAuthorization('patch')`, with the name `k4all` for the ClusterUpgrade)
@@ -988,7 +995,7 @@ npm ci
 npm run lint && npm run tsc && npm test && npm run build   # dist/main.js
 ```
 
-Tests: 401 (vitest, jsdom). Plugin 0.2.0 adds model tests for the gates
+Tests: 405 (vitest, jsdom). Plugin 0.2.0 adds model tests for the gates
 (tables by version, the operator's merge, KubeVirt's on/off rules, owner
 from the annotations, pending, the hot-plug pair, GA refusal), the node
 settings (action classes from the changed fields, the plan and its order,

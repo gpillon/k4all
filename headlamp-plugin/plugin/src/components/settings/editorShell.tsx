@@ -11,7 +11,7 @@ import { Alert, Box, Button, Paper, Slide, Stack, Typography } from '@mui/materi
 import React from 'react';
 import { K4allData, Permissions, usePermissions } from '../../api/hooks';
 import { Capabilities, capabilities } from '../../model/capabilities';
-import { ChangeItem, describeChanges } from '../../model/changes';
+import { ChangeContext, ChangeItem, describeChanges } from '../../model/changes';
 import {
   EditorAction,
   editorReducer,
@@ -47,7 +47,7 @@ export interface SettingsEditor {
 }
 
 /** One edit session on the ClusterConfig of data, following the watch while clean. */
-export function useSettingsEditor(data: K4allData): SettingsEditor {
+export function useSettingsEditor(data: K4allData, changeCtx?: ChangeContext): SettingsEditor {
   const perms = usePermissions();
   const [state, dispatch] = React.useReducer(editorReducer, initialEditorState);
   const cc = data.cc;
@@ -58,7 +58,7 @@ export function useSettingsEditor(data: K4allData): SettingsEditor {
   }, [cc?.metadata.resourceVersion]);
   const components = data.rm?.spec?.components ?? {};
   const caps = capabilities(data.rm);
-  const flow = useSaveFlow(state, dispatch, components, caps);
+  const flow = useSaveFlow(state, dispatch, components, caps, changeCtx);
   const base = state.base?.spec ?? {};
   const dirty = isDirty(state);
   const readOnly = !perms.checking && !perms.patchClusterConfig;
@@ -79,7 +79,7 @@ export function useSettingsEditor(data: K4allData): SettingsEditor {
     draft: state.draft,
     update,
     dirty,
-    items: dirty ? describeChanges(base, state.draft, components, caps) : [],
+    items: dirty ? describeChanges(base, state.draft, components, caps, changeCtx) : [],
     status: state.latest?.status ?? state.base?.status,
   };
 }

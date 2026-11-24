@@ -8,7 +8,7 @@
 import { Box, Grid, Stack } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import React from 'react';
-import { useOperatorNode } from '../../api/clusterObjects';
+import { useKubeletPrior, useOperatorNode } from '../../api/clusterObjects';
 import { K4allData, useK4allData } from '../../api/hooks';
 import { setNodeRolloutPaused } from '../../api/k4allApi';
 import { classifyError } from '../../model/errors';
@@ -31,7 +31,8 @@ export function NodeSettingsPage() {
 }
 
 function NodeSettingsEditor({ data }: { data: K4allData }) {
-  const editor = useSettingsEditor(data);
+  const kubeletPrior = useKubeletPrior();
+  const editor = useSettingsEditor(data, { kubeletPrior });
   const operatorNode = useOperatorNode();
   const { enqueueSnackbar } = useSnackbar();
   const [pausing, setPausing] = React.useState(false);
@@ -112,7 +113,7 @@ function NodeSettingsEditor({ data }: { data: K4allData }) {
         {editor.dirty && <PlanView plan={plan} />}
         <Grid container spacing={2}>
           <Grid item xs={12} lg={6}>
-            <KubeletSection {...sectionProps} />
+            <KubeletSection {...sectionProps} kubeletPrior={kubeletPrior} />
           </Grid>
           <Grid item xs={12} lg={6}>
             <MemorySection {...sectionProps} />

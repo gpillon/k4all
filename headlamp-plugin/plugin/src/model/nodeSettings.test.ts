@@ -2,7 +2,9 @@ import { clusterConfigV270, nodeWithCapacity } from './fixtures';
 import {
   actionFor,
   changedNodeFields,
+  clearedKubeletValue,
   hugepageMath,
+  kubeletPriorFrom,
   nodeSettingsIssues,
   parseCpuSet,
   parseQuantity,
@@ -71,6 +73,18 @@ describe('the action a change makes the nodes take', () => {
     expect(changedNodeFields({ hugepages: { '2Mi': 0 } }, { hugepages: { '2Mi': 8 } })).toEqual([
       'hugepages.2Mi',
     ]);
+  });
+
+  it('clearing a kubelet field is a change like any other', () => {
+    expect(actionFor(changedNodeFields({ kubelet: { maxPods: 250 } }, {}))).toBe('restart');
+    expect(
+      actionFor(
+        changedNodeFields({ kubelet: { cpuManagerPolicy: 'static', reservedSystemCPUs: '0' } }, {})
+      )
+    ).toBe('drain-restart');
+    expect(actionFor(changedNodeFields({ kubelet: { topologyManagerScope: 'pod' } }, {}))).toBe(
+      'drain-restart'
+    );
   });
 
   it('clearing a field is a change; pausing is not', () => {
@@ -322,5 +336,51 @@ describe('withRolloutPaused', () => {
     expect(withRolloutPaused(spec, true).nodes).toEqual({ iommu: true, rollout: { paused: true } });
     expect(withRolloutPaused(withRolloutPaused(spec, true), false).nodes).toEqual({ iommu: true });
     expect(withRolloutPaused({ nodes: { rollout: { paused: true } } }, false)).toEqual({});
+  });
+});
+
+// k4all-operator v0.6.0 records in kube-system/kubelet-config's annotation
+// k4all.magesgate.com/node-settings what each kubelet field had before k4all
+// first wrote it (prior: the text, null when absent) and puts it back on clear.
+describe('what a cleared kubelet field goes back to', () => {
+  const cm = (annotation?: string) => ({
+    metadata: {
+      name: 'kubelet-config',
+      annotations: annotation ? { 'k4all.magesgate.com/node-settings': annotation } : {},
+    },
+  });
+
+  it('reads the prior values from the record', () => {
+    const prior = kubeletPriorFrom(
+      cm(
+        JSON.stringify({
+          hash: 'h',
+          kubelet: { maxPods: 200 },
+          prior: { maxPods: '250', cpuManagerPolicy: null },
+        })
+      )
+    );
+    expect(prior).toEqual({ maxPods: '250', cpuManagerPolicy: null });
+    expect(kubeletPriorFrom(cm('{not json'))).toBeNull();
+    expect(kubeletPriorFrom(cm())).toBeNull();
+    expect(kubeletPriorFrom(null)).toBeNull();
+  });
+
+  it('says what the field goes back to: the prior value, kubelet default, or the rule', () => {
+    expect(clearedKubeletValue('maxPods', { maxPods: '250' })).toEqual({
+      label: '250 (before k4all)',
+      text: 'kube-system/kubelet-config gets back maxPods: 250, the value it had before k4all set it.',
+    });
+    expect(clearedKubeletValue('maxPods', { maxPods: null })).toEqual({
+      label: 'kubelet default (110)',
+      text: "maxPods was not in kube-system/kubelet-config before k4all set it: it is removed, and kubelet's default (110) applies.",
+    });
+    expect(clearedKubeletValue('cpuManagerPolicy', { cpuManagerPolicy: null }).label).toBe(
+      'kubelet default (none)'
+    );
+    expect(clearedKubeletValue('maxPods', null)).toEqual({
+      label: 'value before k4all',
+      text: "kube-system/kubelet-config gets back the value maxPods had before k4all set it (kubelet's default, 110, if it had none).",
+    });
   });
 });

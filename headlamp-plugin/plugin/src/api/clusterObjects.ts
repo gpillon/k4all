@@ -12,6 +12,7 @@
 
 import { ApiProxy, Utils } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
+import { KubeletPrior, kubeletPriorFrom } from '../model/nodeSettings';
 import { DiskInfo } from '../model/storage';
 import {
   CephClusterLike,
@@ -139,6 +140,23 @@ interface PodLike {
 export function useOperatorNode(): string | undefined {
   const pods = useObjectList<PodLike>(OBJECT_PATHS.operatorPods);
   return (pods.value ?? []).find(p => p.status?.phase === 'Running')?.spec?.nodeName;
+}
+
+/**
+ * What each kubelet field k4all owns had before k4all wrote it, from the
+ * record on kube-system/kubelet-config; null when unknown (no record, or
+ * the user may not read ConfigMaps in kube-system).
+ */
+export function useKubeletPrior(): KubeletPrior | null {
+  const cm = usePolled<{ metadata: { annotations?: Record<string, string> } } | null>(
+    'kubelet-config',
+    () =>
+      ApiProxy.request('/api/v1/namespaces/kube-system/configmaps/kubelet-config') as Promise<{
+        metadata: { annotations?: Record<string, string> };
+      }>,
+    null
+  );
+  return kubeletPriorFrom(cm.value);
 }
 
 export interface NodeDisks {

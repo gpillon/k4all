@@ -19,7 +19,8 @@
 # node k4all-operator runs on (list pods in k4all-operator-system, for the
 # node-settings rollout order) and the disks of Hangar's node agent (list
 # pods and get pods/proxy in hangar-system; Hangar's hangar-hardware-admin
-# role has them).
+# role has them), and the ConfigMap kube-system/kubelet-config (what a
+# cleared kubelet field goes back to; the page then gives the rule).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

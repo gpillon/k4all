@@ -28,9 +28,12 @@ import React from 'react';
 import { FieldId, FIELDS } from '../../model/fields';
 import {
   ACTION_LABEL,
+  clearedKubeletValue,
   HUGEPAGE_REFUSE_PERCENT,
   HUGEPAGE_WARN_PERCENT,
   hugepageMath,
+  KUBELET_NOT_SET,
+  KubeletPrior,
   nodeCpus,
   rolloutGuidance,
   RolloutNodeRow,
@@ -84,9 +87,31 @@ function numberOrUndefined(text: string): number | undefined {
   return v === '' ? undefined : Number(v);
 }
 
-export function KubeletSection(props: NodeSectionProps) {
+/** Under a kubelet field cleared in the draft: what kubelet-config gets back. */
+function ClearedNote(props: {
+  field: string;
+  base: NodeSectionProps['base'];
+  draft: NodeSectionProps['draft'];
+  prior?: KubeletPrior | null;
+}) {
+  const before = (props.base.nodes?.kubelet as Record<string, unknown> | undefined)?.[props.field];
+  const after = (props.draft.nodes?.kubelet as Record<string, unknown> | undefined)?.[props.field];
+  if (before === undefined || after !== undefined) {
+    return null;
+  }
+  return (
+    <Alert severity="info" sx={{ py: 0 }}>
+      {clearedKubeletValue(props.field, props.prior).text}
+    </Alert>
+  );
+}
+
+export function KubeletSection(props: NodeSectionProps & { kubeletPrior?: KubeletPrior | null }) {
   const { draft, update, disabled, issues } = props;
   const kubelet = draft.nodes?.kubelet ?? {};
+  const cleared = (field: string) => (
+    <ClearedNote field={field} base={props.base} draft={draft} prior={props.kubeletPrior} />
+  );
   const set = (field: FieldId, value: unknown) =>
     update(d => setPruned(d, FIELDS[field].path, value));
   const cpus = props.nodes
@@ -94,14 +119,16 @@ export function KubeletSection(props: NodeSectionProps) {
     .sort((a, b) => a.node.localeCompare(b.node));
   return (
     <Panel title="kubelet" icon="mdi:cog-outline">
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+        {KUBELET_NOT_SET}
+      </Typography>
       <SettingRow
         label={FIELDS.nodesMaxPods.label}
         htmlFor="k4all-max-pods"
         help={
           <>
-            {FIELDS.nodesMaxPods.help} Changing only this restarts kubelet, without a drain. Never
-            set here, what an admin set in <Mono>kube-system/kubelet-config</Mono> stays; cleared
-            after k4all set it, kubelet runs its default (110).
+            {FIELDS.nodesMaxPods.help} Changing only this, or clearing it, restarts kubelet, without
+            a drain.
           </>
         }
         badge={<ApplyBadge mode="live" />}
@@ -111,7 +138,7 @@ export function KubeletSection(props: NodeSectionProps) {
             id="k4all-max-pods"
             size="small"
             type="number"
-            placeholder="kubelet default"
+            placeholder="not set by k4all"
             value={kubelet.maxPods ?? ''}
             disabled={disabled}
             onChange={e => set('nodesMaxPods', numberOrUndefined(e.target.value))}
@@ -119,7 +146,12 @@ export function KubeletSection(props: NodeSectionProps) {
             sx={{ width: 200 }}
           />
         }
-        messages={<FieldMessages issues={issues} field="maxPods" />}
+        messages={
+          <Stack spacing={0.75}>
+            {cleared('maxPods')}
+            <FieldMessages issues={issues} field="maxPods" />
+          </Stack>
+        }
       />
       <SettingRow
         label={FIELDS.nodesCpuManager.label}
@@ -136,6 +168,7 @@ export function KubeletSection(props: NodeSectionProps) {
             onChange={v => set('nodesCpuManager', v)}
           />
         }
+        messages={cleared('cpuManagerPolicy')}
       />
       <SettingRow
         label={FIELDS.nodesReservedCPUs.label}
@@ -178,6 +211,7 @@ export function KubeletSection(props: NodeSectionProps) {
                 />
               ))}
             </Stack>
+            {cleared('reservedSystemCPUs')}
             <FieldMessages issues={issues} field="reservedSystemCPUs" />
           </Stack>
         }
@@ -197,7 +231,12 @@ export function KubeletSection(props: NodeSectionProps) {
             onChange={v => set('nodesTopologyPolicy', v)}
           />
         }
-        messages={<FieldMessages issues={issues} field="topologyManagerPolicy" />}
+        messages={
+          <Stack spacing={0.75}>
+            {cleared('topologyManagerPolicy')}
+            <FieldMessages issues={issues} field="topologyManagerPolicy" />
+          </Stack>
+        }
       />
       <SettingRow
         label={FIELDS.nodesTopologyScope.label}
@@ -215,6 +254,7 @@ export function KubeletSection(props: NodeSectionProps) {
             onChange={v => set('nodesTopologyScope', v)}
           />
         }
+        messages={cleared('topologyManagerScope')}
       />
     </Panel>
   );
