@@ -383,6 +383,29 @@ def test_kube_vip_is_the_hosts():
     assert re.fullmatch(r"v\d+\.\d+\.\d+", kube_vip["version"])
 
 
+def test_rook_is_optional():
+    # Rook comes only with its feature: an operator that does not know the
+    # "rook" gate (before k4all v2.7.0) treats it as off and skips both
+    # charts. The CSI drivers need the ceph-csi operator and the Driver CRD
+    # of the rook-ceph chart.
+    components = release_components()
+    for name in ("rook-ceph", "ceph-csi-drivers"):
+        assert components[name]["featureGate"] == "rook", name
+        assert components[name]["namespace"] == "rook-ceph", name
+    assert components["ceph-csi-drivers"]["dependsOn"] == ["rook-ceph"]
+
+
+def test_rook_runs_under_selinux_with_snapshots():
+    # k4all nodes enforce SELinux: without privileged pods Rook cannot chown
+    # /var/lib/rook. Without the snapshotter sidecar (snapshotPolicy none, the
+    # chart's default) a VolumeSnapshot of ceph-rbd never becomes ready.
+    components = release_components()
+    assert components["rook-ceph"]["values"]["hostpathRequiresPrivileged"] is True
+    rbd = components["ceph-csi-drivers"]["values"]["drivers"]["rbd"]
+    assert rbd["name"] == "rook-ceph.rbd.csi.ceph.com"
+    assert rbd["snapshotPolicy"] == "volumeSnapshot"
+
+
 def test_topolvm_volumes_wait_for_their_pod():
     # Multi-node lab: with Immediate binding a PVC got its volume on the
     # control plane while its pod was meant for the worker, and the pod
