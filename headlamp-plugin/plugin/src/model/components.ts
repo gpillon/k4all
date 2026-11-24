@@ -137,6 +137,10 @@ export function componentActivation(
       break;
     }
   }
+  if (spec.featureGate === 'rook') {
+    // The operator's rook gate is off until the ClusterConfig has a Rook switch.
+    return { active: false, reason: 'Needs Rook, which this k4all release cannot turn on yet.' };
+  }
   if (spec.featureGate) {
     const feature = componentFeature(name, spec);
     if (!feature) {
@@ -177,6 +181,9 @@ export const CATEGORIES: Record<string, string> = {
   virtctl: 'Virtualization',
   cdi: 'Virtualization',
   'kubevirt-manager': 'Virtualization',
+  hangar: 'Virtualization',
+  'hangar-node-agent': 'Virtualization',
+  cairn: 'Storage',
   argocd: 'GitOps',
   'k4all-operator': 'Platform',
 };

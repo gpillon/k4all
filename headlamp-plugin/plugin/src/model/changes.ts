@@ -69,7 +69,9 @@ const FEATURE_OFF: Record<string, string> = {
 /**
  * What turning the feature off does to its components (list), with the
  * installed operator: from v0.5.7 k4all-operator keeps virtualization while
- * VMs and their disks exist, before it deleted it from under them.
+ * VMs and their disks exist, before it deleted it from under them. It names
+ * kubevirt-manager only where the release still installs it (k4all v2.6.x;
+ * v2.7.0 removes it).
  */
 export function featureOffConsequence(
   feature: 'virt' | 'argocd' | 'ovsCni',
@@ -80,9 +82,12 @@ export function featureOffConsequence(
     return `Uninstalls ${list}. ${FEATURE_OFF[feature]}`;
   }
   if (caps?.virtUninstallGuard) {
+    const kept = list.split(', ').includes('kubevirt-manager')
+      ? 'KubeVirt and kubevirt-manager'
+      : 'KubeVirt';
     return (
-      `Uninstalls ${list} once nothing runs on them: k4all-operator keeps KubeVirt and ` +
-      'kubevirt-manager while VirtualMachines or VirtualMachineInstances exist, and CDI while ' +
+      `Uninstalls ${list} once nothing runs on them: k4all-operator keeps ${kept} ` +
+      'while VirtualMachines or VirtualMachineInstances exist, and CDI while ' +
       'DataVolumes or PVCs made by CDI exist, and this switch shows what is left. Back up the VM ' +
       'disks you need, then delete the VMs and DataVolumes.'
     );

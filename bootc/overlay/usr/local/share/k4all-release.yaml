@@ -308,6 +308,18 @@ spec:
         - cert-manager
       custom: {}
 
+    # Cairn's cluster objects (roles cairn-viewer, cairn-editor,
+    # cairn-admin), from the GitHub Release of the plugin Headlamp runs
+    # (same tag as cairn-plugin above, with a "v"). Cairn needs Rook, which
+    # the ClusterConfig cannot turn on yet: the rook gate stays off, and so
+    # do this component and Cairn's plugin.
+    cairn:
+      type: manifest
+      version: "v0.1.0"
+      source: "https://github.com/kalik1/cairn/releases/download/{{ version }}/cairn-cluster.yaml"
+      featureGate: rook
+      custom: {}
+
     # --- Certificates ---
     cert-manager:
       type: helm
@@ -361,14 +373,24 @@ spec:
           ingressClassName: traefik
           annotations:
             traefik.ingress.kubernetes.io/router.middlewares: traefik-redirect-https@kubernetescrd
-        # The k4all Headlamp plugin (headlamp-plugin/ in this repo), pinned
-        # like every component: an initContainer copies it from its image
-        # into an emptyDir mounted read-only at <pluginsDir>/k4all-headlamp-plugin,
-        # so pluginsDir stays usable for other plugins. A new plugin tag
-        # changes the pod template: the operator re-applies headlamp and the
-        # new pod starts with the new plugin. componentOverrides.headlamp
-        # that set initContainers, volumes or volumeMounts replace these
-        # lists (Helm does not merge lists): copy these entries into them.
+        # The Headlamp plugins, pinned like every component: the k4all
+        # addon (headlamp-plugin/ in this repo), Hangar, the console of
+        # KubeVirt (github.com/kalik1/hangar), and Cairn, the console of
+        # Rook/Ceph (github.com/kalik1/cairn). For each, an initContainer
+        # copies the plugin from its image into an emptyDir mounted
+        # read-only at <pluginsDir>/<name>-headlamp-plugin, so pluginsDir
+        # stays usable for other plugins. A new plugin tag changes the pod
+        # template: the operator re-applies headlamp and the new pod starts
+        # with the new plugin. The operator's headlamp hook finds the
+        # entries by name: it leaves out hangar-plugin without
+        # features.virt and cairn-plugin without Rook, and merges the
+        # entries of componentOverrides.headlamp with these by name
+        # (volumeMounts by mountPath) instead of Helm's list replace. An
+        # override entry with one of these names replaces it, unless it
+        # runs another tag of the same image (a copy made for an older
+        # release): k4all's pin stays. The hangar, hangar-node-agent and
+        # cairn components below are the same releases' cluster objects:
+        # bump their version with these tags.
         initContainers:
           - name: k4all-plugin
             image: ghcr.io/gpillon/k4all-headlamp-plugin:0.1.2
@@ -397,13 +419,79 @@ spec:
             volumeMounts:
               - name: k4all-plugin
                 mountPath: /k4all-plugin
+          - name: hangar-plugin
+            image: ghcr.io/kalik1/hangar-headlamp-plugin:0.1.0
+            imagePullPolicy: IfNotPresent
+            command:
+              - sh
+              - -c
+              - cp -R /plugins/hangar-headlamp-plugin/. /hangar-plugin/
+            resources:
+              requests:
+                cpu: 10m
+                memory: 16Mi
+              limits:
+                memory: 32Mi
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 100
+              runAsGroup: 101
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                  - ALL
+              seccompProfile:
+                type: RuntimeDefault
+            volumeMounts:
+              - name: hangar-plugin
+                mountPath: /hangar-plugin
+          - name: cairn-plugin
+            image: ghcr.io/kalik1/cairn-headlamp-plugin:0.1.0
+            imagePullPolicy: IfNotPresent
+            command:
+              - sh
+              - -c
+              - cp -R /plugins/cairn-headlamp-plugin/. /cairn-plugin/
+            resources:
+              requests:
+                cpu: 10m
+                memory: 16Mi
+              limits:
+                memory: 32Mi
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 100
+              runAsGroup: 101
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                  - ALL
+              seccompProfile:
+                type: RuntimeDefault
+            volumeMounts:
+              - name: cairn-plugin
+                mountPath: /cairn-plugin
         volumes:
           - name: k4all-plugin
+            emptyDir:
+              sizeLimit: 16Mi
+          - name: hangar-plugin
+            emptyDir:
+              sizeLimit: 16Mi
+          - name: cairn-plugin
             emptyDir:
               sizeLimit: 16Mi
         volumeMounts:
           - name: k4all-plugin
             mountPath: /headlamp/plugins/k4all-headlamp-plugin
+            readOnly: true
+          - name: hangar-plugin
+            mountPath: /headlamp/plugins/hangar-headlamp-plugin
+            readOnly: true
+          - name: cairn-plugin
+            mountPath: /headlamp/plugins/cairn-headlamp-plugin
             readOnly: true
       # traefik: its Middleware traefik/redirect-https exists by the time
       # the headlamp hook writes the dashboard route.
@@ -501,26 +589,56 @@ spec:
           patch: '{"spec":{"config":{"podResourceRequirements":{"limits":{"memory":"2G"}}}}}'
       custom: {}
 
-    kubevirt-manager:
+    # Hangar's cluster objects, from the GitHub Release of the plugin
+    # Headlamp runs (same tag as hangar-plugin above, with a "v"): the
+    # roles hangar-viewer, -vm-operator, -vm-admin and -hardware-admin
+    # (for users other than cluster-admin) and the delete protection
+    # (ValidatingAdmissionPolicy hangar-protect-from-deletion: a VM, disk
+    # or DataVolume labelled hangar.magesgate.com/protected cannot be
+    # deleted). Hangar itself runs in Headlamp: nothing else to run.
+    hangar:
       type: manifest
-      version: "v1.5.4"
-      sources:
-        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/{{ version }}/kubernetes/bundled.yaml"
-        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/{{ version }}/kubernetes/crd.yaml"
-      namespace: kubevirt-manager
+      version: "v0.1.0"
+      source: "https://github.com/kalik1/hangar/releases/download/{{ version }}/hangar-cluster.yaml"
       featureGate: virt
       dependsOn:
         - kubevirt
-      # The tagged manifest still uses the floating :nightly image. Patches are
-      # not templated: bump the image tag together with version.
-      patches:
-        - target:
-            apiVersion: apps/v1
-            kind: Deployment
-            name: kubevirt-manager
-            namespace: kubevirt-manager
-          type: strategic
-          patch: '{"spec":{"template":{"spec":{"containers":[{"name":"kubevirtmgr","image":"kubevirtmanager/kubevirt-manager:1.5.4"}]}}}}'
+        - cdi
+      custom: {}
+
+    # Hangar's node agent (namespace hangar-system): one pod per node that
+    # publishes the node's PCI, USB and disk inventory (Hangar's Hardware
+    # tab) and binds to vfio-pci the PCI devices given to VMs from Hangar,
+    # with a udev rule so they stay bound after a reboot. Its agent
+    # container is privileged (spc_t under SELinux: it writes /sys and
+    # /etc/udev/rules.d) and sees the node's processes (hostPID), without
+    # any API access: its only input is the ConfigMap hangar-passthrough.
+    # A component of its own, so a cluster can do without it: management
+    # Unmanaged keeps the operator away from it (delete it by hand), and
+    # its removal leaves the VMs and the devices already bound as they are.
+    hangar-node-agent:
+      type: manifest
+      version: "v0.1.0"   # same tag as hangar
+      source: "https://github.com/kalik1/hangar/releases/download/{{ version }}/hangar-node-agent.yaml"
+      featureGate: virt
+      dependsOn:
+        - kubevirt
+      custom: {}
+
+    # Hangar replaces kubevirt-manager. On clusters that ran it, the
+    # operator's kubevirt-manager hook removes its console and roles; it
+    # keeps a PriorityClass (vm-standard, vm-preemptible) while a VM or
+    # pod names it (kubevirt-manager wrote it into the VMs it made, which
+    # could neither start nor move without it), its image catalog CRD
+    # while it holds images, and its namespace while the user's objects
+    # are in it. No sources: an operator that deletes what a removed
+    # component's manifests list (before the hook) deletes nothing.
+    # The VMs are untouched.
+    kubevirt-manager:
+      type: manifest
+      management: Removed
+      version: "v1.5.4"
+      featureGate: virt
       custom: {}
 
     # --- GitOps ---

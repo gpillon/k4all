@@ -118,7 +118,8 @@ describe('FeaturesSection', () => {
     const draft = defaultClusterConfig().spec!;
     const update = vi.fn();
     render(<FeaturesSection {...sectionProps(draft, update)} components={components} />);
-    expect(screen.getByText('kubevirt-manager')).toBeTruthy();
+    expect(screen.getByText('hangar')).toBeTruthy();
+    expect(screen.queryByText('kubevirt-manager')).toBeNull();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Argo CD' }));
     expect(applied(update, draft).features?.argocd?.enabled).toBe(true);
   });
@@ -182,9 +183,7 @@ describe('the Virtualization switch', () => {
       />
     );
     expect(screen.getByText('Will be removed')).toBeTruthy();
-    expect(
-      screen.getByText(/keeps KubeVirt and kubevirt-manager while VirtualMachines/)
-    ).toBeTruthy();
+    expect(screen.getByText(/keeps KubeVirt while VirtualMachines/)).toBeTruthy();
   });
 
   it('warns, once turned off, that an older k4all-operator deletes KubeVirt and CDI from under the VMs', () => {
