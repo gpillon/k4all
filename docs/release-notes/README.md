@@ -1,9 +1,10 @@
 # Release notes
 
 One file per release, named after its tag (`v2.7.0.md`): the hand-written part
-of the GitHub release. The release job of `.github/workflows/build.yaml` ends
-the release body with it (`release-checks.py notes`), so the release appears
-with its notes. Add the file in the release commit, before the tag.
+of the GitHub release. The release job of `.github/workflows/build.yaml` writes
+the release body as `bootc/upgrade/release-body.md` (image, ISOs, how to
+update) followed by this file (`release-checks.py body`), so the release
+appears with its notes. Add the file in the release commit, before the tag.
 
 Without a file the release is published without notes, and the job warns.
 A file whose name is not a release of `bootc/upgrade/releases.yaml` fails the

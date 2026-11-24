@@ -405,24 +405,19 @@ jobs:
           echo "make_latest=${LATEST}" >> "$GITHUB_OUTPUT"
           echo "${VERSION} becomes Latest: ${LATEST}"
 
-      - name: Release notes of this version
-        # docs/release-notes/<version>.md ends the release body, so the
-        # release appears with its notes: v2.6.7 was published without
-        # them and they were added by hand half an hour later. Without the
-        # file the body ends without notes, and the job warns.
-        id: notes
+      - name: Release body
+        # bootc/upgrade/release-body.md, then docs/release-notes/<version>.md:
+        # the release appears with its notes (v2.6.7 was published without
+        # them; they were added by hand half an hour later). Without the
+        # notes file the job warns. The release step reads the file: the
+        # notes never go through a ${{ }} expression.
         if: steps.published.outputs.published == 'false'
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          python3 bootc/upgrade/release-checks.py notes "$VERSION" > release-notes.md
-          DELIMITER="K4ALL_NOTES_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-          {
-            echo "notes<<${DELIMITER}"
-            cat release-notes.md
-            echo "${DELIMITER}"
-          } >> "$GITHUB_OUTPUT"
+          python3 bootc/upgrade/release-checks.py body "$VERSION" \
+            --repository "$GITHUB_REPOSITORY" > release-body.md
 
       - name: Create GitHub Release
         if: steps.published.outputs.published == 'false'
@@ -433,53 +428,7 @@ jobs:
           prerelease: ${{ needs.version.outputs.prerelease }}
           make_latest: ${{ steps.latest.outputs.make_latest }}
           generate_release_notes: true
-          body: |
-            ## K4All ${{ needs.version.outputs.version }}
-
-            ### Bootc OCI Image
-            ```
-            ghcr.io/${{ github.repository_owner }}/k4all-bootc:${{ needs.version.outputs.version }}
-            ```
-
-            ### ISO Downloads
-            
-            | Variant | x86_64 | aarch64 |
-            |---------|--------|---------|
-            | **Attended** (interactive GUI) | `k4all-attended-*-x86_64.iso.zst*` | `k4all-attended-*-aarch64.iso.zst` |
-            | **Bootstrap** (unattended, first node) | `k4all-bootstrap-*-x86_64.iso.zst*` | `k4all-bootstrap-*-aarch64.iso.zst` |
-            | **Control** (unattended, control plane) | `k4all-control-*-x86_64.iso.zst*` | `k4all-control-*-aarch64.iso.zst` |
-            | **Worker** (unattended, worker node) | `k4all-worker-*-x86_64.iso.zst*` | `k4all-worker-*-aarch64.iso.zst` |
-
-
-            #### Linux / Mac
-            ISOs are compressed with zstd. Decompress with: `unzstd <file>.iso.zst`
-            If the ISO was split (x86_64), reassemble first: `cat <file>.iso.zst.part-* > <file>.iso.zst`
-
-            #### Windows
-            - combine the ISOs using the following command: `copy /b k4all-attended-${{ needs.version.outputs.version }}-x86_64.iso.zst.part-* k4all-attended-${{ needs.version.outputs.version }}-x86_64.iso.zst`
-            - Extract the ISOs from zst using Winrar > 6.10
-
-            ### Update existing systems
-
-            From v2.2.4 on, nodes upgrade themselves with `k4all-upgrade`
-            (patch releases automatically in the Saturday 02:30 window, minor
-            releases on command):
-            ```bash
-            sudo k4all-upgrade plan
-            sudo k4all-upgrade run
-            ```
-
-            Nodes on v2.0 – v2.2.3 first move to the v2.2.4 bridge, one node
-            at a time, control planes first:
-            ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ needs.version.outputs.version }}/k4all-bridge.sh | sudo bash -s -- --now
-            ```
-
-            ### Why are the files split?
-            - Splitting avoids GitHub Actions timeouts when uploading and downloading the artifacts.
-            - It also keeps the release within the free GitHub storage.
-
-            ${{ steps.notes.outputs.notes }}
+          body_path: release-body.md
           files: |
             isos/k4all-*
             isos/upgrade-graph.json
