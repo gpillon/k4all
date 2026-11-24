@@ -398,6 +398,38 @@ describe('rollout per node', () => {
   });
 });
 
+describe('rollout blocked by a drain (operator v0.5.8, #99)', () => {
+  it('says what to do with pods that declare no controller, with the docs', () => {
+    const cc = clusterConfigV270();
+    const msg =
+      'runs pods that declare no controller: default/debug (a drain would delete them, and nothing ' +
+      'recreates them: delete them, or recreate them under a controller; see docs/upgrades.md, Pods that ' +
+      'declare no controller); the node is not cordoned';
+    cc.spec!.nodes = { iommu: true };
+    cc.status!.nodes = {
+      settingsHash: 'h',
+      rollout: { phase: 'Blocked', currentNode: 'w-1', message: `w-1 ${msg}` },
+      perNode: [{ name: 'w-1', phase: 'Pending', message: msg }],
+    };
+    cc.status!.conditions = [
+      {
+        type: 'NodeSettingsRollout',
+        status: 'False',
+        reason: 'DrainBlocked',
+        message: `w-1 ${msg}`,
+      },
+    ];
+    render(<RolloutPanel view={rolloutView(cc)} canPause busy={false} onPause={vi.fn()} />);
+    expect(screen.getByText('w-1 runs pods that declare no controller')).toBeTruthy();
+    expect(screen.getByText('kubectl delete pod -n default debug')).toBeTruthy();
+    expect(
+      screen
+        .getByRole('link', { name: 'Pods that declare no controller (docs/upgrades.md)' })
+        .getAttribute('href')
+    ).toMatch(/#pods-that-declare-no-controller$/);
+  });
+});
+
 describe('a held uninstall group (#96)', () => {
   it('lists the shared message once, with the components it holds', () => {
     const rm = releaseManifestV270();

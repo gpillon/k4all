@@ -1,6 +1,6 @@
 # k4all Headlamp plugin: design
 
-Status: built and unit-tested (405 tests), not yet run against a live
+Status: built and unit-tested (416 tests), not yet run against a live
 cluster. Ships from k4all v2.4.0 (k4all-operator v0.5.0, Traefik, Headlamp
 chart 0.46.0, Kubernetes 1.35 and later); plugin 0.2.0 adds the k4all v2.7.0
 pages (k4all-operator v0.6.0, section 3.8-3.10). User guide:
@@ -607,11 +607,24 @@ that the operator creates (v0.4.0+).
   - DrainTimeout: `kubectl get pods -A -o wide --field-selector
     spec.nodeName=<node>`, `kubectl get pdb -A`; Retry, or turn on
     continue-on-timeout and then Retry (the drain starts over for a full
-    timeout);
+    timeout); the text names pods that declare no controller among the
+    causes (the drain never evicts them, operator v0.5.8) and links "Drains
+    that never end" and "Pods that declare no controller" (docs/upgrades.md);
   - NodeNotReady: not a failure, the upgrade waits for that node to be Ready
     (`kubectl describe node`);
   - host phase ROLLBACK_REBOOT while it happens; any other Failed node: its
-    message, `k4all-upgrade status`, no Retry.
+    message, `k4all-upgrade status`, no Retry;
+  - the one exception to "never from message texts", for want of a reason
+    (O-10): a node the operator does not cordon because its drain could
+    never end (a PodDisruptionBudget that allows no disruption, k4all#87) or
+    would delete pods that declare no controller (k4all#99, operator
+    v0.5.8), or a drain that waits for such pods. `model/drainBlock.ts`
+    reads only the phrases of the operator's shared drain
+    (`drain.BlockedMessage`, `drain.Drain`): the budgets and pods it names,
+    what to do (relax the budget or move the workload; delete the pods or
+    recreate them under a controller), a `kubectl delete pod` per named pod,
+    and the docs sections. The Node settings rollout panel shows the same
+    advice for DrainBlocked.
   Retry is offered only for DrainTimeout and Abandoned. A failed plan (Failed
   condition reason NoPath, Downgrade or NodeNotReported) shows the message
   with what to do: another target, or Stop.
@@ -856,6 +869,7 @@ tagged, if possible).
 | **O-6** | operator `cilium_hook.go` | Enable Cilium's ingress controller when `ingress.cilium.dedicatedIP` is set; today the IP only reaches the MetalLB pool | the field is labelled "added to the MetalLB address pool" |
 | **O-7** | operator v0.7.0 | CNI switch and OVS bridge on/off on the existing fields `networking.cni.type` and `features.ovsBridge.enabled` (the plugin's controls turn on by version, 4.1), with progress in status | read-only with "coming with k4all-operator v0.7.0" |
 | **O-8** | operator v0.6.0 (RookHook) | The seeded `ceph-rbd` StorageProfile lists RWX Block only. KubeVirt 1.9 creates VM state (EFI/TPM) volumes in Filesystem mode and, without a Filesystem entry, asks for RWX Filesystem, which RBD cannot provide: `vmStateStorageClass: ceph-rbd` would leave such VMs Pending. A Filesystem ReadWriteOnce entry in the seeded profile fixes it (KubeVirt then copies the state on migration) | the VM state row warns |
+| **O-10** | operator (ClusterUpgrade API) | A machine-readable reason for a node whose drain is blocked before the cordon (`nodes[].reason`, e.g. `DrainBlocked`, with the kind: budget or pods without a controller). Today the node stays Pending with only `drain.BlockedMessage` as its message; the enum change is an API change | the plugin reads the shared drain's phrases (4.3) |
 | ~~O-9~~ | operator v0.6.0 | Activation rules of v0.6.0 (`engine.FeatureEnabled`, `shouldInstall`), mirrored in `components.ts`: gate `rook` = `features.rook.enabled`; gate `snapshots` (snapshot-controller) = virt or Rook; gate `virtMetadata` (k4all-metadata) = virt and `features.virt.metadata.enabled`; `hangar-node-agent` left out by name when `features.virt.hangar.nodeAgent` is `false`. **Done** (operator feat/270-remainders, feat/270-metadata) | the Components page and the feature cards show these states |
 | ~~U-1~~ | `ReleaseInfo` | `minFrom`, `crio`, and `path` (the hops the operator would plan) in `availableReleases`. **Done** (k4all-operator 7ef70c4). | the review and the list show the operator's own path |
 | ~~U-2~~ | status | `currentReleaseInfo`. **Done**. | the "from" of every change |
@@ -995,7 +1009,7 @@ npm ci
 npm run lint && npm run tsc && npm test && npm run build   # dist/main.js
 ```
 
-Tests: 405 (vitest, jsdom). Plugin 0.2.0 adds model tests for the gates
+Tests: 416 (vitest, jsdom). Plugin 0.2.0 adds model tests for the gates
 (tables by version, the operator's merge, KubeVirt's on/off rules, owner
 from the annotations, pending, the hot-plug pair, GA refusal), the node
 settings (action classes from the changed fields, the plan and its order,

@@ -319,6 +319,29 @@ describe('UpgradeProgressPanel', () => {
     expect(flow.retry).toHaveBeenCalled();
   });
 
+  it('explains a node whose drain is blocked by pods that declare no controller', () => {
+    const cu = clusterUpgradeInProgress();
+    cu.status!.nodes![2] = {
+      name: 'w-1',
+      role: 'worker',
+      phase: 'Pending',
+      message:
+        'runs pods that declare no controller: default/debug (a drain would delete them, and nothing ' +
+        'recreates them: delete them, or recreate them under a controller; see docs/upgrades.md, Pods ' +
+        'that declare no controller); the node is not cordoned',
+    };
+    renderPanel(cu);
+    expect(screen.getByText('w-1 runs pods that declare no controller')).toBeTruthy();
+    expect(screen.getByText('kubectl delete pod -n default debug')).toBeTruthy();
+    expect(
+      screen
+        .getByRole('link', { name: 'Pods that declare no controller (docs/upgrades.md)' })
+        .getAttribute('href')
+    ).toBe(
+      'https://github.com/gpillon/k4all/blob/main/docs/upgrades.md#pods-that-declare-no-controller'
+    );
+  });
+
   it("shows an abandoned hop from the operator's reason and host phase", () => {
     const cu = clusterUpgradeInProgress();
     cu.status!.phase = 'Failed';

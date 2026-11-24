@@ -303,6 +303,39 @@ describe('rolloutView', () => {
     expect(rolloutGuidance(rolloutView(cc))).toMatch(/refuses the settings/);
   });
 
+  // k4all-operator v0.5.8+ (#99): DrainBlocked also names pods that declare no controller.
+  it('explains DrainBlocked for both causes, and reads the block of the node', () => {
+    const cc = clusterConfigV270();
+    cc.status!.nodes = {
+      settingsHash: 'h',
+      rollout: {
+        phase: 'Blocked',
+        message:
+          'w-1 runs pods that declare no controller: default/debug (a drain would delete them, and nothing ' +
+          'recreates them: delete them, or recreate them under a controller; see docs/upgrades.md, Pods that ' +
+          'declare no controller); the node is not cordoned',
+      },
+      perNode: [
+        {
+          name: 'w-1',
+          phase: 'Pending',
+          message:
+            'runs pods that declare no controller: default/debug (a drain would delete them, and nothing ' +
+            'recreates them: delete them, or recreate them under a controller; see docs/upgrades.md, Pods that ' +
+            'declare no controller); the node is not cordoned',
+        },
+      ],
+    };
+    cc.status!.conditions = [
+      { type: 'NodeSettingsRollout', status: 'False', reason: 'DrainBlocked' },
+    ];
+    const view = rolloutView(cc);
+    const text = rolloutGuidance(view)!;
+    expect(text).toMatch(/PodDisruptionBudget allows no disruption/);
+    expect(text).toMatch(/declare no controller/);
+    expect(view.drainBlock).toMatchObject({ node: 'w-1', block: { bare: ['default/debug'] } });
+  });
+
   it('explains every NodeSettingsRollout reason that holds the rollout', () => {
     for (const reason of [
       'Invalid',

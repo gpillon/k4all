@@ -25,6 +25,7 @@ import {
   Typography,
 } from '@mui/material';
 import React from 'react';
+import { DrainBlock, drainBlockAdvice } from '../../model/drainBlock';
 import { FieldId, FIELDS } from '../../model/fields';
 import {
   ACTION_LABEL,
@@ -44,6 +45,7 @@ import { getIn, setPruned } from '../../model/objects';
 import { NodeLike } from '../../model/types';
 import { ApplyBadge, Mono, Panel, SettingRow, TonePill } from '../common/ui';
 import { FieldMessages, isChanged, SectionProps } from '../settings/common';
+import { GuidanceAlert } from '../upgrades/parts';
 
 export interface NodeSectionProps extends SectionProps {
   nodes: NodeLike[];
@@ -466,6 +468,12 @@ function nodePhasePill(n: RolloutNodeRow): {
     : { label: n.phase ?? 'pending', tone: 'neutral', busy: false };
 }
 
+/** A drain held by a budget or by pods that declare no controller: what to do, with the docs. */
+function DrainBlockAlert(props: { node: string; block: DrainBlock }) {
+  const advice = drainBlockAdvice(props.block, props.node);
+  return <GuidanceAlert guidance={{ node: props.node, retry: false, ...advice }} />;
+}
+
 /** The rollout as status.nodes reports it, with Pause / Resume. */
 export function RolloutPanel(props: {
   view: RolloutView;
@@ -474,7 +482,11 @@ export function RolloutPanel(props: {
   onPause: (paused: boolean) => void;
 }) {
   const { view } = props;
-  const guidance = rolloutGuidance(view);
+  // The specific advice of a blocked drain says it all: no generic sentence then.
+  const guidance =
+    view.drainBlock && view.condition?.reason === 'DrainBlocked'
+      ? undefined
+      : rolloutGuidance(view);
   const pausing = view.paused && view.phase === 'Rolling';
   return (
     <Panel
@@ -524,6 +536,9 @@ export function RolloutPanel(props: {
             {view.condition?.reason && <AlertTitle>{view.condition.reason}</AlertTitle>}
             {guidance}
           </Alert>
+        )}
+        {view.drainBlock && (
+          <DrainBlockAlert node={view.drainBlock.node} block={view.drainBlock.block} />
         )}
         {pausing && (
           <Typography variant="body2" color="text.secondary">

@@ -12,6 +12,7 @@
  * A single node is only cordoned (nothing to move the pods to).
  */
 
+import { DrainBlock, parseDrainBlock } from './drainBlock';
 import { findCondition, nodeRows } from './health';
 import { getIn, jsonEqual, setPruned } from './objects';
 import { compareSemver, parseSemver } from './semver';
@@ -544,6 +545,11 @@ export interface RolloutView {
   total: number;
   nodes: RolloutNodeRow[];
   condition?: Condition;
+  /**
+   * A drain held by a budget or by pods that declare no controller (operator
+   * v0.5.8+), from the node's message (drainBlock.ts), with the node.
+   */
+  drainBlock?: { node: string; block: DrainBlock };
 }
 
 /** The rollout of spec.nodes, from status.nodes and the NodeSettingsRollout condition. */
@@ -573,7 +579,17 @@ export function rolloutView(cc: ClusterConfigObject): RolloutView {
   });
   const generation = cc.metadata.generation;
   const observed = cc.status?.observedGeneration;
+  // The node in its step first, then any node the operator did not cordon.
+  let drainBlock: RolloutView['drainBlock'];
+  for (const n of [...nodes.filter(x => x.current), ...nodes.filter(x => !x.current)]) {
+    const block = parseDrainBlock(n.message);
+    if (block) {
+      drainBlock = { node: n.name, block };
+      break;
+    }
+  }
   return {
+    drainBlock,
     phase: status?.rollout?.phase || 'Idle',
     currentNode: current || undefined,
     message: status?.rollout?.message || undefined,
@@ -595,10 +611,13 @@ const ROLLOUT_GUIDANCE: Record<string, string> = {
   NodeRefused:
     'The node refuses the settings (its message says why): fix the settings here, or the node, and the rollout goes on.',
   DrainBlocked:
-    'Pods on the node can never be evicted (no other node can take them, or a PodDisruptionBudget allows no eviction). ' +
-    'See them with kubectl get pods -A -o wide --field-selector spec.nodeName=<node> and kubectl get pdb -A.',
+    'The node is not drained, and not cordoned: a PodDisruptionBudget allows no disruption of a pod on it ' +
+    '(waiting changes nothing), or pods on it declare no controller (a drain would delete them for good). ' +
+    'Relax the budget or move the workload; delete the bare pods, or recreate them under a controller. ' +
+    'The rollout goes on by itself.',
   DrainTimeout:
-    'The drain ran out of time (the drain settings of the ClusterUpgrade k4all, Upgrades page): move or delete the pods left, or allow it to go on at the timeout.',
+    'The drain ran out of time (the drain settings of the ClusterUpgrade k4all, Upgrades page): move or delete the pods left ' +
+    '(pods that declare no controller are never evicted: delete them, or recreate them under a controller), or allow it to go on at the timeout.',
   NodesSkipped:
     'Nodes on a k4all release before v2.7.0 get the settings after their upgrade; the others have them.',
   KubeletConfigMissing:

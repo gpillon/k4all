@@ -13,6 +13,13 @@
 
 import { ChangeItem } from './changes';
 import { Tone } from './components';
+import {
+  BARE_PODS_DOC_URL,
+  DocLink,
+  drainBlockAdvice,
+  DRAINS_NEVER_END_DOC_URL,
+  parseDrainBlock,
+} from './drainBlock';
 import { clone } from './objects';
 import { buildSpecPatch, JsonPatchOp } from './patch';
 import { compareSemver, parseSemver, SemVer } from './semver';
@@ -590,6 +597,8 @@ export interface Guidance {
   commands: Command[];
   /** The retry annotation acts on this node (reason DrainTimeout or Abandoned). */
   retry: boolean;
+  /** Sections of the k4all docs that explain it. */
+  links?: DocLink[];
 }
 
 /** Node reasons the retry annotation acts on. */
@@ -598,7 +607,11 @@ export const RETRYABLE_REASONS = ['DrainTimeout', 'Abandoned'];
 /**
  * What the user can do about a node, by the operator's machine-readable
  * reason (nodes[].reason) and the host phase. Never from message texts: the
- * message is only quoted.
+ * message is only quoted. One exception, for want of a reason: a node the
+ * operator does not cordon, or cannot finish draining, because of a budget
+ * that allows no disruption or pods that declare no controller (operator
+ * v0.5.8, k4all#87/#99), read from the shared drain's own phrases
+ * (drainBlock.ts).
  */
 export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec): Guidance | null {
   const onNode = `on ${node.name}`;
@@ -663,7 +676,8 @@ export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec):
         severity: 'error',
         title: `Draining ${node.name} did not finish`,
         text:
-          `A PodDisruptionBudget, or a pod that cannot be evicted, held the drain back past the timeout.${
+          'A PodDisruptionBudget, a pod that cannot be evicted, or a pod that declares no controller ' +
+          `(the drain never evicts those: delete them, or recreate them under a controller) held the drain back past the timeout.${
             node.message ? ` (${node.message})` : ''
           } ` +
           'Find the pods left on the node, move or delete them (or relax their PodDisruptionBudget), then Retry. ' +
@@ -676,6 +690,10 @@ export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec):
           { command: 'kubectl get pdb -A', where: 'with kubectl' },
         ],
         retry: true,
+        links: [
+          { label: 'Drains that never end (docs/upgrades.md)', href: DRAINS_NEVER_END_DOC_URL },
+          { label: 'Pods that declare no controller (docs/upgrades.md)', href: BARE_PODS_DOC_URL },
+        ],
       };
     }
     case 'NodeNotReady':
@@ -687,6 +705,19 @@ export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec):
         commands: [{ command: `kubectl describe node ${node.name}`, where: 'with kubectl' }],
         retry: false,
       };
+  }
+  const block = node.phase !== 'Failed' ? parseDrainBlock(node.message) : null;
+  if (block) {
+    const advice = drainBlockAdvice(block, node.name);
+    return {
+      node: node.name,
+      severity: advice.severity,
+      title: advice.title,
+      text: advice.text,
+      commands: advice.commands,
+      retry: false,
+      links: advice.links,
+    };
   }
   if (node.hostPhase === 'ROLLBACK_REBOOT') {
     return {
