@@ -175,8 +175,10 @@ to it):
 - **Hangar node agent**: the privileged agent behind Hangar's Hardware tab
   and PCI passthrough; on by default with Virtualization.
 - **Metadata service** (`#metadata`): VMs reach `169.254.169.254` (OpenStack
-  and EC2 formats) for their SSH keys and user-data, without a cloud-init
-  disk. With **Labelled** a VM opts in with the template label
+  and EC2 formats) for their instance metadata, the SSH keys of their
+  `accessCredentials` and ServiceAccount tokens; the user-data served is the
+  one of the VM's cloud-init volume (user-data without a cloud-init disk
+  comes in a later release). With **Labelled** a VM opts in with the template label
   `k4all.magesgate.com/metadata: enabled` (Hangar's wizard sets it) and picks
   its ServiceAccount with `k4all.magesgate.com/service-account`. The VM needs
   a pod-network (masquerade) interface, and namespaces that enforce
