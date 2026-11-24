@@ -816,7 +816,7 @@ spec:
     # k4all-operator's version.
     k4all-metadata:
       type: manifest
-      version: "v0.5.8"   # same tag as k4all-operator
+      version: "v0.6.0"   # same tag as k4all-operator
       image: "ghcr.io/gpillon/k4all-metadata:{{ version }}"
       featureGate: virtMetadata
       dependsOn:
@@ -943,12 +943,14 @@ spec:
       # v0.5.8 (k4all v2.6.7): a ClusterUpgrade does not cordon a node that
       # runs a pod without a controller, names it, and never evicts one
       # (#99).
-      # k4all v2.7.0 needs v0.6.0 (features.rook, the snapshots gate, the
-      # node agent switch, RookReady, the Ceph image): the release step moves
-      # this pin once v0.6.0 is tagged. Until then v0.5.8 skips the gates it
-      # does not know (rook, snapshots) and installs hangar-node-agent with
-      # virt whatever nodeAgent says.
-      version: "v0.5.8"
+      # v0.6.0 (k4all v2.7.0): the ClusterConfig API of v2.7.0 (node
+      # settings, KubeVirt settings, features.rook, the metadata service),
+      # the Hangar, Rook, snapshot-controller and k4all-metadata components
+      # with their gates, uninstall guards that keep a component while its
+      # data lives, the Cilium pool from podNetwork on new installs and the
+      # PodNetworkOverlap check, and the upgrade-graph guards of #74 and #77
+      # (MigrationsAhead, DowngradeRefused).
+      version: "v0.6.0"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system
