@@ -126,6 +126,11 @@ older operator.
   (0.1.2 gated them on v0.6.0, which does not have them).
 - RBAC: the viewer and editor roles read the KubeVirt CR, StorageClasses,
   StorageProfiles, CephClusters and the kubevirt-manager leftovers.
+- Blocked drains (k4all-operator v0.5.8, k4all#99): a node the operator
+  does not cordon because of a budget that allows no disruption or pods
+  that declare no controller gets what to do, a `kubectl delete pod` per
+  pod and the docs sections, on the Upgrades page and in the node-settings
+  rollout (DrainBlocked).
 
 ### 0.1.2
 

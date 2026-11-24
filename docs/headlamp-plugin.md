@@ -103,6 +103,21 @@ anyway and the pods left on the node stop when it reboots.
 A single-node cluster is only cordoned: its workloads, the Kubernetes API and
 the dashboard are down while it reboots.
 
+k4all-operator does not start a drain that could never end, or would delete
+pods for good; the node stays uncordoned and the page says why, with what to
+do and the commands:
+
+- a PodDisruptionBudget allows no disruption of a pod on the node (a
+  single-instance database, for example): relax the budget or move the
+  workload ([Drains that never end](upgrades.md#drains-that-never-end));
+- pods on the node declare no controller (started with `kubectl run`, or
+  by hand): nothing would recreate them after the drain. Delete them, or
+  recreate them under a Deployment, StatefulSet or Job
+  ([Pods that declare no controller](upgrades.md#pods-that-declare-no-controller)).
+
+The upgrade, or the node-settings rollout, goes on by itself once they are
+gone.
+
 ### When a node gets stuck
 
 The page explains what happened and what to run. Commands to run on a node
