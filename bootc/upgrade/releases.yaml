@@ -310,7 +310,7 @@ releases:
     # k4all addon 0.2.0.
     syncManifest: true
     notes: >-
-      k4all-operator v0.6.0 (from v0.5.8, through the manifest sync). Its
+      k4all-operator v0.6.0-rc.1 (from v0.5.8, through the manifest sync). Its
       new ClusterConfig fields are optional and absent on existing clusters,
       where k4all owns none of their settings: the hop changes no setting.
       Hangar v0.1.0 replaces kubevirt-manager as the VM console: the
