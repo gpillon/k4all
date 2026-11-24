@@ -7,6 +7,11 @@
   healthy (the primary of a single-instance CloudNativePG cluster) refuses
   every eviction: the hop stops in HOLD before STAGE and names it, instead of
   a drain that never ends.
+- #99: a pod that declares no controller (`kubectl run`, a `kubectl debug
+  node/...` pod left running) makes `kubectl drain` without --force refuse
+  the whole drain. Up to v2.6.6 a control plane found out at DRAIN, after
+  STAGE and PRE_REBOOT, cordoned: now the hop stops in HOLD before STAGE and
+  names the pods. A worker names them while it waits for its drain.
 """
 
 import pytest
@@ -79,13 +84,15 @@ def pdb(name="kubone-pg-primary", namespace="kubone-data", selector=None,
 
 
 def pod(name="kubone-pg-1", node="k4all-node-1", namespace="kubone-data",
-        labels=None, phase="Running", owner=None, terminating=False,
-        mirror=False, ready=True):
+        labels=None, phase="Running", owner="Cluster", terminating=False,
+        mirror=False, ready=True, controller=True):
+    """A pod; by default the primary of a CNPG cluster, its controller."""
     meta = {"namespace": namespace, "name": name,
             "labels": dict(CNPG_PRIMARY) if labels is None else labels}
     if owner:
         meta["ownerReferences"] = [{"apiVersion": "apps/v1", "kind": owner,
-                                    "name": "x", "uid": "u", "controller": True}]
+                                    "name": "x", "uid": "u",
+                                    "controller": controller}]
     if terminating:
         meta["deletionTimestamp"] = "2026-11-21T02:40:00Z"
     if mirror:
@@ -332,3 +339,157 @@ def test_budgets_that_cannot_be_read_do_not_hold_the_hop(make_host):
 ])
 def test_selector_matches(selector, labels, selected):
     assert ku.selector_matches(selector, labels) is selected
+
+
+# --- #99: pods that declare no controller ------------------------------------
+def bare(name="debug-x", namespace="default", **kwargs):
+    """A pod nothing recreates: `kubectl run debug-x --image=...`."""
+    return pod(name, namespace=namespace, labels={"run": name}, owner=None,
+               **kwargs)
+
+
+def test_a_bare_pod_holds_the_hop_of_a_control_plane_before_stage(make_host):
+    host = control_plane(make_host)
+    host.pods = [bare(), pod("web-7c9d-x", namespace="shop", owner="ReplicaSet")]
+
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
+    st = state(host)
+    assert st["phase"] == "PREFLIGHT"
+    reason = st["hold"]["reason"]
+    assert reason.startswith("the drain of k4all-node-1 would refuse the pods "
+                             "that declare no controller: default/debug-x. ")
+    assert "web-7c9d-x" not in reason
+    assert "Nothing recreates such a pod" in reason
+    assert "Delete them" in reason and "docs/upgrades.md" in reason
+    assert host.annotations[ku.ANNOTATION_PHASE] == "HOLD"
+    assert "default/debug-x" in host.annotations[ku.ANNOTATION_MESSAGE]
+    # Nothing changed: nothing backed up, staged, cordoned or labelled.
+    assert not [c for c in host.calls if c[0].endswith("k4all-backup.sh")]
+    assert not [c for c in host.calls if c[:2] == ["bootc", "switch"]]
+    assert not kubectl_calls(host, "drain") and not kubectl_calls(host, "label")
+    assert not host.unschedulable and host.operator_replicas == 1
+    assert ku.ANNOTATION_IN_PROGRESS not in host.annotations
+
+    # The admin deletes the pod; the hop goes on and drains the node.
+    host.pods = host.pods[1:]
+    assert run_cli(host, "clear-hold") == 0
+    assert run_cli(host, "resume") == 0
+    assert state(host)["phase"] == "REBOOT"
+    assert kubectl_calls(host, "drain")
+
+
+def test_the_hold_names_three_bare_pods_and_counts_the_rest(make_host):
+    host = control_plane(make_host)
+    host.pods = [bare("p%d" % i) for i in range(5)]
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
+    assert "declare no controller: default/p0, default/p1, default/p2 and 2 " \
+           "more. " in state(host)["hold"]["reason"]
+
+
+def test_an_owner_that_is_not_a_controller_does_not_count(make_host):
+    # kubectl drain looks for the controller reference (metav1.GetControllerOf)
+    host = control_plane(make_host)
+    host.pods = [pod("adopted", namespace="default", owner="ConfigMap",
+                     controller=False)]
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
+    assert "default/adopted" in state(host)["hold"]["reason"]
+
+
+@pytest.mark.parametrize("on_node", [
+    pod(owner="ReplicaSet"),
+    pod(owner="Job"),
+    pod(owner="DaemonSet"),
+    bare(mirror=True),                  # a static pod's mirror
+    bare(phase="Succeeded"),            # finished: the drain deletes it
+    bare(phase="Failed"),
+    bare(terminating=True),             # going already
+    bare(node="k4all-node-2"),
+], ids=["replicaset", "job", "daemonset", "mirror", "succeeded", "failed",
+        "terminating", "other-node"])
+def test_what_is_not_a_bare_pod(make_host, on_node):
+    host = control_plane(make_host)
+    host.pods = [on_node]
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert state(host)["phase"] == "REBOOT"
+
+
+def test_a_budget_that_blocks_comes_first(make_host):
+    host = control_plane(make_host)
+    host.pdbs, host.pods = [pdb()], [pod(), bare()]
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
+    reason = state(host)["hold"]["reason"]
+    assert "PDB kubone-data/kubone-pg-primary" in reason
+    assert "also refuse the pods that declare no controller: default/debug-x" \
+        in reason
+
+
+def test_a_bootstrap_node_with_other_nodes_checks_its_bare_pods(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10", nodes=2)
+    write_graph(host, STREAM_23)
+    host.pods = [bare()]
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 1
+    assert "default/debug-x" in state(host)["hold"]["reason"]
+
+
+def test_a_lone_bootstrap_node_keeps_its_bare_pods(make_host):
+    # Not drained: kubelet starts the pod again after the reboot.
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    host.pods = [bare()]
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert state(host)["phase"] == "REBOOT"
+
+
+def test_a_worker_names_its_bare_pods_while_it_waits_for_its_drain(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10", role="worker")
+    write_graph(host, STREAM_23)
+    host.pods = [bare()]
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 3
+    reason = [m for m in host.logs if m.startswith("not yet: ")][0]
+    assert reason.startswith(
+        "not yet: Node k4all-node-1 runs pods that declare no controller: "
+        "default/debug-x. Its drain refuses them")
+    assert "kubectl drain k4all-node-1 --ignore-daemonsets" in reason
+
+
+def test_a_worker_drained_from_outside_goes_on(make_host):
+    # Cordoned by whoever drains it: kubelet starts a pod that stayed
+    # again after the reboot.
+    host = make_host(version="v2.3.0", kubernetes="1.35.10", role="worker")
+    write_graph(host, STREAM_23)
+    host.unschedulable = True
+    host.pods = [bare()]
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert state(host)["phase"] == "REBOOT"
+
+
+def test_an_operator_hop_does_not_check_bare_pods(make_host):
+    # The k4all-operator (v0.5.8 on) checked them before its cordon.
+    host = make_host(version="v2.5.0", kubernetes="1.35.10", nodes=3)
+    write_graph(host, GRAPH)
+    host.pods = [bare()]
+    host.annotations[ku.ANNOTATION_TARGET] = "v2.6.0"
+    assert run_cli(host, "agent") == 0
+    assert not state(host).get("hold")
+
+
+def test_pods_that_cannot_be_read_do_not_hold_the_hop(make_host):
+    host = control_plane(make_host)
+    host.pods = None                    # the list fails
+    assert run_cli(host, "run", "--to", "v2.3.1", "--yes") == 0
+    assert state(host)["phase"] == "REBOOT"
+    assert any(m.startswith("cannot check the pods that declare no controller "
+                            "on k4all-node-1") for m in host.logs)
+
+
+@pytest.mark.parametrize("item,is_bare", [
+    (bare(), True),
+    (bare(phase="Pending"), True),      # bound and starting: still deleted
+    (pod(owner="ReplicaSet"), False),
+    (pod(owner="ConfigMap", controller=False), True),
+    (bare(mirror=True), False),
+    (bare(phase="Succeeded"), False),
+    (bare(terminating=True), False),
+])
+def test_declares_no_controller(item, is_bare):
+    assert ku.declares_no_controller(item) is is_bare

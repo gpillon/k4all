@@ -85,6 +85,12 @@ def manifest_digest(version, arch="amd64"):
     return "sha256:" + hashlib.sha256(("%s %s" % (arch, version)).encode()).hexdigest()
 
 
+def sandbox(pod_id, namespace, name, grace=30, containers=("main",)):
+    """A ready pod sandbox of CRI-O, as FakeHost.sandboxes holds it."""
+    return {"id": pod_id, "namespace": namespace, "name": name, "grace": grace,
+            "containers": list(containers)}
+
+
 class Proc:
     def __init__(self, stdout="", returncode=0, stderr=""):
         self.stdout = stdout
@@ -122,7 +128,7 @@ class FakeHost(ku.Host):
         self.unschedulable = False  # this Node is cordoned
         self.labels = {}            # labels of this Node
         self.pdbs = []              # PodDisruptionBudgets; None: the list fails
-        self.pods = []              # pods of the cluster, with spec.nodeName
+        self.pods = []              # pods of the cluster, with spec.nodeName; None: the list fails
         self.extra_nodes = []       # more Node objects for `get nodes`
         self.kubelet_running = True
         self.k4all_config = None    # the ClusterConfig CR, None: none listed
@@ -131,6 +137,13 @@ class FakeHost(ku.Host):
         self.vip_needs_kube_vip = False
         self.default_route_dev = "ens18"
         self.pods_stopped = 0       # times every pod was stopped with crictl
+        # CRI-O's ready pod sandboxes; "grace" is the terminationGracePeriod
+        # kubelet put on their running containers (None: no running one)
+        self.sandboxes = [sandbox("p-etcd", "kube-system", "etcd-k4all-node-1"),
+                          sandbox("p-dns", "kube-system", "coredns-5d78c9869d-x2k4q")]
+        self.crictl_fails = set()   # "pods", "ps": that listing fails
+        self.pod_stops = []         # stdin of each stop: "<seconds> <pod id>" lines
+        self.pod_stop_took = {}     # pod id -> seconds its stop takes (default 1)
         self.sleeps = []            # seconds of every Host.sleep, in order
         self.cluster_config = {
             "apiVersion": "kubeadm.k8s.io/v1beta4",
@@ -262,7 +275,12 @@ class FakeHost(ku.Host):
                         % self.default_route_dev)
         if cmd == "sh" and "crictl" in argv[-1]:
             self.pods_stopped += 1
-            return Proc()
+            self.pod_stops.append(input_text)
+            lines = [line.split() for line in (input_text or "").splitlines()]
+            return Proc("".join("%s 0 %d\n" % (pod, self.pod_stop_took.get(pod, 1))
+                                for _, pod in lines))
+        if cmd == "crictl":
+            return self._crictl(argv[3:])
         if cmd == "kubectl":
             return self._kubectl(argv[3:], input_text, kubeconfig=argv[2])
         if cmd.endswith("/k4all-backup.sh"):
@@ -274,6 +292,34 @@ class FakeHost(ku.Host):
         if cmd == "yq":
             raise AssertionError("tests have PyYAML; yq must not be needed")
         return Proc(returncode=127, stderr="unexpected command %s" % argv)
+
+    def _crictl(self, args):
+        """crictl --runtime-endpoint ... pods -o json --state ready, ps -o json"""
+        what = args[0]
+        if what in self.crictl_fails:
+            return Proc(returncode=1, stderr="crictl: rpc error: code = Unavailable")
+        if args == ["pods", "-o", "json", "--state", "ready"]:
+            return Proc(json.dumps({"items": [
+                {"id": p["id"], "state": "SANDBOX_READY",
+                 "metadata": {"name": p["name"], "namespace": p["namespace"],
+                              "uid": "u-" + p["id"], "attempt": 0}}
+                for p in self.sandboxes]}))
+        if args == ["ps", "-o", "json"]:
+            containers = []
+            for p in self.sandboxes:
+                if p["grace"] is None:
+                    continue
+                for name in p["containers"]:
+                    containers.append({
+                        "id": "c-%s-%s" % (p["id"], name), "podSandboxId": p["id"],
+                        "metadata": {"name": name, "attempt": 0},
+                        "state": "CONTAINER_RUNNING",
+                        "labels": {"io.kubernetes.pod.name": p["name"],
+                                   "io.kubernetes.pod.namespace": p["namespace"]},
+                        "annotations": {"io.kubernetes.container.restartCount": "0",
+                                        ku.GRACE_ANNOTATION: str(p["grace"])}})
+            return Proc(json.dumps({"containers": containers}))
+        return Proc(returncode=1, stderr="crictl %s" % args)
 
     def _bootc(self, args):
         if args[:2] == ["status", "--json"]:
@@ -465,6 +511,10 @@ class FakeHost(ku.Host):
                             "unable to handle the request")
             return Proc(json.dumps({"items": self.pdbs}))
         if args[:3] == ["get", "pods", "-A"]:
+            if self.pods is None:
+                return Proc(returncode=1, stderr="Error from server "
+                            "(ServiceUnavailable): the server is currently "
+                            "unable to handle the request")
             items = self.pods
             for i, arg in enumerate(args):
                 if arg == "--field-selector":

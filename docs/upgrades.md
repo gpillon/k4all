@@ -21,13 +21,16 @@ the workers. On a cluster with more nodes, drain each one first and read
 [Multi-node clusters](#multi-node-clusters):
 
 ```bash
-curl -fsSL https://github.com/gpillon/k4all/releases/download/v2.2.4/k4all-bridge.sh \
+curl -fsSL https://github.com/gpillon/k4all/releases/latest/download/k4all-bridge.sh \
   | sudo bash -s -- --now
 ```
 
-Without `--now` the bridge is staged and applied on the next reboot. With
-`--now` the script stages it, stops kubelet and the pods (30 seconds each at
-most), then reboots. The script checks the node first, and stops without
+Every release ships the script, always for the same v2.2.4 image. Without
+`--now` the bridge is staged and applied on the next reboot. With `--now` the
+script stages it, stops kubelet and the pods, then reboots. From the copy of
+v2.6.7 each pod gets its own grace period to stop, at least 30 and at most 300
+seconds (`K4ALL_POD_STOP_MAX_SECONDS`), as in a hop. Older copies give every
+pod 30 seconds. The script checks the node first, and stops without
 changing anything if a check fails.
 It also turns off bootc's own auto-update timer (see below).
 
@@ -115,6 +118,7 @@ window:
   days: [Sat]
   start: "02:30"    # node local time
   durationMinutes: 120
+# podStopMaxSeconds: 300   # from v2.6.7, see below
 ```
 
 - `mode: auto`: `k4all-upgrade.timer` checks every 15 minutes, and inside the
@@ -144,6 +148,12 @@ may run is dropped (`plan dropped:`). A plan of `run` whose target no path
 reaches any more goes to HOLD. A hop past its preflight is never planned again.
 The k4all-operator plans at every reconcile and the agent checks each hop it
 asks for.
+
+`podStopMaxSeconds` (from v2.6.7, default 300) is the most time one pod gets
+to stop right before a reboot. Each pod gets its own grace period, at least
+30 seconds and at most this. On a single node the preflight warns about the
+pods that ask for more (`k4all-upgrade status`, `Warning:`). A value that is
+not a whole number stops every command until it is fixed.
 
 bootc ships its own `bootc-fetch-apply-updates.timer`, which runs
 `bootc upgrade --apply`. That command would reboot a node into a new
@@ -180,9 +190,18 @@ Don't unmask it.
    k4all-operator tolerates the cordon (a single node must still run it), and
    prefers the nodes without that label, so a drain that evicts it does not
    put it back on the node that reboots.
-   Right before the reboot kubelet stops and every pod still on the node
-   (DaemonSets, or all of them on a single node) gets 30 seconds to exit, so
-   a pod with a long grace period cannot hold the shutdown.
+   Right before the reboot kubelet stops, and so do the pods still on the
+   node: DaemonSets, or all of them on a single node, its VMs included. From
+   v2.6.7 each pod gets its own `terminationGracePeriodSeconds` to exit, at
+   least 30 seconds and at most `podStopMaxSeconds` (see below). They stop in
+   parallel, so the reboot waits at most `podStopMaxSeconds`. A virt-launcher
+   pod has its VMI's grace period plus 30 seconds, and its guest shuts down
+   cleanly. Up to v2.6.6 every pod got 30 seconds, whatever it asked for
+   ([#98](https://github.com/gpillon/k4all/issues/98)). A guest that needed
+   longer lost QEMU halfway through its shutdown, as in a power cut. This
+   work runs before the reboot, so the tool of the release the node leaves
+   does it: a hop that starts from v2.6.6 or older still gives 30 seconds
+   (see [VMs on a single node](#vms-on-a-single-node)).
 6. **Post-boot.** kubelet runs the new version, the node is Ready and the
    apiserver answers. If not, the tool rolls back to the previous image once
    (`bootc rollback`) and stops in HOLD.
@@ -238,7 +257,8 @@ then the workers, each one Ready again before the next.
   ```
 
   Right before the reboot the bridge stops kubelet and the pods left on the
-  node (DaemonSets), 30 seconds each at most.
+  node (DaemonSets). Each gets its own grace period, from 30 to 300 seconds
+  with the script of v2.6.7 or later, and 30 seconds with older copies.
 - After the bridge the node has the default policy: `mode: auto`, which runs
   patch hops on its own inside the window (Saturday 02:30), on each node
   apart and in no order. On a cluster with more nodes, right after the
@@ -339,6 +359,57 @@ primary with a ready replica on another node.
   `kubectl get pods -A -o wide --field-selector spec.nodeName=<node>`.
 
 A single-node cluster is not drained, and is not checked.
+
+#### Pods that declare no controller
+
+A pod that no controller owns makes `kubectl drain` refuse the whole drain
+(`cannot delete Pods that declare no controller (use --force to
+override)`), unless you add `--force`, which deletes it. Nothing recreates
+it. Examples are a pod of `kubectl run` and a `kubectl debug node/<node>`
+pod left running. Up to v2.6.6:
+
+- a ClusterUpgrade (k4all-operator v0.5.0 to v0.5.7) evicted it, and so
+  deleted it, without a word;
+- `k4all-upgrade` on a node that drains itself found out at DRAIN. That
+  comes after STAGE and PRE_REBOOT, so the node was already cordoned, its
+  image staged, and `kubeadm upgrade` already run on a hop that changes
+  Kubernetes.
+
+From v2.6.7 (k4all-operator v0.5.8,
+[#99](https://github.com/gpillon/k4all/issues/99)) the drivers name such
+pods before anything changes, and a hop waits instead of deleting them.
+Finished pods, static pods' mirrors, DaemonSet pods and terminating pods do
+not count.
+
+- `k4all-upgrade` on a node that drains itself stops in HOLD in the
+  preflight: `the drain of <node> would refuse the pods that declare no
+  controller: <namespace>/<pod> ...`. Nothing was changed.
+- A worker that waits for its drain names them first in `Waiting:`.
+- A ClusterUpgrade does not cordon the node while it runs one, and its
+  status message names them. A pod without a controller on a node already
+  being drained is not evicted either: the drain waits for it until its
+  timeout.
+
+This is a change: a ClusterUpgrade that used to delete such a pod now waits
+for you. Delete the pods (`kubectl delete pod -n <namespace> <pod>`), or
+recreate them under a controller (a Deployment, a Job) first. Then run
+`sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume` on the node, or
+let the ClusterUpgrade go on by itself. A single-node cluster is not drained:
+kubelet starts such a pod again after the reboot. The CLI check helps the
+hops that start from v2.6.7 or later
+([ADR-0004](adr/0004-one-upgrade-tool-in-every-release.md)).
+
+#### VMs on a single node
+
+A single node is not drained, so its VMs run until the reboot. From v2.6.7
+each virt-launcher pod then gets its own grace period: the VMI's
+`terminationGracePeriodSeconds` (KubeVirt's default is 30) plus 30 seconds,
+at most `podStopMaxSeconds`. The preflight warns about the pods that ask for
+more, for example a Windows VM with 3600 seconds. A hop that starts from
+v2.6.6 or older gives every pod 30 seconds. On those releases, stop the VMs
+with a slow shutdown yourself before the hop: `virtctl stop <vm>`, and
+`virtctl start <vm>` after it. You can also set `mode: manual` and stop them
+before `k4all-upgrade run`.
 
 k4all does not change a database's safety settings: whether it may be down
 while its node reboots is your call. For a single-instance CloudNativePG

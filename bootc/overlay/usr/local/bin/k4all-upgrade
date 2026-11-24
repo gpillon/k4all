@@ -92,13 +92,25 @@ READY_POLL_SECONDS = 10
 # Lock waits (seconds): resume must not lose the hop to a short agent pass.
 LOCK_WAIT = 30
 RESUME_LOCK_WAIT = 600
-# Before a reboot every pod gets this long to stop (see Upgrader.stop_pods).
+# Before a reboot each pod gets its own terminationGracePeriodSeconds to
+# stop, at least POD_STOP_SECONDS (what every pod got up to v2.6.6) and at
+# most podStopMaxSeconds (see Upgrader.stop_pods).
 POD_STOP_SECONDS = 30
+# kubelet's annotation on each container of a pod: the pod's
+# terminationGracePeriodSeconds (pkg/kubelet/kuberuntime/labels.go). The pod
+# sandbox has no such annotation.
+GRACE_ANNOTATION = "io.kubernetes.pod.terminationGracePeriod"
 CRICTL = "crictl --runtime-endpoint unix:///run/crio/crio.sock"
-# crictl's --timeout is the deadline of the CRI call; CRI-O uses it as the
-# containers' stop timeout. One crictl per pod, all at once.
-STOP_PODS_SCRIPT = (CRICTL + " pods -q --state ready | xargs -r -n 1 -P 0 "
-                    + CRICTL + " --timeout=%ds stopp")
+# One crictl per pod, all at once; each input line is "<seconds> <pod id>".
+# crictl's --timeout is the deadline of the CRI call. CRI-O stops the pod's
+# containers with what is left of it, less 1 s for the infra container
+# (stopTimeoutFromContext, stopPodSandbox), then kills them: 2 s more give
+# the containers the pod's seconds. Each pod prints "<pod id> <crictl rc>
+# <seconds its stop took>"; the script fails (xargs: 123) when one stop did.
+STOP_PODS_SCRIPT = (
+    "xargs -r -n 2 -P 0 sh -c 's=$(date +%s); " + CRICTL
+    + " --timeout=$(($0 + 2))s stopp \"$1\" >/dev/null; r=$?; "
+    "echo \"$1 $r $(($(date +%s) - s))\"; [ $r -eq 0 ]'")
 # xargs: some of the commands it ran exited 1-125, here some `crictl stopp`.
 XARGS_SOME_FAILED = 123
 RELEASE_MANIFEST_NAME = "k4all"
@@ -130,6 +142,9 @@ DEFAULT_CONFIG = {
     "apiserverReadyTimeoutMinutes": 5,
     "componentsTimeoutMinutes": 45,
     "drainTimeoutMinutes": 15,
+    # Right before the reboot: the most time one pod may take to stop
+    # (Upgrader.stop_pods); never less than POD_STOP_SECONDS.
+    "podStopMaxSeconds": 300,
     "minFreeSysrootGiB": 3,
     "minFreeVarGiB": 2,
 }
@@ -430,7 +445,17 @@ def merge_config(user):
             raise UpgradeError("unknown window day %r (use %s)"
                                % (day, ", ".join(DAY_NAMES)))
     _parse_hhmm(cfg["window"]["start"])
+    most = cfg["podStopMaxSeconds"]
+    if isinstance(most, bool) or not isinstance(most, (int, str)) \
+            or not re.match(r"^\s*\d+\s*$", str(most)):
+        raise UpgradeError("podStopMaxSeconds must be a whole number of "
+                           "seconds, got %r" % (most,))
+    cfg["podStopMaxSeconds"] = int(most)
     return cfg
+
+
+def pod_stop_max_seconds(cfg):
+    return max(POD_STOP_SECONDS, int(cfg["podStopMaxSeconds"]))
 
 
 def _parse_hhmm(text):
@@ -1174,6 +1199,116 @@ def drain_blocked_message(node, blockers):
             "move the pod to another node" % (node, "; ".join(named), DRAIN_DOCS))
 
 
+def _whole_seconds(text):
+    try:
+        return int(str(text))
+    except ValueError:
+        return None
+
+
+def pod_stop_plan(sandboxes, containers, most):
+    """How long each ready pod may take to stop right before the reboot:
+    [(seconds, pod id, namespace/name, grace)], the longest first.
+
+    ``sandboxes`` and ``containers`` are what `crictl pods -o json` and
+    `crictl ps -o json` list. A pod's grace is the largest grace period
+    kubelet annotated on its running containers, None when none says. A pod
+    gets its grace, at least POD_STOP_SECONDS and at most ``most``; with
+    ``containers`` None (they could not be listed) every pod gets ``most``."""
+    graces = {}
+    for ctr in containers or []:
+        grace = _whole_seconds((ctr.get("annotations") or {})
+                               .get(GRACE_ANNOTATION, ""))
+        pod = ctr.get("podSandboxId")
+        if grace is not None and grace > graces.get(pod, -1):
+            graces[pod] = grace
+    plan = []
+    for box in sandboxes:
+        meta = box.get("metadata") or {}
+        grace = graces.get(box.get("id"))
+        if containers is None:
+            seconds = most
+        else:
+            seconds = min(max(grace or 0, POD_STOP_SECONDS), most)
+        plan.append((seconds, box.get("id"), "%s/%s" % (meta.get("namespace"),
+                                                         meta.get("name")),
+                     grace))
+    return sorted(plan, key=lambda p: (-p[0], p[2]))
+
+
+def long_grace_pods(pods, most):
+    """[(namespace/name, grace)] of ``pods`` that have not finished and whose
+    terminationGracePeriodSeconds is above ``most``, sorted."""
+    out = []
+    for pod in pods:
+        meta = pod.get("metadata") or {}
+        if (pod.get("status") or {}).get("phase") in ("Succeeded", "Failed"):
+            continue
+        grace = (pod.get("spec") or {}).get("terminationGracePeriodSeconds")
+        if isinstance(grace, int) and grace > most:
+            out.append(("%s/%s" % (meta.get("namespace"), meta.get("name")),
+                        grace))
+    return sorted(out)
+
+
+# The hop warning of a single node whose reboot cuts some pods short.
+GRACE_WARNING_PREFIX = "a single node is not drained, and the reboot gives"
+
+
+def long_grace_warning(most, pods):
+    named = ["%s asks %d s" % p for p in pods[:3]]
+    if len(pods) > 3:
+        named.append("and %d more" % (len(pods) - 3))
+    return ("%s each pod at most %d s to stop (podStopMaxSeconds): %s. Stop "
+            "them before the hop (`virtctl stop` for a VM, `virtctl start` "
+            "after it), or raise podStopMaxSeconds in %s"
+            % (GRACE_WARNING_PREFIX, most, ", ".join(named), CONFIG_FILE))
+
+
+def declares_no_controller(pod):
+    """Whether ``pod`` makes `kubectl drain` without --force refuse the
+    drain (kubectl's unreplicatedFilter): no ownerReference is its
+    controller, so nothing recreates it once evicted. A finished pod (the
+    drain deletes it), a static pod's mirror and a pod already terminating
+    do not count."""
+    meta = pod.get("metadata") or {}
+    if meta.get("deletionTimestamp") \
+            or (pod.get("status") or {}).get("phase") in ("Succeeded", "Failed") \
+            or MIRROR_ANNOTATION in (meta.get("annotations") or {}):
+        return False
+    return not any(o.get("controller") for o in meta.get("ownerReferences") or [])
+
+
+def bare_pods(pods):
+    """namespace/name of the pods among ``pods`` that declare no controller,
+    sorted."""
+    return sorted("%s/%s" % ((p.get("metadata") or {}).get("namespace"),
+                             (p.get("metadata") or {}).get("name"))
+                  for p in pods if declares_no_controller(p))
+
+
+def _some(names):
+    shown = ", ".join(names[:3])
+    return shown if len(names) <= 3 else "%s and %d more" % (shown, len(names) - 3)
+
+
+def bare_pods_message(node, names):
+    """The HOLD of a hop whose drain would refuse pods without a controller."""
+    return ("the drain of %s would refuse the pods that declare no controller: "
+            "%s. Nothing recreates such a pod once it is gone, and `kubectl "
+            "drain` deletes it only with --force. Nothing was changed. Delete "
+            "them, or recreate them under a controller (a Deployment, a Job), "
+            "see %s" % (node, _some(names), DRAIN_DOCS))
+
+
+def bare_pods_note(node, names):
+    """What a node that waits for its drain says about its bare pods."""
+    return ("Node %s runs pods that declare no controller: %s. Its drain "
+            "refuses them, and with --force deletes them for good: delete them "
+            "or recreate them under a controller first (see %s)."
+            % (node, _some(names), DRAIN_DOCS))
+
+
 def cluster_kubernetes_version(host, kubeconfig):
     cm = kubectl_json(host, kubeconfig,
                       ["-n", "kube-system", "get", "configmap", "kubeadm-config"])
@@ -1828,6 +1963,10 @@ class Upgrader:
         if not operator_driven(state) and self._needs_outside_drain():
             problem = self._cordon_problem("the hop can start")
             if problem:
+                bare = bare_pods(self._node_pods(
+                    kc, "the pods that declare no controller") or [])
+                if bare:
+                    problem = bare_pods_note(self._node_name(), bare) + " " + problem
                 raise NotYet(problem)
         # A drain this node runs itself would never end on a pod whose
         # budget allows no disruption: stop before anything is downloaded,
@@ -1836,9 +1975,54 @@ class Upgrader:
         if not operator_driven(state) and kc == ADMIN_KUBECONFIG \
                 and not self._single_node():
             blockers = self._drain_blockers(kc)
+            # So would a drain on a pod that declares no controller: kubectl
+            # refuses the whole drain, after STAGE and PRE_REBOOT and with
+            # the node cordoned (k4all#99). Deleting it is the admin's call.
+            bare = bare_pods(self._node_pods(
+                kc, "the pods that declare no controller") or [])
             if blockers:
-                raise UpgradeError(drain_blocked_message(self._node_name(),
-                                                         blockers))
+                message = drain_blocked_message(self._node_name(), blockers)
+                if bare:
+                    message += ("; the drain would also refuse the pods that "
+                                "declare no controller: %s" % _some(bare))
+                raise UpgradeError(message)
+            if bare:
+                raise UpgradeError(bare_pods_message(self._node_name(), bare))
+        # A single node is not drained: right before its reboot every pod
+        # gets at most podStopMaxSeconds to stop. Name the ones that ask for
+        # more, a VM above all, before anything changes.
+        if kc == ADMIN_KUBECONFIG and self._single_node():
+            self._warn_long_grace(kc, hop)
+
+    def _node_pods(self, kc, what):
+        """The pods on this node, or None when they cannot be read (logged:
+        cannot check ``what``)."""
+        got = kubectl(self.host, kc, ["get", "pods", "-A", "--field-selector",
+                                      "spec.nodeName=" + self._node_name(),
+                                      "-o", "json", KUBECTL_TIMEOUT], check=False)
+        try:
+            if got.returncode != 0:
+                raise ValueError((got.stderr or got.stdout or "").strip()[-300:])
+            return json.loads(got.stdout).get("items") or []
+        except ValueError as exc:
+            self.host.log("cannot check %s on %s (%s)"
+                          % (what, self._node_name(), exc))
+            return None
+
+    def _warn_long_grace(self, kc, hop):
+        most = pod_stop_max_seconds(self.cfg)
+        pods = self._node_pods(kc, "the grace periods of the pods")
+        warnings = [w for w in (hop.get("warning") or "").split("; ")
+                    if w and not w.startswith(GRACE_WARNING_PREFIX)]
+        long_ones = long_grace_pods(pods or [], most)
+        if long_ones:
+            warning = long_grace_warning(most, long_ones)
+            self.host.log("WARNING: %s" % warning)
+            warnings.append(warning)
+        if warnings:
+            hop["warning"] = "; ".join(warnings)
+        else:
+            hop.pop("warning", None)
 
     def _cluster_not_ready(self, kc, check_nodes=True):
         """(problem, nodes): what keeps the control plane from being ready
@@ -2129,38 +2313,114 @@ class Upgrader:
             raise
 
     def stop_pods(self):
-        """Stop kubelet, then every pod, each with POD_STOP_SECONDS to exit.
+        """Stop kubelet, then every pod, each within its own grace period.
 
         Without this the shutdown waits for each container's own grace
         period: ingress-nginx (300 s and a preStop hook that waits for nginx)
         held control-plane reboots for 4 minutes in the lab, the API down all
-        along. The DaemonSets that a drain leaves behind run here too. With
-        kubelet stopped nothing restarts the pods; CRI-O stops the containers
-        of each pod in parallel and kills what is left at the deadline."""
+        along. The DaemonSets that a drain leaves behind run here too, and
+        on a single node every pod, its VMs included. With kubelet stopped
+        nothing restarts the pods, and no preStop hook runs. Each pod gets
+        its terminationGracePeriodSeconds, at least POD_STOP_SECONDS and at
+        most podStopMaxSeconds: up to v2.6.6 every pod got 30 s, and a VM's
+        guest lost QEMU halfway through its shutdown (k4all#98). The pods
+        stop in parallel, so the reboot waits at most podStopMaxSeconds."""
         host = self.host
-        host.log("stopping kubelet and the pods (at most %d s)" % POD_STOP_SECONDS)
+        most = pod_stop_max_seconds(self.cfg)
+        host.log("stopping kubelet and the pods (each within its grace "
+                 "period: at least %d s, at most %d s)" % (POD_STOP_SECONDS, most))
         # Best effort: the reboot is decided. Whatever fails here is logged,
         # and the reboot goes on.
-        for argv, timeout in ((["systemctl", "stop", "kubelet"], 120),
-                              (["sh", "-c", STOP_PODS_SCRIPT % POD_STOP_SECONDS],
-                               POD_STOP_SECONDS + 60)):
+        self._best_effort(["systemctl", "stop", "kubelet"], 120)
+        plan = self._pod_stop_plan(most)
+        if not plan:
+            return
+        longer = ["%s %d s%s" % (name, seconds, "" if grace is None or
+                                 grace <= seconds else
+                                 " (of the %d s it asks)" % grace)
+                  for seconds, _, name, grace in plan if seconds > POD_STOP_SECONDS]
+        if longer:
+            host.log("before the reboot: pods with more than %d s to stop: %s"
+                     % (POD_STOP_SECONDS, ", ".join(longer)))
+        got = self._best_effort(
+            ["sh", "-c", STOP_PODS_SCRIPT], plan[0][0] + 60,
+            "".join("%d %s\n" % (seconds, pod) for seconds, pod, _, _ in plan))
+        if got is not None:
+            self._report_pod_stops(plan, got.stdout)
+
+    def _best_effort(self, argv, timeout, input_text=None):
+        """Run a command before the reboot; log how it failed, if it did.
+        Returns its result, None when it could not run."""
+        host = self.host
+        try:
+            got = host.run(argv, check=False, timeout=timeout,
+                           input_text=input_text)
+        except Exception as exc:  # pylint: disable=broad-except
+            host.log("before the reboot: %s: %s" % (argv[0], exc))
+            return None
+        if argv[0] == "sh" and got.returncode == XARGS_SOME_FAILED:
+            # Some pods did not stop cleanly, mostly their network: the
+            # CNI cannot reach the apiserver any more, or the netns is
+            # still busy ("failed to remove netns path ... device or
+            # resource busy", VM 953). The reboot ends them anyway.
+            host.log("before the reboot: some pods did not stop cleanly; "
+                     "the reboot ends them (last crictl message: %s)"
+                     % (got.stderr or "").strip()[-160:])
+        elif got.returncode != 0:
+            host.log("before the reboot: %s exited %d: %s"
+                     % (" ".join(argv[:2]), got.returncode,
+                        (got.stderr or "").strip()[-200:]))
+        return got
+
+    def _pod_stop_plan(self, most):
+        """pod_stop_plan() of the ready pods; [] when they cannot be listed
+        (the reboot ends them)."""
+        host, crictl = self.host, CRICTL.split()
+
+        def listing(args, key):
+            """(the list, None), or (None, why it could not be read)."""
             try:
-                got = host.run(argv, check=False, timeout=timeout)
+                got = host.run(crictl + args, check=False, timeout=60)
             except Exception as exc:  # pylint: disable=broad-except
-                host.log("before the reboot: %s: %s" % (argv[0], exc))
+                return None, "%s: %s" % (type(exc).__name__, exc)
+            if got.returncode != 0:
+                return None, ((got.stderr or "").strip()[-200:]
+                              or "rc=%d" % got.returncode)
+            try:
+                return json.loads(got.stdout or "{}").get(key) or [], None
+            except (ValueError, AttributeError) as exc:
+                return None, "unreadable: %s" % exc
+        sandboxes, why = listing(["pods", "-o", "json", "--state", "ready"],
+                                 "items")
+        if sandboxes is None:
+            host.log("before the reboot: cannot list the pods (%s): the reboot "
+                     "ends them" % why)
+            return []
+        containers, why = listing(["ps", "-o", "json"], "containers")
+        if containers is None:
+            host.log("before the reboot: cannot read the grace periods of the "
+                     "pods (%s): each pod gets up to %d s" % (why, most))
+        return pod_stop_plan(sandboxes, containers, most)
+
+    def _report_pod_stops(self, plan, stdout):
+        """Log the pods that used all their time (CRI-O killed what was
+        left), and how long the ones with more than POD_STOP_SECONDS took."""
+        took = {}
+        for line in (stdout or "").splitlines():
+            parts = line.split()
+            if len(parts) == 3 and parts[2].isdigit():
+                took[parts[0]] = int(parts[2])
+        for seconds, pod, name, grace in plan:
+            if pod not in took:
                 continue
-            if argv[0] == "sh" and got.returncode == XARGS_SOME_FAILED:
-                # Some pods did not stop cleanly, mostly their network: the
-                # CNI cannot reach the apiserver any more, or the netns is
-                # still busy ("failed to remove netns path ... device or
-                # resource busy", VM 953). The reboot ends them anyway.
-                host.log("before the reboot: some pods did not stop cleanly; "
-                         "the reboot ends them (last crictl message: %s)"
-                         % (got.stderr or "").strip()[-160:])
-            elif got.returncode != 0:
-                host.log("before the reboot: %s exited %d: %s"
-                         % (" ".join(argv[:2]), got.returncode,
-                            (got.stderr or "").strip()[-200:]))
+            if took[pod] >= seconds:
+                asks = " (it asks %d s)" % grace \
+                    if grace is not None and grace > seconds else ""
+                self.host.log("before the reboot: %s did not stop within %d s%s: "
+                              "CRI-O killed it" % (name, seconds, asks))
+            elif seconds > POD_STOP_SECONDS:
+                self.host.log("before the reboot: %s stopped in %d s (of %d s)"
+                              % (name, took[pod], seconds))
 
     # --- POST_BOOT -------------------------------------------------------
     def post_boot(self, state):
