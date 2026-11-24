@@ -256,7 +256,9 @@ bootc_unit() {
 # every pod a VM's guest lost QEMU halfway through its shutdown (k4all#98).
 # CRI-O takes crictl's --timeout as the deadline of the stop, keeps 2 s of it
 # for the call and the infra container, and stops the containers of a pod in
-# parallel; one crictl per pod, all at once. Listing the pods changes
+# parallel; one crictl per pod, all at once. It tears the pod's network down
+# first: when that fails (the CNI agent stops too), the stop is tried again
+# while the pod has time left (3 tries at most). Listing the pods changes
 # nothing, so a dry run lists them too.
 stop_pods() {
     local crictl="crictl --runtime-endpoint unix:///run/crio/crio.sock" pods graces plan
@@ -290,7 +292,9 @@ stop_pods() {
         return 0
     fi
     echo "$plan" | xargs -r -n 2 -P 0 sh -c \
-        "$crictl --timeout=\$((\$0 + 2))s stopp \"\$1\" >/dev/null 2>&1" || true
+        "end=\$((\$(date +%s) + \$0)); n=0; while [ \$n -lt 3 ]; do n=\$((n + 1));
+         $crictl --timeout=\$((end - \$(date +%s) + 2))s stopp \"\$1\" >/dev/null 2>&1 && break;
+         [ \$((end - \$(date +%s))) -gt 1 ] || break; sleep 1; done" || true
 }
 
 if [ "$NOW" = true ]; then
