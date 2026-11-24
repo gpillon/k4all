@@ -624,7 +624,10 @@ spec:
       # left pending by a stopped operator is recovered; a ClusterUpgrade
       # labels the node it drains and does not cordon a node a
       # PodDisruptionBudget would keep from draining (#86, #87).
-      version: "v0.5.7"
+      # v0.5.8 (k4all v2.6.7): a ClusterUpgrade does not cordon a node that
+      # runs a pod without a controller, names it, and never evicts one
+      # (#99).
+      version: "v0.5.8"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system
