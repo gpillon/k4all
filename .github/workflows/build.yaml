@@ -453,7 +453,7 @@ jobs:
             Nodes on v2.0 – v2.2.3 first move to the v2.2.4 bridge, one node
             at a time, control planes first:
             ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/v2.2.4/k4all-bridge.sh | sudo bash -s -- --now
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ needs.version.outputs.version }}/k4all-bridge.sh | sudo bash -s -- --now
             ```
 
             ### Why are the files split?

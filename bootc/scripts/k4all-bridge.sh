@@ -8,7 +8,7 @@
 # from a control plane first and uncordon it afterwards, and set mode: manual
 # or managed in /etc/k4all-upgrade.yaml right after the bridge.
 #
-#   curl -fsSL https://github.com/gpillon/k4all/releases/download/v2.2.4/k4all-bridge.sh \
+#   curl -fsSL https://github.com/gpillon/k4all/releases/latest/download/k4all-bridge.sh \
 #     | sudo bash -s -- [--now]
 #
 # Options:
@@ -18,6 +18,10 @@
 #               use: `--dry-run --now` shows the switch and the reboot,
 #               `--dry-run` alone shows the staging for the next reboot.
 #   --force     continue when a check only warns (unknown image, nodes not Ready)
+#
+# Right before the reboot each pod gets its own grace period to stop, at least
+# 30 s and at most K4ALL_POD_STOP_MAX_SECONDS (default 300): first the pods on
+# the pod network, then the host-network ones, so at most twice that.
 set -euo pipefail
 
 BRIDGE_VERSION="v2.2.4"
@@ -27,6 +31,7 @@ BRIDGE_DIGEST="@@BRIDGE_DIGEST@@"
 ROOT="${K4ALL_ROOT:-}"
 MIN_FREE_GIB=3
 POD_STOP_SECONDS=30
+POD_STOP_MAX_SECONDS="${K4ALL_POD_STOP_MAX_SECONDS:-300}"
 
 NOW=false
 DRY_RUN=false
@@ -70,6 +75,9 @@ fi
 BRIDGE_IMAGE="${K4ALL_BRIDGE_IMAGE:-$BRIDGE_IMAGE}"
 
 [ "$(id -u)" -eq 0 ] || [ -n "$ROOT" ] || die "run as root (sudo)"
+[[ "$POD_STOP_MAX_SECONDS" =~ ^[0-9]+$ ]] \
+    || die "K4ALL_POD_STOP_MAX_SECONDS must be a number of seconds, got '$POD_STOP_MAX_SECONDS'"
+[ "$POD_STOP_MAX_SECONDS" -ge "$POD_STOP_SECONDS" ] || POD_STOP_MAX_SECONDS=$POD_STOP_SECONDS
 if [ "$DRY_RUN" = true ]; then
     if [ "$NOW" = true ]; then
         log "dry run: nothing changes; 'would run' lines are what --now runs"
@@ -241,27 +249,79 @@ bootc_unit() {
     fi
 }
 
-# Before the reboot: stop kubelet, then every pod with at most
-# POD_STOP_SECONDS to exit. Otherwise the shutdown waits for each container's
-# own grace period: ingress-nginx (300 s and a preStop hook) held reboots for
-# 4 minutes in the lab. CRI-O takes crictl's --timeout as the stop deadline
-# and stops the containers of a pod in parallel; one crictl per pod. Listing
-# the pods changes nothing, so a dry run lists them too.
+# Before the reboot: stop kubelet, then every pod. Otherwise the shutdown
+# waits for each container's own grace period: ingress-nginx (300 s and a
+# preStop hook) held reboots for 4 minutes in the lab. Each pod gets its own
+# terminationGracePeriodSeconds (kubelet's annotation on its containers), at
+# least POD_STOP_SECONDS and at most POD_STOP_MAX_SECONDS: with 30 s for
+# every pod a VM's guest lost QEMU halfway through its shutdown (k4all#98).
+# CRI-O takes crictl's --timeout as the deadline of the stop, keeps 2 s of it
+# for the call and the infra container, and stops the containers of a pod in
+# parallel; one crictl per pod, all at once. It tears the pod's network down
+# first, so the pods on the pod network stop first, then the ones on the host
+# network (the CNI agent, the static pods): with the agent stopping at the
+# same time the teardown failed and left the containers alone. A stop that
+# failed is tried again while the pod has time left (3 tries at most). The
+# reboot waits at most twice POD_STOP_MAX_SECONDS. Listing the pods changes
+# nothing, so a dry run lists them too.
 stop_pods() {
-    local crictl="crictl --runtime-endpoint unix:///run/crio/crio.sock" pods
-    log "stopping kubelet and the pods (at most ${POD_STOP_SECONDS} s)"
+    local crictl="crictl --runtime-endpoint unix:///run/crio/crio.sock" pods graces plan
+    local networks host_pods
+    log "stopping kubelet and the pods (each within its grace period: at least" \
+        "${POD_STOP_SECONDS} s, at most ${POD_STOP_MAX_SECONDS} s)"
     run systemctl stop kubelet || true
     command -v crictl >/dev/null || return 0
     pods=$($crictl pods -q --state ready 2>/dev/null || true)
     [ -n "$pods" ] || return 0
+    # "<pod id> <grace>" of each running container
+    graces=$($crictl ps -o json 2>/dev/null | jq -r '.containers[]? | "\(.podSandboxId) \(
+        .annotations["io.kubernetes.pod.terminationGracePeriod"] // "")"' 2>/dev/null) \
+        || graces=unreadable
+    if [ "$graces" = unreadable ]; then
+        log "cannot read the grace periods of the pods: each gets up to ${POD_STOP_MAX_SECONDS} s"
+    fi
+    plan=$(for pod in $pods; do
+        if [ "$graces" = unreadable ]; then
+            echo "$POD_STOP_MAX_SECONDS $pod"
+        else
+            echo "$graces" | awk -v id="$pod" -v lo="$POD_STOP_SECONDS" \
+                -v hi="$POD_STOP_MAX_SECONDS" '
+                $1 == id && $2 ~ /^[0-9]+$/ && $2 + 0 > g { g = $2 + 0 }
+                END { s = g < lo ? lo : g; print (s > hi ? hi : s), id }'
+        fi
+    done)
+    # "<pod id> <NODE|POD>" of each pod: NODE is the host network
+    # shellcheck disable=SC2086 # one argument per pod id
+    if networks=$($crictl inspectp -o json $pods 2>/dev/null | jq -r 'if type == "array"
+            then .[] else . end | "\(.status.id) \(.status.linux.namespaces.options.network // "")"' \
+            2>/dev/null); then
+        host_pods=$(echo "$networks" | awk '$2 == "NODE" { printf "%s ", $1 }')
+    else
+        log "cannot tell which pods are on the host network: every pod stops at once"
+        host_pods=""
+    fi
+    stop_phase "$(echo "$plan" | awk -v host="$host_pods" '
+        BEGIN { n = split(host, h, " "); for (i = 1; i <= n; i++) skip[h[i]] = 1 }
+        !($2 in skip)')"
+    stop_phase "$(echo "$plan" | awk -v host="$host_pods" '
+        BEGIN { n = split(host, h, " "); for (i = 1; i <= n; i++) keep[h[i]] = 1 }
+        $2 in keep')"
+}
+
+# stop_phase PLAN: stop the pods of PLAN ("<seconds> <pod id>" lines) at once.
+stop_phase() {
+    local crictl="crictl --runtime-endpoint unix:///run/crio/crio.sock"
+    [ -n "$1" ] || return 0
     if [ "$DRY_RUN" = true ]; then
-        for pod in $pods; do
-            log "would run: $crictl --timeout=${POD_STOP_SECONDS}s stopp $pod"
+        echo "$1" | while read -r seconds pod; do
+            log "would run: $crictl --timeout=$((seconds + 2))s stopp $pod"
         done
         return 0
     fi
-    echo "$pods" | xargs -r -n 1 -P 0 \
-        $crictl --timeout="${POD_STOP_SECONDS}s" stopp >/dev/null 2>&1 || true
+    echo "$1" | xargs -r -n 2 -P 0 sh -c \
+        "end=\$((\$(date +%s) + \$0)); t=\$((\$0 + 2)); n=0; while [ \$n -lt 3 ]; do n=\$((n + 1));
+         $crictl --timeout=\${t}s stopp \"\$1\" >/dev/null 2>&1 && break;
+         t=\$((end - \$(date +%s) + 1)); [ \$t -gt 2 ] || break; sleep 1; done" || true
 }
 
 if [ "$NOW" = true ]; then

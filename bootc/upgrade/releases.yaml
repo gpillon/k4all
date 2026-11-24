@@ -273,3 +273,29 @@ releases:
       before each hop (#73). A refused uninstall does not hold a hop.
       k4all-backup.sh --help prints its usage (#82). Kubernetes, CRI-O,
       Fedora and the other components are unchanged.
+
+  - version: v2.6.7
+    kind: patch
+    minFrom: v2.6.0
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    # The sync brings k4all-operator v0.5.8.
+    syncManifest: true
+    notes: >-
+      Right before a hop's reboot each pod gets its own
+      terminationGracePeriodSeconds to stop, at least 30 s and at most
+      podStopMaxSeconds (new in /etc/k4all-upgrade.yaml, default 300); the
+      pods stop in parallel. Up to v2.6.6 every pod got 30 s, so a VM whose
+      guest needed longer lost QEMU halfway through its shutdown, at every
+      hop of a single-node cluster (#98). On a single node the preflight
+      warns about pods that ask for more. A pod that declares no controller
+      (kubectl run, kubectl debug) is named before anything changes: a CLI
+      hop on a node that drains itself stops in HOLD before STAGE instead of
+      at DRAIN, and with k4all-operator v0.5.8 (through the manifest sync) a
+      ClusterUpgrade does not cordon its node and never evicts it; before,
+      ClusterUpgrade deleted such pods. This is a change: the upgrade now
+      waits until you delete the pod (#99). Both k4all-upgrade fixes protect
+      the hops that start from v2.6.7: a hop from v2.6.6 still gives every
+      pod 30 s. k4all-bridge.sh gives each pod its grace period too.
+      Kubernetes, CRI-O, Fedora and the other components are unchanged.

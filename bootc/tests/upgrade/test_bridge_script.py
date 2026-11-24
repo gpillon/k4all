@@ -30,7 +30,9 @@ def node(tmp_path):
     def setup(booted="ghcr.io/gpillon/k4all-bootc:v2.2.3-amd64", staged=None,
               image_tag=None, nodes="k4all-1   Ready   control-plane   1d   v1.35.6\n",
               admin=True, free_kib=50 * 1024 * 1024, node_type=None,
-              release_manifest=None, kube_vip_manifest=None, vip_up=True):
+              release_manifest=None, kube_vip_manifest=None, vip_up=True,
+              graces=(("pod-a", "30"), ("pod-b", "30")), ps_fails=False,
+              networks=(("pod-a", "POD"), ("pod-b", "NODE")), inspect_fails=False):
         status = {"status": {"booted": {"image": {"image": {"image": booted}}},
                              "staged": ({"image": {"image": {"image": staged}}}
                                         if staged else None)}}
@@ -64,12 +66,26 @@ def node(tmp_path):
         if node_type:
             (root / "etc").mkdir(exist_ok=True)
             (root / "etc/node-type").write_text(node_type + "\n")
-        # crictl: listing is read-only (not logged), stopping a pod is a change
+        # crictl: listing is read-only (not logged), stopping a pod is a change.
+        # `ps -o json`: the running containers, with kubelet's annotation of
+        # their pod's grace period
+        (tmp_path / "ps.json").write_text(json.dumps({"containers": [
+            {"id": "c%d" % i, "podSandboxId": pod, "annotations": {
+                "io.kubernetes.pod.terminationGracePeriod": grace}}
+            for i, (pod, grace) in enumerate(graces)]}))
+        # `inspectp -o json`: each pod's network namespace (NODE: host network)
+        (tmp_path / "inspectp.json").write_text(json.dumps([
+            {"status": {"id": pod, "linux": {"namespaces": {"options": {
+                "network": network}}}}} for pod, network in networks]))
         _fake(bin_dir, "crictl",
               'case " $* " in\n'
               '  *" pods -q --state ready "*) printf "pod-a\\npod-b\\n" ;;\n'
+              '  *" ps -o json "*) %s ;;\n'
+              '  *" inspectp -o json "*) %s ;;\n'
               '  *" stopp "*) echo "crictl $*" >> %s ;;\n'
-              "esac\n" % log)
+              "esac\n" % ("exit 1" if ps_fails else "cat %s" % (tmp_path / "ps.json"),
+                          "exit 1" if inspect_fails
+                          else "cat %s" % (tmp_path / "inspectp.json"), log))
         _fake(bin_dir, "df", 'echo Avail; echo %d\n' % free_kib)
         _fake(bin_dir, "id", 'echo 0\n')
         # the node ships mikefarah yq; mimic the one expression the script uses
@@ -81,9 +97,9 @@ def node(tmp_path):
             (root / "etc/kubernetes").mkdir(parents=True, exist_ok=True)
             (root / "etc/kubernetes/admin.conf").write_text("x")
 
-    def run(*args, path=None):
+    def run(*args, path=None, env_extra=None):
         env = dict(os.environ, PATH="%s:%s" % (bin_dir, path or os.environ["PATH"]),
-                   K4ALL_ROOT=str(root))
+                   K4ALL_ROOT=str(root), **(env_extra or {}))
         proc = subprocess.run(["bash", SCRIPT] + list(args), env=env,
                               capture_output=True, text=True)
         calls = log.read_text().splitlines() if log.exists() else []
@@ -135,13 +151,109 @@ def test_now_stops_the_pods_with_a_deadline_before_the_reboot(node):
     stop = calls.index("systemctl stop kubelet")
     assert calls.index("bootc switch ghcr.io/gpillon/k4all-bootc:v2.2.4") < stop
     stopp = sorted(c for c in calls if " stopp " in c)
+    # 30 s and 2 s more: CRI-O keeps them for the call and the infra container
     assert stopp == [
-        "crictl --runtime-endpoint unix:///run/crio/crio.sock --timeout=30s "
+        "crictl --runtime-endpoint unix:///run/crio/crio.sock --timeout=32s "
         "stopp pod-a",
-        "crictl --runtime-endpoint unix:///run/crio/crio.sock --timeout=30s "
+        "crictl --runtime-endpoint unix:///run/crio/crio.sock --timeout=32s "
         "stopp pod-b"]
     assert stop < min(calls.index(c) for c in stopp)
     assert calls[-1] == "systemctl reboot"
+
+
+def stop_deadlines(calls):
+    """{pod: crictl's --timeout} of the stops."""
+    out = {}
+    for c in calls:
+        if " stopp " in c:
+            words = c.split()
+            out[words[-1]] = words[-3]
+    return out
+
+
+# k4all#98: a VM's virt-launcher pod has its VMI's grace period plus 30 s;
+# with 30 s its guest lost QEMU halfway through its shutdown.
+def test_now_gives_each_pod_its_own_grace_period(node):
+    setup, run = node
+    setup(graces=(("pod-a", "210"), ("pod-a", "30"), ("pod-b", "1"),
+                  ("gone", "999")))
+    proc, calls = run("--now")
+    assert proc.returncode == 0, proc.stderr
+    assert stop_deadlines(calls) == {"pod-a": "--timeout=212s",
+                                     "pod-b": "--timeout=32s"}
+
+
+@pytest.mark.parametrize("env,deadline", [
+    ({}, "--timeout=302s"),
+    ({"K4ALL_POD_STOP_MAX_SECONDS": "900"}, "--timeout=902s"),
+    ({"K4ALL_POD_STOP_MAX_SECONDS": "10"}, "--timeout=32s"),
+])
+def test_a_grace_period_above_the_most_is_cut_to_it(node, env, deadline):
+    setup, run = node
+    setup(graces=(("pod-a", "3630"), ("pod-b", "30")))
+    proc, calls = run("--now", env_extra=env)
+    assert proc.returncode == 0, proc.stderr
+    assert stop_deadlines(calls)["pod-a"] == deadline
+
+
+def test_a_most_that_is_not_a_number_stops_before_anything_changes(node):
+    setup, run = node
+    setup()
+    proc, calls = run("--now", env_extra={"K4ALL_POD_STOP_MAX_SECONDS": "soon"})
+    assert proc.returncode == 1
+    assert "K4ALL_POD_STOP_MAX_SECONDS must be a number of seconds" in proc.stderr
+    assert calls == []
+
+
+def test_a_failed_stop_is_tried_again_while_the_pod_has_time(node, tmp_path):
+    # CRI-O tears the network down first; when that fails (the CNI agent
+    # stops too) the containers are untouched, and the next stop reaches them.
+    setup, run = node
+    setup(graces=(("pod-a", "210"), ("pod-b", "30")))
+    bin_dir = tmp_path / "bin"
+    real = (bin_dir / "crictl").read_text()
+    (bin_dir / "crictl").write_text(real.replace(
+        '  *" stopp "*) echo "crictl $*" >> ',
+        '  *" stopp pod-a "*) echo "crictl $*" >> %s; [ -e %s.a ] || { touch %s.a; exit 1; } ;;\n'
+        '  *" stopp "*) echo "crictl $*" >> ' % ((tmp_path / "calls.log",) + (tmp_path / "calls.log",) * 2)))
+    proc, calls = run("--now")
+    assert proc.returncode == 0, proc.stderr
+    a = [c for c in calls if c.endswith(" stopp pod-a")]
+    assert len(a) == 2 and a[0].split()[-3] == "--timeout=212s"
+    assert len([c for c in calls if c.endswith(" stopp pod-b")]) == 1
+
+
+# k4all#98, VM 980: with the CNI agent stopping at the same time, CRI-O's
+# network teardown of the other pods failed and left their containers alone.
+def test_the_pod_network_stops_before_the_host_network(node, tmp_path):
+    setup, run = node
+    setup(graces=(("pod-a", "210"), ("pod-b", "1")))
+    crictl = tmp_path / "bin" / "crictl"         # pod-a takes a second to stop
+    crictl.write_text(crictl.read_text().replace(
+        '  *" stopp "*) echo', '  *" stopp pod-a "*) sleep 1; echo "crictl $*" >> %s ;;\n'
+        '  *" stopp "*) echo' % (tmp_path / "calls.log")))
+    proc, calls = run("--now")
+    assert proc.returncode == 0, proc.stderr
+    stopp = [c.split()[-1] for c in calls if " stopp " in c]
+    assert stopp == ["pod-a", "pod-b"], "pod-b, on the host network, after"
+
+
+def test_without_the_networks_every_pod_stops_at_once(node):
+    setup, run = node
+    setup(inspect_fails=True)
+    proc, calls = run("--now")
+    assert proc.returncode == 0, proc.stderr
+    assert sorted(c.split()[-1] for c in calls if " stopp " in c) == ["pod-a", "pod-b"]
+    assert "cannot tell which pods are on the host network" in proc.stdout
+
+
+def test_grace_periods_that_cannot_be_read_give_every_pod_the_most(node):
+    setup, run = node
+    setup(ps_fails=True)
+    proc, calls = run("--now")
+    assert proc.returncode == 0, proc.stderr
+    assert stop_deadlines(calls) == {"pod-a": "--timeout=302s",
+                                     "pod-b": "--timeout=302s"}
 
 
 def test_staging_without_now_leaves_the_pods_alone(node):
