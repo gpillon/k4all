@@ -10,8 +10,11 @@ single node nothing drains the VMs first.
 
 From v2.6.7 a pod gets its own terminationGracePeriodSeconds, at least 30 s
 (what every pod got before) and at most podStopMaxSeconds (default 300). The
-pods stop in parallel, so the reboot waits for the longest of them, never
-more than podStopMaxSeconds.
+pods on the pod network stop first, in parallel, while the CNI agent still
+runs: CRI-O tears a pod's network down before it stops the containers, and
+with the agent gone that teardown fails and leaves the containers untouched
+(VM 980). The host-network pods (the CNI agent, the static pods) stop after
+them, in parallel. The reboot waits at most twice podStopMaxSeconds.
 """
 
 import os
@@ -34,7 +37,8 @@ LAUNCHER = sandbox("p-vm", "vms", "virt-launcher-slow-shutdown-7xq2m", grace=210
                    containers=("compute", "guest-console-log"))
 WINDOWS = sandbox("p-win", "vms", "virt-launcher-win11-k8d2c", grace=3630,
                   containers=("compute",))
-CILIUM = sandbox("p-cilium", "kube-system", "cilium-vq9zt", grace=1)
+CILIUM = sandbox("p-cilium", "kube-system", "cilium-vq9zt", grace=1,
+                 network="NODE")
 
 
 def single_node(make_host, *sandboxes, policy=None):
@@ -46,10 +50,20 @@ def single_node(make_host, *sandboxes, policy=None):
     return host
 
 
-def stops(host):
-    """The time each pod got at the last stop: {pod id: seconds}."""
-    lines = [line.split() for line in host.pod_stops[-1].splitlines()]
-    return {pod: int(seconds) for seconds, pod in lines}
+def stops(host, last=None):
+    """The time each pod got: {pod id: seconds}, from every stop of the hop
+    or from the ``last`` ones."""
+    got = {}
+    for stdin in host.pod_stops[-last if last else 0:]:
+        for seconds, pod in (line.split() for line in stdin.splitlines()):
+            got[pod] = int(seconds)
+    return got
+
+
+def phases(host):
+    """The pods of each stop, in order: [[pod id, ...], ...]."""
+    return [sorted(line.split()[1] for line in stdin.splitlines())
+            for stdin in host.pod_stops]
 
 
 def hop(host):
@@ -64,7 +78,6 @@ def test_a_vm_gets_its_grace_period_before_the_reboot(make_host):
     assert stops(host) == {"p-vm": 210, "p-etcd": 30, "p-dns": 30,
                            "p-cilium": 30}, \
         "its own grace period, never less than the 30 s of before"
-    assert host.pods_stopped == 1, "in one go: the pods stop in parallel"
     stop = host.calls.index(["systemctl", "stop", "kubelet"])
     listed = host.calls.index(ku.CRICTL.split() + ["ps", "-o", "json"])
     assert stop < listed, "listed once kubelet cannot start anything new"
@@ -200,8 +213,58 @@ def test_the_rollback_reboot_gives_the_pods_their_time_too(make_host):
     hop(host)
     run_cli(host, "resume")
     assert ku.load_state(host)["phase"] == "ROLLBACK_REBOOT"
-    assert host.pods_stopped == 2
-    assert stops(host)["p-vm"] == 210
+    assert host.pods_stopped == 4, "two phases at each reboot"
+    assert stops(host, last=2)["p-vm"] == 210
+
+
+# --- pod network first, host network after ---------------------------------------
+# VM 980, hop v2.6.7 -> v2.6.91: 27 of about 40 pods lost their network
+# teardown to the Cilium agent stopping at the same time.
+def test_the_pod_network_stops_before_the_host_network(make_host):
+    host = single_node(make_host, LAUNCHER, CILIUM)
+    hop(host)
+    assert phases(host) == [["p-dns", "p-vm"], ["p-cilium", "p-etcd"]], \
+        "the CNI agent and the static pods after the pods that need them"
+    prefix = ku.CRICTL.split() + ["inspectp", "-o", "json"]
+    inspect = [i for i, c in enumerate(host.calls) if c[:len(prefix)] == prefix]
+    assert len(inspect) == 1, "one call for every pod"
+    assert sorted(host.calls[inspect[0]][len(prefix):]) == \
+        ["p-cilium", "p-dns", "p-etcd", "p-vm"]
+    first = host.calls.index(["sh", "-c", ku.STOP_PODS_SCRIPT])
+    inspect = inspect[0]
+    assert inspect < first
+    assert "before the reboot: stopping the pods on the pod network (2), then " \
+           "the ones on the host network (2)" in host.logs
+
+
+def test_host_network_pods_get_their_own_grace_period_too(make_host):
+    typha = sandbox("p-typha", "calico-system", "calico-typha-7c9", grace=3630,
+                    network="NODE")
+    host = single_node(make_host, typha)
+    hop(host)
+    assert stops(host, last=1) == {"p-etcd": 30, "p-typha": 300}
+
+
+def test_a_pod_whose_network_is_unknown_stops_with_the_first(make_host):
+    host = single_node(make_host, sandbox("p-odd", "apps", "odd-0", network=None))
+    hop(host)
+    assert phases(host) == [["p-dns", "p-odd"], ["p-etcd"]]
+
+
+def test_without_the_networks_every_pod_stops_at_once(make_host):
+    host = single_node(make_host, LAUNCHER, CILIUM)
+    host.crictl_fails = {"inspectp"}
+    hop(host)
+    assert phases(host) == [["p-cilium", "p-dns", "p-etcd", "p-vm"]]
+    assert any(m.startswith("before the reboot: cannot tell which pods are on "
+                            "the host network (") for m in host.logs)
+
+
+def test_only_host_network_pods_stop_in_one_go(make_host):
+    host = single_node(make_host)
+    host.sandboxes = [s for s in host.sandboxes if s["network"] == "NODE"]
+    hop(host)
+    assert phases(host) == [["p-etcd"]]
 
 
 # --- the script that stops them -------------------------------------------------
@@ -249,8 +312,8 @@ def test_the_stop_script_retries_a_stop_whose_network_teardown_failed(tmp_path):
     assert got.returncode == 0, got.stderr
     calls = [line.split() for line in log.read_text().splitlines()]
     p2 = [c[-3] for c in calls if c[-1] == "p2"]
-    assert len(p2) == 2 and p2[0] == "--timeout=12s"
-    assert p2[1] in ("--timeout=9s", "--timeout=10s"), "the time left, not more"
+    assert len(p2) == 2 and p2[0] == "--timeout=12s", "the first try: the whole time"
+    assert p2[1] in ("--timeout=8s", "--timeout=9s"), "then the time left, not more"
     assert len([c for c in calls if c[-1] == "p1"]) == 1
     assert sorted(line.split()[:2] + line.split()[3:] for line in
                   got.stdout.splitlines()) == [["p1", "0", "1"], ["p2", "0", "2"]]

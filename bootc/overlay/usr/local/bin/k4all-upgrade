@@ -107,18 +107,17 @@ CRICTL = "crictl --runtime-endpoint unix:///run/crio/crio.sock"
 # containers with what is left of the deadline, less 1 s for the infra
 # container (stopTimeoutFromContext), and kills them at the end: 2 s more
 # give the containers the pod's seconds. A failed network teardown fails the
-# call with the containers untouched, but CRI-O marks the network stopped:
+# call with the containers untouched (Upgrader.stop_pods stops the CNI agent
+# last so that it does not happen), but CRI-O marks the network stopped:
 # while the pod has time left, the stop is tried again (3 tries at most), and
-# the next call goes straight to the containers. On a VM the CNI agent stops
-# at the same time and cilium-cni waits about 32 s for it before it fails.
-# Each pod prints "<pod id> <0, or 1 when its stop failed> <seconds it
-# took> <tries>"; the script fails (xargs: 123) when one stop did.
+# the next call goes straight to the containers. Each pod prints "<pod id>
+# <0, or 1 when its stop failed> <seconds it took> <tries>"; the script fails
+# (xargs: 123) when one stop did.
 STOP_ONE_POD = (
-    "s=$(date +%s); end=$((s + $0)); r=1; n=0; "
+    "s=$(date +%s); end=$((s + $0)); t=$(($0 + 2)); r=1; n=0; "
     "while [ $n -lt 3 ]; do n=$((n + 1)); "
-    + CRICTL + " --timeout=$((end - $(date +%s) + 2))s stopp \"$1\" >/dev/null"
-    " && { r=0; break; }; "
-    "[ $((end - $(date +%s))) -gt 1 ] || break; sleep 1; done; "
+    + CRICTL + " --timeout=${t}s stopp \"$1\" >/dev/null && { r=0; break; }; "
+    "t=$((end - $(date +%s) + 1)); [ $t -gt 2 ] || break; sleep 1; done; "
     "echo \"$1 $r $(($(date +%s) - s)) $n\"; [ $r -eq 0 ]")
 STOP_PODS_SCRIPT = "xargs -r -n 2 -P 0 sh -c '" + STOP_ONE_POD + "'"
 # xargs: some of the commands it ran exited 1-125, here some `crictl stopp`.
@@ -2334,8 +2333,14 @@ class Upgrader:
         nothing restarts the pods, and no preStop hook runs. Each pod gets
         its terminationGracePeriodSeconds, at least POD_STOP_SECONDS and at
         most podStopMaxSeconds: up to v2.6.6 every pod got 30 s, and a VM's
-        guest lost QEMU halfway through its shutdown (k4all#98). The pods
-        stop in parallel, so the reboot waits at most podStopMaxSeconds."""
+        guest lost QEMU halfway through its shutdown (k4all#98).
+
+        The pods on the pod network stop first, in parallel, then the ones
+        on the host network (the CNI agent, the static pods), in parallel.
+        CRI-O tears a pod's network down before it stops its containers;
+        with the CNI agent stopping at the same time that teardown failed
+        for 27 of about 40 pods on VM 980, and their containers were left to
+        the reboot. The reboot waits at most twice podStopMaxSeconds."""
         host = self.host
         most = pod_stop_max_seconds(self.cfg)
         host.log("stopping kubelet and the pods (each within its grace "
@@ -2353,11 +2358,49 @@ class Upgrader:
         if longer:
             host.log("before the reboot: pods with more than %d s to stop: %s"
                      % (POD_STOP_SECONDS, ", ".join(longer)))
-        got = self._best_effort(
-            ["sh", "-c", STOP_PODS_SCRIPT], plan[0][0] + 60,
-            "".join("%d %s\n" % (seconds, pod) for seconds, pod, _, _ in plan))
-        if got is not None:
-            self._report_pod_stops(plan, got.stdout)
+        networks = self._pod_networks([pod for _, pod, _, _ in plan])
+        first = [p for p in plan if networks.get(p[1]) != "NODE"]
+        then = [p for p in plan if networks.get(p[1]) == "NODE"]
+        if first and then:
+            host.log("before the reboot: stopping the pods on the pod network "
+                     "(%d), then the ones on the host network (%d)"
+                     % (len(first), len(then)))
+        for group in (first, then):
+            if not group:
+                continue
+            got = self._best_effort(
+                ["sh", "-c", STOP_PODS_SCRIPT], group[0][0] + 60,
+                "".join("%d %s\n" % (seconds, pod) for seconds, pod, _, _ in group))
+            if got is not None:
+                self._report_pod_stops(group, got.stdout)
+
+    def _pod_networks(self, pods):
+        """{pod id: NODE or POD}, the network namespace of each pod sandbox
+        (`crictl inspectp`); {} when they cannot be read (logged): then every
+        pod stops at once."""
+        if not pods:
+            return {}
+        try:
+            got = self.host.run(CRICTL.split() + ["inspectp", "-o", "json"] + pods,
+                                check=False, timeout=60)
+            if got.returncode != 0:
+                raise ValueError((got.stderr or "").strip()[-200:]
+                                 or "rc=%d" % got.returncode)
+            found = json.loads(got.stdout or "[]")
+            if isinstance(found, dict):
+                found = [found]
+            networks = {}
+            for item in found:
+                status = item.get("status") or {}
+                network = (((status.get("linux") or {}).get("namespaces") or {})
+                           .get("options") or {}).get("network")
+                if status.get("id") and network:
+                    networks[status["id"]] = network
+            return networks
+        except Exception as exc:  # pylint: disable=broad-except
+            self.host.log("before the reboot: cannot tell which pods are on the "
+                          "host network (%s): every pod stops at once" % exc)
+            return {}
 
     def _best_effort(self, argv, timeout, input_text=None):
         """Run a command before the reboot; log how it failed, if it did.
