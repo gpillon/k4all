@@ -66,9 +66,11 @@ The 2.x upgrade path:
 | v2.6.6 | patch with a ReleaseManifest sync: k4all-operator v0.5.7: turning Virtualization off is refused while VMs or their disks exist and otherwise lets KubeVirt and CDI uninstall themselves first (#94); KubeVirt/CDI feature gates kept on apply; a recreated TopoLVM StorageClass keeps its CDI StorageProfile (#80); no Failed status for a fresh KubeVirt/CDI (#81) or for a Helm release a stopped operator left pending; drains label their node and a budget that allows no disruption holds the hop (#86, #87); `k4all-upgrade` checks a saved plan before each hop (#73) |
 | v2.6.7 | patch with a ReleaseManifest sync: before the reboot each pod gets its own grace period (at most `podStopMaxSeconds`, 300 s), so VMs shut down cleanly on single-node clusters (#98); pods that declare no controller are named before anything changes: a CLI hop stops in PREFLIGHT, and k4all-operator v0.5.8's ClusterUpgrade waits instead of deleting them (#99); both protect the hops that start from v2.6.7 |
 | v2.7.0 | ReleaseManifest sync: k4all-operator v0.6.0 and the ClusterConfig settings for node settings (#60), KubeVirt gates and the VM state StorageClass, the metadata service and optional Rook/Ceph; Hangar replaces kubevirt-manager (what is still in use stays), Cairn for Ceph, the k4all addon 0.2.0 settings pages; new Cilium clusters take their pool from `podNetwork`, and `PodNetworkOverlap` reports an overlap (#72); every new field is optional, so the hop changes no setting (Kubernetes unchanged) |
-| v2.8.0 | unattended join: `kubeadm init` and `join` become declarative (Kubernetes unchanged) |
-| v2.9.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
-| v2.10.0 | Kubernetes 1.37 |
+| v2.7.x | patches: the cluster components made ready for Kubernetes 1.37, one at a time; v2.7.1 is upgrade readiness and remediations (k4all-operator v0.7.0) |
+| v2.8.0 | Kubernetes 1.37 and CRI-O 1.37 |
+
+Declarative `kubeadm init` and `join` (unattended join) come when they are
+ready; no release is planned for them.
 
 ### How releases are cut
 
