@@ -324,8 +324,8 @@ releases:
       snapshot-controller (external-snapshotter v8.7.0), and Headlamp
       restarts with the k4all addon 0.2.0. Cilium is applied once with the
       same cilium-config, and KubeVirt without upstream's empty fields and
-      with workloadUpdateMethods [LiveMigrate]: if that changes a top-level
-      KubeVirt spec field, KubeVirt's infra restarts once; VMs keep running.
+      with workloadUpdateMethods [LiveMigrate]: KubeVirt's infra does not
+      restart, and VMs keep running.
       New settings: node settings in spec.nodes (maxPods, CPU and topology
       manager, hugepages, IOMMU), rolled out one node at a time (#60);
       KubeVirt feature gates and the VM state StorageClass
