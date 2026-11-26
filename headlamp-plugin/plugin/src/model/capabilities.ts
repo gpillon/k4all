@@ -7,7 +7,9 @@
  * ReleaseManifest sync and can be newer than the plugin expects. Every
  * behaviour that depends on the operator is gated here, so supporting a new
  * operator feature is one entry in CAPABILITY_SINCE plus the control that
- * uses it. An unknown version has no optional capability.
+ * uses it. An unknown version has no optional capability. A pre-release has
+ * the capabilities of its release: v0.6.0-rc.1, the operator of a v2.7.0 test
+ * build, has v0.6.0's.
  */
 
 import { compareSemver, parseSemver } from './semver';
@@ -70,11 +72,15 @@ export function operatorVersion(rm: ReleaseManifestObject | null | undefined): s
   return wanted && parseSemver(wanted) ? wanted : null;
 }
 
-/** True when version is at least since; false for unknown or unparsable versions. */
+/**
+ * True when version is at least since; false for unknown or unparsable
+ * versions. Only the core version (X.Y.Z) counts: -rc.N and any other
+ * pre-release or build suffix are ignored.
+ */
 export function atLeast(version: string | null | undefined, since: string): boolean {
   const v = parseSemver(version);
   const s = parseSemver(since);
-  return !!v && !!s && compareSemver(v, s) >= 0;
+  return !!v && !!s && compareSemver({ ...v, prerelease: [] }, { ...s, prerelease: [] }) >= 0;
 }
 
 export function capabilitiesOf(version: string | null): Capabilities {
