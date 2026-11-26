@@ -439,8 +439,9 @@ const FIELD_EFFECT: Record<string, (after: unknown) => Effect> = {
       : {
           severity: 'warning',
           consequence:
-            'Uninstalls k4all-metadata: VMs started from then on get no metadata server (running ones ' +
-            'keep theirs until they restart). VMs without a cloud-init disk then boot without SSH keys or user-data.',
+            'Uninstalls k4all-metadata: 169.254.169.254 stops answering at once, running VMs included, and a VM ' +
+            'that restarts gets no k4all MAC or metadata server. VMs without a cloud-init disk then boot without ' +
+            'SSH keys or user-data.',
         },
   'features.virt.metadata.scope': after =>
     after === 'All'
