@@ -102,13 +102,13 @@ export function releaseManifest(): ReleaseManifestObject {
         cdi: { type: 'manifest', version: 'v1.66.1', featureGate: 'virt', dependsOn: ['kubevirt'] },
         hangar: {
           type: 'manifest',
-          version: 'v0.1.0',
+          version: 'v0.1.1',
           featureGate: 'virt',
           dependsOn: ['kubevirt', 'cdi'],
         },
         'hangar-node-agent': {
           type: 'manifest',
-          version: 'v0.1.0',
+          version: 'v0.1.1',
           featureGate: 'virt',
           dependsOn: ['kubevirt'],
         },
@@ -118,7 +118,7 @@ export function releaseManifest(): ReleaseManifestObject {
           version: 'v1.5.4',
           featureGate: 'virt',
         },
-        cairn: { type: 'manifest', version: 'v0.1.0', featureGate: 'rook' },
+        cairn: { type: 'manifest', version: 'v0.1.1', featureGate: 'rook' },
         argocd: {
           type: 'helm',
           version: '10.18.0',
