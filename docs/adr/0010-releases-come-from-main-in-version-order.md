@@ -41,7 +41,7 @@ patch:
 
 A minor syncs its manifest only when that sync is what makes it a minor: the
 first sync, CRD upgrades, a chart's major or a replaced component, as in
-v2.4.0 and the planned v2.8.0. It never carries a fix, a component patch or a
+v2.4.0 and v2.7.0. It never carries a fix, a component patch or a
 new operator forward. Every node of the stream before it goes through it, and
 a published minor cannot be replaced, since blocking it leaves that stream
 without a path. This refines

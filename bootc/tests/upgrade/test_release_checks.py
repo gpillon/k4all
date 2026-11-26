@@ -234,3 +234,120 @@ def test_only_the_highest_release_becomes_latest(version, tags, latest):
     proc = run("latest", version, stdin=ls_remote(tags))
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == latest
+
+
+# --- body ---------------------------------------------------------------------
+# The release body of VERSION: bootc/upgrade/release-body.md, then
+# docs/release-notes/VERSION.md. The release job published v2.6.7 without
+# notes, and they were added by hand half an hour later. The body is a file
+# the release step reads (body_path): the notes never pass through a
+# ${{ }} expression, which a run script would execute.
+
+def body(version, tmp_path, notes=None, env=None):
+    if notes is not None:
+        (tmp_path / ("%s.md" % version)).write_text(notes)
+    return run("body", version, "--repository", "gpillon/k4all",
+               "--notes-dir", str(tmp_path), env=env)
+
+
+def test_the_body_names_the_version_and_the_repository(tmp_path):
+    proc = body("v2.7.0", tmp_path, notes="")
+    assert proc.returncode == 0, proc.stderr
+    text = proc.stdout
+    assert text.startswith("## K4All v2.7.0\n")
+    assert "ghcr.io/gpillon/k4all-bootc:v2.7.0\n" in text
+    assert ("https://github.com/gpillon/k4all/releases/download/v2.7.0/"
+            "k4all-bridge.sh" in text)
+    assert "k4all-attended-v2.7.0-x86_64.iso.zst.part-*" in text
+    assert "@@" not in text
+
+
+def test_the_body_ends_with_the_notes_of_the_version(tmp_path):
+    notes = "### New in v2.7.0\n\n- `$(touch pwned)` and ${{ github.token }}\n"
+    proc = body("v2.7.0", tmp_path, notes=notes)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.endswith("\n\n" + notes)
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_notes_without_a_final_newline_get_one(tmp_path):
+    proc = body("v2.7.0", tmp_path, notes="- Hangar")
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.endswith("\n\n- Hangar\n")
+
+
+def test_a_version_without_notes_gets_the_template_and_a_warning(tmp_path):
+    env = dict(os.environ, GITHUB_ACTIONS="true")
+    proc = body("v2.7.1", tmp_path, env=env)
+    assert proc.returncode == 0, proc.stderr
+    assert "## K4All v2.7.1\n" in proc.stdout
+    assert proc.stderr.startswith("::warning::")
+    assert "v2.7.1.md" in proc.stderr
+
+
+@pytest.mark.parametrize("version", ["../v2.7.0", "v2.7.0/x", "main", ""])
+def test_a_body_is_made_only_for_a_version(tmp_path, version):
+    proc = body(version, tmp_path)
+    assert proc.returncode == 1
+    assert proc.stdout == ""
+
+
+def test_the_notes_dir_defaults_to_the_repo_docs():
+    env = dict(os.environ, GITHUB_ACTIONS="true")
+    proc = run("body", "v0.0.1", "--repository", "gpillon/k4all", env=env)
+    assert proc.returncode == 0, proc.stderr
+    assert os.path.join("docs", "release-notes", "v0.0.1.md") in proc.stderr
+
+
+def test_every_notes_file_is_named_after_a_release_of_the_graph():
+    # a misspelt file name would publish the release without its notes
+    import yaml
+    with open(os.path.join(REPO, "bootc", "upgrade", "releases.yaml"),
+              encoding="utf-8") as fh:
+        versions = {rel["version"] for rel in yaml.safe_load(fh)["releases"]}
+    notes = os.path.join(REPO, "docs", "release-notes")
+    names = sorted(os.listdir(notes)) if os.path.isdir(notes) else []
+    stray = [name for name in names
+             if name != "README.md" and (not name.endswith(".md")
+                                         or name[:-len(".md")] not in versions)]
+    assert stray == [], stray
+
+
+def workflow():
+    import yaml
+    with open(os.path.join(REPO, ".github", "workflows", "build.yaml"),
+              encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def test_the_release_step_reads_the_body_from_a_file():
+    steps = workflow()["jobs"]["release"]["steps"]
+    by_name = {step.get("name"): step for step in steps}
+    make = by_name["Release body"]
+    create = by_name["Create GitHub Release"]
+    assert steps.index(make) < steps.index(create)
+    # made only when the release is created: a rerun keeps its body
+    assert make.get("if") == "steps.published.outputs.published == 'false'"
+    assert "release-checks.py body" in make["run"]
+    assert "> release-body.md" in make["run"]
+    assert create["with"]["body_path"] == "release-body.md"
+    assert "body" not in create["with"]
+    # the body file is not an asset of the release
+    assert all(not line.strip().startswith("release-body")
+               for line in create["with"]["files"].splitlines())
+
+
+def test_no_run_script_expands_a_step_output_or_the_notes():
+    # ${{ }} in a run script is expanded before the shell parses it: text
+    # from a step output (or a file it came from) would run as shell.
+    import re
+    output = re.compile(r"\$\{\{[^}]*\bsteps\.")
+    problems = []
+    for job_name, job in workflow()["jobs"].items():
+        for step in job.get("steps", []):
+            script = step.get("run") or ""
+            if output.search(script) or ("release-notes" in script and "${{" in script):
+                problems.append((job_name, step.get("name")))
+    assert problems == [], problems
+    # and the check sees one
+    assert output.search('echo "${{ steps.notes.outputs.notes }}"')

@@ -306,14 +306,14 @@ releases:
     kubernetes: "1.36.6"
     crio: "1.36"
     fedora: 45
-    # The sync brings k4all-operator v0.6.0, Hangar and Cairn v0.1.0 and the
+    # The sync brings k4all-operator v0.6.0, Hangar and Cairn v0.1.1 and the
     # k4all addon 0.2.0.
     syncManifest: true
     notes: >-
       k4all-operator v0.6.0-rc.1 (from v0.5.8, through the manifest sync). Its
       new ClusterConfig fields are optional and absent on existing clusters,
       where k4all owns none of their settings: the hop changes no setting.
-      Hangar v0.1.0 replaces kubevirt-manager as the VM console: the
+      Hangar v0.1.1 replaces kubevirt-manager as the VM console: the
       operator deletes kubevirt-manager's console and roles, and keeps what
       is still in use (the PriorityClasses vm-standard and vm-preemptible
       while a VM or pod names them, the image CRD while it holds images, the

@@ -466,7 +466,7 @@ spec:
     # dependsOn: turning Rook off uninstalls the console first.
     cairn:
       type: manifest
-      version: "v0.1.0"
+      version: "v0.1.1"
       source: "https://github.com/kalik1/cairn/releases/download/{{ version }}/cairn-cluster.yaml"
       featureGate: rook
       dependsOn:
@@ -573,7 +573,7 @@ spec:
               - name: k4all-plugin
                 mountPath: /k4all-plugin
           - name: hangar-plugin
-            image: ghcr.io/kalik1/hangar-headlamp-plugin:0.1.0
+            image: ghcr.io/kalik1/hangar-headlamp-plugin:0.1.1
             imagePullPolicy: IfNotPresent
             command:
               - sh
@@ -600,7 +600,7 @@ spec:
               - name: hangar-plugin
                 mountPath: /hangar-plugin
           - name: cairn-plugin
-            image: ghcr.io/kalik1/cairn-headlamp-plugin:0.1.0
+            image: ghcr.io/kalik1/cairn-headlamp-plugin:0.1.1
             imagePullPolicy: IfNotPresent
             command:
               - sh
@@ -769,7 +769,7 @@ spec:
     # deleted). Hangar itself runs in Headlamp: nothing else to run.
     hangar:
       type: manifest
-      version: "v0.1.0"
+      version: "v0.1.1"
       source: "https://github.com/kalik1/hangar/releases/download/{{ version }}/hangar-cluster.yaml"
       featureGate: virt
       dependsOn:
@@ -794,7 +794,7 @@ spec:
     # devices already bound as they are.
     hangar-node-agent:
       type: manifest
-      version: "v0.1.0"   # same tag as hangar
+      version: "v0.1.1"   # same tag as hangar
       source: "https://github.com/kalik1/hangar/releases/download/{{ version }}/hangar-node-agent.yaml"
       featureGate: virt
       dependsOn:
