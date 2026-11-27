@@ -4280,6 +4280,34 @@ class Lock:
         self.fh.close()
 
 
+def uncommitted_release_line(state, booted):
+    """The status line for a node that boots another release than the one
+    it committed, after its plan is over; None when they are the same.
+
+    Older: a rollback by hand. Newer: a hop that did not commit, which the
+    node keeps when the hop is abandoned after its reboot (#112)."""
+    committed = (state or {}).get("current")
+    if not (committed and is_version(booted) and is_version(committed)):
+        return None
+    booted_key, committed_key = parse_version(booted), parse_version(committed)
+    if booted_key < committed_key:
+        return ("Rollback:  the last hop committed %s, the node runs %s (a "
+                "rollback by hand?); plan and run start from %s"
+                % (committed, booted, booted))
+    if booted_key == committed_key:
+        return None
+    last = (state.get("history") or [{}])[-1]
+    to = str(last.get("to") or "")
+    if last.get("result") == "abandoned" and is_version(to) \
+            and parse_version(to) == booted_key:
+        why = "was abandoned after its reboot"
+    else:
+        why = "did not commit"
+    return ("Committed: %s; the node runs %s, a newer release whose hop %s "
+            "(not a rollback); plan and run start from %s"
+            % (committed, booted, why, booted))
+
+
 def cmd_status(host, cfg, args):
     state = load_state(host)
     try:
@@ -4300,18 +4328,18 @@ def cmd_status(host, cfg, args):
         return 0
     if not _active(state):
         # A plan that is over stays in state.json: say so, and say when the
-        # node no longer runs what it committed (a `bootc rollback` by hand).
+        # node no longer runs what it committed: an older release is a
+        # `bootc rollback` by hand, a newer one a hop that was not committed
+        # (abandoned after its reboot, #112).
         print("Upgrade:   none in progress (the last plan, to %s, is over)"
               % state.get("target"))
-        committed = state.get("current")
         pending = state.get("syncPending")
         if pending:
             print("Sync:      %s" % sync_pending_message(pending))
-        elif committed and is_version(version) and is_version(committed) \
-                and parse_version(version) != parse_version(committed):
-            print("Rollback:  the last hop committed %s, the node runs %s (a "
-                  "rollback by hand?); plan and run start from %s"
-                  % (committed, version, version))
+        else:
+            line = uncommitted_release_line(state, version)
+            if line:
+                print(line)
         if state.get("abandoned"):
             print("Abandoned: %s" % abandoned_message(state["abandoned"]))
         last = (state.get("history") or [{}])[-1]
