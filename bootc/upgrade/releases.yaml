@@ -359,16 +359,19 @@ releases:
     syncManifest: true
     notes: >-
       The fixes of the v2.7.0 VM round. k4all-operator v0.6.1 (through the
-      manifest sync) writes an object with release patches once per apply,
-      so virt-operator no longer rolls out twice at each KubeVirt apply
+      manifest sync) writes an object with release patches once per apply, so
+      virt-operator no longer rolls out twice at each KubeVirt apply
       (k4all-operator#44); deletes the empty image catalog CRD that
-      kubevirt-manager's removal left (k4all-operator#45); no longer refuses
-      to uninstall Rook or snapshot-controller with "cannot tell" when a CRD
-      is gone (k4all-operator#47); and keeps Cilium's API server address on
-      clusters without kube-proxy (#114). VMs with dedicated CPUs need
-      KubeVirt's CPUManager gate, off by default on KubeVirt 1.9: the k4all
-      addon 0.2.1 says so on the Node settings page and links to the gate
-      (#111). k4all-upgrade status no longer calls a newer release a
-      rollback after sync-manifest (#112); it shows once the node runs
-      v2.7.1. Kubernetes, CRI-O, Fedora and the other components are
-      unchanged.
+      kubevirt-manager's removal left, also on clusters v2.7.0 left with it
+      (k4all-operator#45); no longer refuses to uninstall Rook or
+      snapshot-controller with "cannot tell" when a CRD is gone
+      (k4all-operator#47); keeps Cilium's API server address on clusters
+      without kube-proxy; and holds the first upgrade of a Helm release it did
+      not write last when it would drop that release's values
+      (ValuesDropRefused; componentOverrides or
+      k4all.magesgate.com/allow-values-drop) (#114). VMs with dedicated CPUs
+      need KubeVirt's CPUManager gate, off by default on KubeVirt 1.9: the
+      k4all addon 0.2.1 says so on the Node settings page and links to the
+      gate (#111). k4all-upgrade status no longer calls a newer release a
+      rollback after sync-manifest (#112); it shows once the node runs v2.7.1.
+      Kubernetes, CRI-O, Fedora and the other components are unchanged.
