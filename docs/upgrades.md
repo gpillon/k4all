@@ -760,6 +760,34 @@ node. Nodes that join later get it, and `kubeadm upgrade` keeps it. A node
 does what its heaviest change needs. Only maxPods changes: a restart. Hugepages
 change too: a drain and a reboot.
 
+### Dedicated CPUs for VMs
+
+`cpuManagerPolicy: static` is not enough for a VM with dedicated CPUs
+(`dedicatedCpuPlacement: true`). Such a VM also needs KubeVirt's
+`CPUManager` feature gate (#111). On KubeVirt 1.9 (k4all v2.7.x) that gate is
+Alpha and off by default. Without it, virt-handler never labels the nodes
+`cpumanager=true`, and the VM stays `ErrorUnschedulable` ("didn't match Pod's
+node affinity/selector").
+
+Turn the gate on in one of two ways:
+
+- in the addon's Virtualization page, under KubeVirt feature gates
+  (`/k4all/settings/virtualization#feature-gates`). From v2.7.1 the Node
+  settings page says so when the static policy is set and the gate is off;
+- or in the ClusterConfig:
+
+  ```yaml
+  spec:
+    features:
+      virt:
+        kubevirt:
+          featureGates: [CPUManager]
+  ```
+
+virt-handler labels the nodes within about a minute, and the VM then
+schedules, pinned. Turning the gate on restarts neither KubeVirt's infra nor
+running VMs.
+
 ### The rollout
 
 The operator takes one node at a time: the workers, then the control planes,
@@ -878,9 +906,11 @@ sudo cat /etc/k4all/node-settings.json; sudo rpm-ostree kargs
 
 Kernel arguments live in the OS deployment, like
 `/etc/k4all/node-settings.json`. A `bootc rollback` therefore boots the
-previous deployment with the kernel arguments it had. Whether a later
-`bootc upgrade` carries them over is checked on a test VM before v2.7.0
-ships.
+previous deployment with the kernel arguments it had. A change of kernel
+arguments (hugepages, IOMMU) makes a new deployment of the same release. So
+after such a change, `bootc rollback` boots the same release with the
+previous kernel arguments, and the release before it can no longer be
+reached by rollback. The next hop's image keeps the kernel arguments.
 
 ## Things to know
 
@@ -1080,6 +1110,19 @@ ships.
   component is refused like any other, so a manifest sync that pins an
   older operator does not get Ready, and the hop stops in HOLD on the
   bootstrap node.
+- From v2.7.0, a Ceph cluster that `features.rook.smallCluster: Allow`
+  creates on 2 nodes, with one disk each, stays in HEALTH_WARN
+  `TOO_FEW_OSDS` for good. Ceph warns while it has fewer OSDs than its
+  `osd_pool_default_size`, 3 by default, although k4all's pool `vm-pool` has
+  size 2 and is clean. The pool works, and `RookReady` stays True
+  (`CephHealthWarn`, with the check in its message). To clear the warning,
+  give the default the pool's size in the CephCluster, which k4all leaves to
+  you once it is created. Pools created later then default to 2 copies too:
+
+  ```bash
+  kubectl -n rook-ceph patch cephcluster rook-ceph --type merge \
+    -p '{"spec":{"cephConfig":{"global":{"osd_pool_default_size":"2"}}}}'
+  ```
 
 ## Ingress: Traefik (v2.4.0)
 
