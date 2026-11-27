@@ -209,6 +209,13 @@ row shows how much of each node's memory they take: keep it at 50 % or less;
 k4all-operator refuses more than 80 %. Reserved CPUs must exist on every
 node (each node's CPU count is shown).
 
+VMs with dedicated CPUs (`dedicatedCpuPlacement`) need more than the static
+CPU manager: KubeVirt's `CPUManager` gate too, which KubeVirt 1.9 leaves
+off. Without it those VMs stay unschedulable. From addon 0.2.1, with
+Virtualization on, the CPU manager row says so while the gate is off, and
+links to the gates of the Virtualization page (`#feature-gates`), where you
+turn it on.
+
 After saving, the rollout goes one node at a time; **Pause** stops it before
 the next node (the one in progress finishes), **Resume** goes on. It never
 runs during a cluster upgrade. When it is held (a node refuses the settings,

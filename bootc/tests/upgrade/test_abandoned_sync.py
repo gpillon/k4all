@@ -153,9 +153,61 @@ def test_status_and_plan_show_the_missing_sync(make_host, capsys):
     assert run_cli(host, "status") == 0
     out = capsys.readouterr().out
     assert "Sync:" in out and "v2.4.0 is not synced" in out
+    assert "Rollback:" not in out and "Committed:" not in out
     assert run_cli(host, "plan") == 0
     out = capsys.readouterr().out
     assert "v2.4.0 -> v2.4.1" in out and "sync-manifest" in out
+
+
+# v2.7.0 VM round: after sync-manifest, status called the newer release the
+# node boots "a rollback by hand?" (#112).
+def test_status_after_sync_manifest_names_the_newer_release(make_host, capsys):
+    host = abandoned_in_sync(make_host)
+    host.operator_adopts = True
+    host._refresh_status()
+    assert run_cli(host, "sync-manifest") == 0
+    capsys.readouterr()
+    assert run_cli(host, "status") == 0
+    out = capsys.readouterr().out
+    assert "Release:   v2.4.0" in out
+    assert "Rollback:" not in out and "Sync:" not in out
+    assert ("Committed: v2.3.1; the node runs v2.4.0, a newer release whose "
+            "hop was abandoned after its reboot (not a rollback); plan and "
+            "run start from v2.4.0") in out
+    run_cli(host, "plan")
+    assert capsys.readouterr().out.startswith("v2.4.0 -> v2.4.1")
+
+
+@pytest.mark.parametrize("booted,history,line", [
+    # older: a bootc rollback by hand
+    ("v2.3.1", [{"from": "v2.3.1", "to": "v2.4.0", "result": "ok"}],
+     "Rollback:  the last hop committed v2.4.0, the node runs v2.3.1 (a "
+     "rollback by hand?); plan and run start from v2.3.1"),
+    ("v2.4.0-rc.1", [], "Rollback:  the last hop committed v2.4.0, the node "
+     "runs v2.4.0-rc.1 (a rollback by hand?); plan and run start from "
+     "v2.4.0-rc.1"),
+    # newer: the hop to it was abandoned after its reboot, or did not commit
+    ("v2.4.1", [{"from": "v2.4.0", "to": "v2.4.1", "result": "abandoned"}],
+     "Committed: v2.4.0; the node runs v2.4.1, a newer release whose hop was "
+     "abandoned after its reboot (not a rollback); plan and run start from "
+     "v2.4.1"),
+    ("v2.4.1", [{"from": "v2.4.0", "to": "v2.5.0", "result": "abandoned"}],
+     "Committed: v2.4.0; the node runs v2.4.1, a newer release whose hop did "
+     "not commit (not a rollback); plan and run start from v2.4.1"),
+    ("2.4.1", [], "Committed: v2.4.0; the node runs 2.4.1, a newer release "
+     "whose hop did not commit (not a rollback); plan and run start from "
+     "2.4.1"),
+    # equal, also written without the v: nothing to say
+    ("v2.4.0", [{"from": "v2.3.1", "to": "v2.4.0", "result": "ok"}], None),
+    ("2.4.0", [], None),
+    # nothing to compare
+    ("unknown (cannot tell)", [], None),
+])
+def test_status_line_for_a_release_the_node_did_not_commit(booted, history,
+                                                            line):
+    st = {"phase": "DONE", "current": "v2.4.0", "history": history}
+    assert ku.uncommitted_release_line(st, booted) == line
+    assert ku.uncommitted_release_line({"phase": "DONE"}, booted) is None
 
 
 @pytest.mark.parametrize("phase,sync,role,booted,left", [

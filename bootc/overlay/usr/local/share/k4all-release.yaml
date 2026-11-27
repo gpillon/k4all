@@ -546,7 +546,7 @@ spec:
         # bump their version with these tags.
         initContainers:
           - name: k4all-plugin
-            image: ghcr.io/gpillon/k4all-headlamp-plugin:0.2.0
+            image: ghcr.io/gpillon/k4all-headlamp-plugin:0.2.1
             imagePullPolicy: IfNotPresent
             command:
               - sh
@@ -816,7 +816,7 @@ spec:
     # k4all-operator's version.
     k4all-metadata:
       type: manifest
-      version: "v0.6.0"   # same tag as k4all-operator
+      version: "v0.6.1"   # same tag as k4all-operator
       image: "ghcr.io/gpillon/k4all-metadata:{{ version }}"
       featureGate: virtMetadata
       dependsOn:
@@ -950,7 +950,16 @@ spec:
       # data lives, the Cilium pool from podNetwork on new installs and the
       # PodNetworkOverlap check, and the upgrade-graph guards of #74 and #77
       # (MigrationsAhead, DowngradeRefused).
-      version: "v0.6.0"
+      # v0.6.1 (k4all v2.7.1): one write per apply of a patched object, so
+      # virt-operator no longer rolls twice at each KubeVirt apply
+      # (k4all-operator#44); kubevirt-manager's empty image catalog CRD is
+      # deleted, also where v0.6.0 left it (k4all-operator#45); an uninstall
+      # guard takes a CRD the API server does not serve (404) as nothing to
+      # keep (k4all-operator#47); without kube-proxy, Cilium keeps its API
+      # server address, and the first upgrade of a Helm release k4all did
+      # not write last is held while it would drop that release's values
+      # (ValuesDropRefused, allow-values-drop) (#114).
+      version: "v0.6.1"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system

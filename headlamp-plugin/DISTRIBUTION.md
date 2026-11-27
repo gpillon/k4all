@@ -98,8 +98,22 @@ against the release file with the new chart version.
 |---|---|---|---|---|---|
 | v2.4.0 | v0.5.0 | 1.35 | 0.46.0 / v0.46.0 | 0.14.0 | 0.1.2 |
 | v2.7.0 | v0.6.0 | 1.36 | 0.46.0 / v0.46.0 | 0.14.0 | 0.2.0 |
+| v2.7.1 | v0.6.1 | 1.36 | 0.46.0 / v0.46.0 | 0.14.0 | 0.2.1 |
 
 ## Changelog
+
+### 0.2.1
+
+For k4all v2.7.1.
+
+- Node settings: with Virtualization on, while the CPU manager is static
+  (saved or being edited) and the KubeVirt CR does not run KubeVirt's
+  `CPUManager` gate, the CPU manager row says that VMs with dedicated CPUs
+  need the gate, with a link to the Virtualization page's
+  `#feature-gates` (k4all#111). On KubeVirt 1.9 the gate is Alpha and off
+  by default, and without it those VMs stay unschedulable. The page reads
+  the KubeVirt CR as the Virtualization page does: no new RBAC, and nothing
+  shown when the CR cannot be read. The CPU manager help names the gate too.
 
 ### 0.2.0
 

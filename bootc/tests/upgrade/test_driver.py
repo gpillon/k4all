@@ -1755,6 +1755,7 @@ def test_status_after_a_finished_plan(make_host, capsys):
     assert "Release:   v2.3.1" in out
     assert "Upgrade:   none in progress (the last plan, to v2.3.1, is over)" in out
     assert "phase DONE" not in out and "Rollback:" not in out
+    assert "Committed:" not in out
 
 
 # Lab (VM 953): after `bootc rollback` from v2.5.0 to v2.4.0, status showed

@@ -8,7 +8,7 @@
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import React from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route } from 'react-router-dom';
 import { vi } from 'vitest';
 import { Capabilities, capabilitiesOf } from '../model/capabilities';
 import { describeChanges } from '../model/changes';
@@ -18,7 +18,7 @@ import {
   nodeWithCapacity,
   releaseManifestV270,
 } from '../model/fixtures';
-import { gateIssues } from '../model/gates';
+import { cpuManagerGateMissing, gateIssues } from '../model/gates';
 import { nodeSettingsIssues, rolloutPlan, rolloutView } from '../model/nodeSettings';
 import { setIn } from '../model/objects';
 import { buildSpecPatch } from '../model/patch';
@@ -298,6 +298,57 @@ describe('KubeletSection and MemorySection', () => {
     expect(
       screen.getAllByText(/keeps the value it had before k4all set it/).length
     ).toBeGreaterThan(0);
+  });
+
+  it('says under the static CPU manager that VMs with dedicated CPUs need the CPUManager gate', () => {
+    const draft = setIn(clusterConfigV270().spec!, ['nodes', 'kubelet'], {
+      cpuManagerPolicy: 'static',
+      reservedSystemCPUs: '0',
+    });
+    const missing = cpuManagerGateMissing(draft, { kv: kubevirtCR('v1.9.1') });
+    expect(missing).toBe(true);
+    render(
+      <MemoryRouter initialEntries={['/c/main/k4all-settings-nodes']}>
+        <KubeletSection {...nodeProps(draft)} cpuManagerGateMissing={missing} />
+        <Route
+          path="*"
+          render={({ location }) => (
+            <span data-testid="at">{location.pathname + location.hash}</span>
+          )}
+        />
+      </MemoryRouter>
+    );
+    const link = screen.getByRole('link', { name: 'Virtualization, KubeVirt feature gates' });
+    expect(link.closest('[role="alert"]')?.textContent).toBe(
+      "VMs with dedicated CPUs (dedicatedCpuPlacement) also need KubeVirt's CPUManager gate, " +
+        'which is off: without it they stay unschedulable. Turn it on in Virtualization, ' +
+        'KubeVirt feature gates.'
+    );
+    // and the field's help says it at all times
+    expect(
+      screen.getByText(/also need KubeVirt's CPUManager gate \(Virtualization page\)/)
+    ).toBeTruthy();
+    expect(link.getAttribute('href')).toBe('/c/main/k4all-settings-virtualization#feature-gates');
+    fireEvent.click(link);
+    expect(screen.getByTestId('at').textContent).toBe(
+      '/c/main/k4all-settings-virtualization#feature-gates'
+    );
+  });
+
+  it('says nothing about the gate once KubeVirt has it', () => {
+    const draft = setIn(clusterConfigV270().spec!, ['nodes', 'kubelet'], {
+      cpuManagerPolicy: 'static',
+      reservedSystemCPUs: '0',
+    });
+    const kv = kubevirtCR('v1.9.1', { featureGates: ['CPUManager'] });
+    render(
+      <KubeletSection
+        {...nodeProps(draft)}
+        cpuManagerGateMissing={cpuManagerGateMissing(draft, { kv })}
+      />
+    );
+    expect(screen.queryByText(/without it they stay unschedulable/)).toBeNull();
+    expect(screen.queryByRole('link', { name: /KubeVirt feature gates/ })).toBeNull();
   });
 
   it('does the memory math per node and warns above 50 %', () => {

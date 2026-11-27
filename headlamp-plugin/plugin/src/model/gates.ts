@@ -381,3 +381,37 @@ export function gateIssues(spec: ClusterConfigSpec, ctx: GateContext): Issue[] {
   }
   return issues;
 }
+
+export const CPU_MANAGER_GATE = 'CPUManager';
+
+/**
+ * Whether the Node settings page says that VMs with dedicated CPUs
+ * (dedicatedCpuPlacement) need KubeVirt's CPUManager gate (k4all#111): the
+ * static CPU manager alone is not enough, because virt-handler labels the
+ * nodes cpumanager=true only with the gate, and on KubeVirt 1.9 it is Alpha,
+ * off unless listed.
+ *
+ * True with the static policy in the draft (saved, or being edited),
+ * Virtualization on, and the KubeVirt CR read without the gate on, read as
+ * the Virtualization page reads it (gateOn with the version's table). No CR
+ * (none, or it cannot be read), or a KubeVirt whose table does not know the
+ * gate or has it Discontinued: false, nothing to say.
+ */
+export function cpuManagerGateMissing(
+  spec: ClusterConfigSpec,
+  ctx: { kv: KubeVirtLike | null | undefined; version?: string }
+): boolean {
+  if (
+    spec.nodes?.kubelet?.cpuManagerPolicy !== 'static' ||
+    spec.features?.virt?.enabled !== true ||
+    !ctx.kv
+  ) {
+    return false;
+  }
+  const { table } = contextOf(ctx);
+  const maturity = table?.gates[CPU_MANAGER_GATE];
+  if (table && (maturity === undefined || maturity === 'Discontinued')) {
+    return false;
+  }
+  return gateOn(table, liveGates(ctx.kv), CPU_MANAGER_GATE) !== true;
+}

@@ -419,7 +419,13 @@ Cilium (/24 per node); the static CPU manager needs reserved CPUs; reserved
 CPUs must parse as a cpuset, exist on every node and leave one for pods;
 hugepages over 50 % of a node warn, over 80 % are refused (the operator's
 limit); a topology manager without the static CPU manager only aligns
-devices (info).
+devices (info). From 0.2.1 (k4all#111), with Virtualization on, the page
+lists the KubeVirt CR as the Virtualization page does (same request, no new
+RBAC): while the draft's CPU manager is static and the CR does not run
+KubeVirt's `CPUManager` gate (`cpuManagerGateMissing` in `model/gates.ts`:
+`gateOn` with the version's table), the CPU manager row says that VMs with
+dedicated CPUs need it, with a link to `#feature-gates`. Without a CR it can
+read, it says nothing.
 
 **The plan**, shown under the form while editing and again in the review:
 the action class from the changed fields (max pods only: kubelet restart,
