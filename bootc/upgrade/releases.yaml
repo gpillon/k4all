@@ -358,7 +358,7 @@ releases:
     # k4all addon 0.2.1.
     syncManifest: true
     notes: >-
-      The fixes of the v2.7.0 VM round. k4all-operator v0.6.1 (through the
+      The fixes of the v2.7.0 VM round. k4all-operator v0.6.1-rc.1 (through the
       manifest sync) writes an object with release patches once per apply,
       so virt-operator no longer rolls out twice at each KubeVirt apply
       (k4all-operator#44); deletes the empty image catalog CRD that

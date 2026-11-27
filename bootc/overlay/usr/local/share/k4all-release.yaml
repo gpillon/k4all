@@ -546,7 +546,7 @@ spec:
         # bump their version with these tags.
         initContainers:
           - name: k4all-plugin
-            image: ghcr.io/gpillon/k4all-headlamp-plugin:0.2.1
+            image: ghcr.io/gpillon/k4all-headlamp-plugin:0.2.1-rc.1
             imagePullPolicy: IfNotPresent
             command:
               - sh
@@ -816,7 +816,7 @@ spec:
     # k4all-operator's version.
     k4all-metadata:
       type: manifest
-      version: "v0.6.1"   # same tag as k4all-operator
+      version: "v0.6.1-rc.1"   # same tag as k4all-operator
       image: "ghcr.io/gpillon/k4all-metadata:{{ version }}"
       featureGate: virtMetadata
       dependsOn:
@@ -956,7 +956,7 @@ spec:
       # deleted (k4all-operator#45); an uninstall guard takes a CRD the API
       # server does not serve (404) as nothing to keep (k4all-operator#47);
       # without kube-proxy, Cilium keeps its API server address (#114).
-      version: "v0.6.1"
+      version: "v0.6.1-rc.1"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system
