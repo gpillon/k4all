@@ -166,7 +166,8 @@ export const FIELDS = {
     mode: 'live',
     help:
       'static gives Guaranteed pods (and VMs with dedicated CPUs) with whole-CPU requests CPUs of ' +
-      'their own; it needs reserved CPUs.',
+      "their own; it needs reserved CPUs. VMs with dedicated CPUs also need KubeVirt's CPUManager " +
+      'gate (Virtualization page).',
     fallback: 'not set by k4all',
   },
   nodesReservedCPUs: {
