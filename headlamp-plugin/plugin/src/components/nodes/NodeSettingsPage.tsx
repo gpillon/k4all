@@ -2,16 +2,20 @@
  * /k4all/settings/nodes (k4all v2.7.0): kubelet settings, hugepages and
  * IOMMU for every node; before saving, the plan (which nodes drain and
  * restart or reboot, in which order); then the rollout from status.nodes,
- * with Pause / Resume (spec.nodes.rollout.paused, applied at once).
+ * with Pause / Resume (spec.nodes.rollout.paused, applied at once). With
+ * Virtualization on it reads the KubeVirt CR, as the Virtualization page
+ * does, to say when the static CPU manager lacks KubeVirt's CPUManager gate
+ * (0.2.1, k4all#111).
  */
 
 import { Box, Grid, Stack } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import React from 'react';
-import { useKubeletPrior, useOperatorNode } from '../../api/clusterObjects';
+import { useKubeletPrior, useKubeVirt, useOperatorNode } from '../../api/clusterObjects';
 import { K4allData, useK4allData } from '../../api/hooks';
 import { setNodeRolloutPaused } from '../../api/k4allApi';
 import { classifyError } from '../../model/errors';
+import { cpuManagerGateMissing } from '../../model/gates';
 import { nodeSettingsIssues, rolloutPlan, rolloutView } from '../../model/nodeSettings';
 import { hasErrors, Issue, validateSettings } from '../../model/validation';
 import { K4allGate, ReadOnlyNotice } from '../common/states';
@@ -34,6 +38,8 @@ function NodeSettingsEditor({ data }: { data: K4allData }) {
   const kubeletPrior = useKubeletPrior();
   const editor = useSettingsEditor(data, { kubeletPrior });
   const operatorNode = useOperatorNode();
+  // Only with Virtualization on: no KubeVirt CR to read otherwise.
+  const kv = useKubeVirt(data.cc?.spec?.features?.virt?.enabled === true);
   const { enqueueSnackbar } = useSnackbar();
   const [pausing, setPausing] = React.useState(false);
   if (!editor.state.base) {
@@ -113,7 +119,14 @@ function NodeSettingsEditor({ data }: { data: K4allData }) {
         {editor.dirty && <PlanView plan={plan} />}
         <Grid container spacing={2}>
           <Grid item xs={12} lg={6}>
-            <KubeletSection {...sectionProps} kubeletPrior={kubeletPrior} />
+            <KubeletSection
+              {...sectionProps}
+              kubeletPrior={kubeletPrior}
+              cpuManagerGateMissing={cpuManagerGateMissing(draft, {
+                kv: kv.cr,
+                version: data.rm?.spec?.components?.kubevirt?.version,
+              })}
+            />
           </Grid>
           <Grid item xs={12} lg={6}>
             <MemorySection {...sectionProps} />

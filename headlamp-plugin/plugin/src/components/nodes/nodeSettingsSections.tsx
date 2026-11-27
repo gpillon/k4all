@@ -5,6 +5,7 @@
  */
 
 import { Icon } from '@iconify/react';
+import { Router } from '@kinvolk/headlamp-plugin/lib';
 import {
   Alert,
   AlertTitle,
@@ -25,6 +26,7 @@ import {
   Typography,
 } from '@mui/material';
 import React from 'react';
+import { useHistory } from 'react-router-dom';
 import { DrainBlock, drainBlockAdvice } from '../../model/drainBlock';
 import { FieldId, FIELDS } from '../../model/fields';
 import {
@@ -108,7 +110,40 @@ function ClearedNote(props: {
   );
 }
 
-export function KubeletSection(props: NodeSectionProps & { kubeletPrior?: KubeletPrior | null }) {
+/**
+ * Under the CPU manager, while the static policy is set and KubeVirt's
+ * CPUManager gate is off (cpuManagerGateMissing, k4all#111): VMs with
+ * dedicated CPUs need the gate too. Links to the gates of the
+ * Virtualization page.
+ */
+export function CpuManagerGateNote() {
+  const history = useHistory();
+  const url = `${Router.createRouteURL('k4all-settings-virtualization')}#feature-gates`;
+  return (
+    <Alert severity="info" sx={{ py: 0 }}>
+      VMs with dedicated CPUs (<Mono>dedicatedCpuPlacement</Mono>) also need KubeVirt's{' '}
+      <Mono>CPUManager</Mono> gate, which is off: without it they stay unschedulable. Turn it on in{' '}
+      <a
+        href={url}
+        onClick={e => {
+          e.preventDefault();
+          history.push(url);
+        }}
+      >
+        Virtualization, KubeVirt feature gates
+      </a>
+      .
+    </Alert>
+  );
+}
+
+export function KubeletSection(
+  props: NodeSectionProps & {
+    kubeletPrior?: KubeletPrior | null;
+    /** The static policy is set and KubeVirt's CPUManager gate is off (cpuManagerGateMissing). */
+    cpuManagerGateMissing?: boolean;
+  }
+) {
   const { draft, update, disabled, issues } = props;
   const kubelet = draft.nodes?.kubelet ?? {};
   const cleared = (field: string) => (
@@ -170,7 +205,12 @@ export function KubeletSection(props: NodeSectionProps & { kubeletPrior?: Kubele
             onChange={v => set('nodesCpuManager', v)}
           />
         }
-        messages={cleared('cpuManagerPolicy')}
+        messages={
+          <Stack spacing={0.75}>
+            {cleared('cpuManagerPolicy')}
+            {props.cpuManagerGateMissing && <CpuManagerGateNote />}
+          </Stack>
+        }
       />
       <SettingRow
         label={FIELDS.nodesReservedCPUs.label}

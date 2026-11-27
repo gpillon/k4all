@@ -1,6 +1,8 @@
 import { kubevirtCR } from './fixtures';
 import {
   appliedGates,
+  cpuManagerGateMissing,
+  GATE_TABLES,
   gateIssues,
   gateOn,
   gateRows,
@@ -11,6 +13,7 @@ import {
   setK4allGate,
   wantedGates,
 } from './gates';
+import { setIn } from './objects';
 import { ClusterConfigSpec } from './types';
 
 const spec = (featureGates?: string[], disabledFeatureGates?: string[]): ClusterConfigSpec => ({
@@ -281,5 +284,87 @@ describe('gateIssues', () => {
     expect(messages(spec(['DeclarativeHotplugVolumes']))).toEqual([
       'warning: HotplugVolumes is on in the KubeVirt CR (set elsewhere): k4all-operator does not add DeclarativeHotplugVolumes while it is there. Turn HotplugVolumes off here too.',
     ]);
+  });
+});
+
+describe('cpuManagerGateMissing (k4all#111)', () => {
+  const staticVirt: ClusterConfigSpec = {
+    features: { virt: { enabled: true } },
+    nodes: { kubelet: { cpuManagerPolicy: 'static', reservedSystemCPUs: '0-1' } },
+  };
+  const off = kubevirtCR('v1.9.1', { featureGates: ['Sidecar'] });
+  const on = kubevirtCR('v1.9.1', { featureGates: ['Sidecar', 'CPUManager'] });
+
+  it('says so with the static policy, Virtualization on and the gate off in the KubeVirt CR', () => {
+    expect(cpuManagerGateMissing(staticVirt, { kv: off })).toBe(true);
+    expect(cpuManagerGateMissing(staticVirt, { kv: kubevirtCR('v1.9.1') })).toBe(true);
+    expect(cpuManagerGateMissing(staticVirt, { kv: on })).toBe(false);
+  });
+
+  it('reads the CR, not the ClusterConfig: a gate k4all has yet to apply is still off', () => {
+    const wanted = setIn(staticVirt, ['features', 'virt', 'kubevirt'], {
+      featureGates: ['CPUManager'],
+    });
+    expect(cpuManagerGateMissing(wanted, { kv: off })).toBe(true);
+    // on by k4all, or set elsewhere (Hangar, by hand): either way KubeVirt runs it
+    const k4all = kubevirtCR('v1.9.1', { featureGates: ['CPUManager'], k4allOn: 'CPUManager' });
+    expect(cpuManagerGateMissing(wanted, { kv: k4all })).toBe(false);
+  });
+
+  it('says nothing without the static policy or without Virtualization', () => {
+    const none = setIn(staticVirt, ['nodes', 'kubelet', 'cpuManagerPolicy'], 'none');
+    expect(cpuManagerGateMissing(none, { kv: off })).toBe(false);
+    const notSet = setIn(staticVirt, ['nodes'], undefined);
+    expect(cpuManagerGateMissing(notSet, { kv: off })).toBe(false);
+    const virtOff = setIn(staticVirt, ['features', 'virt', 'enabled'], false);
+    expect(cpuManagerGateMissing(virtOff, { kv: off })).toBe(false);
+  });
+
+  it('says nothing when the KubeVirt CR cannot be read', () => {
+    expect(cpuManagerGateMissing(staticVirt, { kv: null })).toBe(false);
+    expect(cpuManagerGateMissing(staticVirt, { kv: undefined, version: 'v1.9.1' })).toBe(false);
+  });
+
+  it('without a table for the version, the gate is off unless the CR lists it', () => {
+    expect(cpuManagerGateMissing(staticVirt, { kv: kubevirtCR('v1.99.0') })).toBe(true);
+    expect(
+      cpuManagerGateMissing(staticVirt, {
+        kv: kubevirtCR('v1.99.0', { featureGates: ['CPUManager'] }),
+      })
+    ).toBe(false);
+  });
+
+  it('takes the release version without one in the CR status', () => {
+    const noStatus = { ...kubevirtCR('v1.9.1'), status: {} };
+    expect(cpuManagerGateMissing(staticVirt, { kv: noStatus, version: 'v1.9.1' })).toBe(true);
+  });
+
+  it('follows the table: a gate on by default, unknown or Discontinued needs nothing', () => {
+    const fake = (version: string, maturity?: 'Beta' | 'GA' | 'Discontinued') => ({
+      version,
+      source: 'test',
+      betaOnByDefault: true,
+      disabledList: true,
+      gates: maturity ? { CPUManager: maturity } : {},
+    });
+    GATE_TABLES.push(
+      fake('v1.95', 'Beta'),
+      fake('v1.96', 'GA'),
+      fake('v1.97', 'Discontinued'),
+      fake('v1.98')
+    );
+    try {
+      expect(cpuManagerGateMissing(staticVirt, { kv: kubevirtCR('v1.95.0') })).toBe(false);
+      expect(
+        cpuManagerGateMissing(staticVirt, {
+          kv: kubevirtCR('v1.95.0', { disabledFeatureGates: ['CPUManager'] }),
+        })
+      ).toBe(true);
+      expect(cpuManagerGateMissing(staticVirt, { kv: kubevirtCR('v1.96.0') })).toBe(false);
+      expect(cpuManagerGateMissing(staticVirt, { kv: kubevirtCR('v1.97.0') })).toBe(false);
+      expect(cpuManagerGateMissing(staticVirt, { kv: kubevirtCR('v1.98.0') })).toBe(false);
+    } finally {
+      GATE_TABLES.splice(GATE_TABLES.length - 4, 4);
+    }
   });
 });
