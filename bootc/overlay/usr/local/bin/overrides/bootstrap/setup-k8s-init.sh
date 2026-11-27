@@ -60,6 +60,10 @@ if [ -f "$K4ALL_CONFIG_FILE" ]; then
   echo "Setting pod network to $POD_NET and service network to $SVC_NET"
   yq e '(select(.kind == "ClusterConfiguration") | .networking.podSubnet) = "'"$POD_NET"'"' -i "$K8S_CONFIG"
   yq e '(select(.kind == "ClusterConfiguration") | .networking.serviceSubnet) = "'"$SVC_NET"'"' -i "$K8S_CONFIG"
+  # kube-system/kubelet-config starts with the ClusterConfig's maxPods: the
+  # operator's node settings find it as they want it, and roll nothing.
+  MAX_PODS=$(yq e '.spec.nodes.kubelet.maxPods // 250' "$K4ALL_CONFIG_FILE")
+  yq e '(select(.kind == "KubeletConfiguration") | .maxPods) = '"$MAX_PODS" -i "$K8S_CONFIG"
   # Pin the control plane to the kubelet shipped in the image. Without it
   # kubeadm looks up "stable-1" online and the control plane may start on a
   # different patch than the kubelet and the pre-pulled images.

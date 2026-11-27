@@ -20,10 +20,11 @@ from pyanaconda.core.kickstart.addon import AddonData
 
 from com_k4all_installer.constants import (
     VALID_ROLES, VALID_CNI_TYPES, VALID_HA_TYPES,
-    VALID_EMULATION_VALUES,
+    VALID_EMULATION_VALUES, ANY_KEY,
     DEFAULT_CLUSTER_CONFIG, DEFAULT_INSTALL_CONFIG,
-    JOINING_ROLES, node_cluster_config,
+    JOINING_ROLES, node_cluster_config, cluster_config_schema,
 )
+from com_k4all_installer.cluster_config import check_crd_rules
 
 log = logging.getLogger(__name__)
 
@@ -176,7 +177,7 @@ class K4AllData(AddonData):
             log.debug("Merged user config from kickstart body")
 
         self._normalize_and_validate_cluster_config(
-            self.cluster_config, DEFAULT_CLUSTER_CONFIG
+            self.cluster_config, cluster_config_schema()
         )
 
         cni_type = self.cluster_config["networking"]["cni"]["type"]
@@ -193,6 +194,10 @@ class K4AllData(AddonData):
                 f"Invalid ClusterConfig virtualization emulation value: {emulation}"
             )
 
+        # The CRD refuses these too, but only when the node applies its
+        # ClusterConfig at first boot: refuse them at install instead.
+        check_crd_rules(self.cluster_config)
+
     def _normalize_and_validate_cluster_config(self, config, schema, path=()):
         """Validate against the built-in CRD shape and normalize legacy booleans.
 
@@ -207,6 +212,9 @@ class K4AllData(AddonData):
 
         if path == ("componentOverrides",):
             return
+        if set(schema) == {ANY_KEY}:
+            # Free keys (nodes.hugepages): each value of the one type.
+            schema = {key: schema[ANY_KEY] for key in config}
 
         unknown = sorted(set(config) - set(schema))
         if unknown:
@@ -232,6 +240,20 @@ class K4AllData(AddonData):
                 self._normalize_and_validate_cluster_config(
                     value, expected, field_path
                 )
+            elif isinstance(expected, int) and (
+                    isinstance(value, bool) or not isinstance(value, int)):
+                raise ValueError(
+                    f"ClusterConfig field {dotted} must be an integer"
+                )
+            elif isinstance(expected, list):
+                if not isinstance(value, list):
+                    raise ValueError(
+                        f"ClusterConfig field {dotted} must be a list"
+                    )
+                if not all(isinstance(item, str) for item in value):
+                    raise ValueError(
+                        f"ClusterConfig field {dotted} must be a list of strings"
+                    )
             elif isinstance(expected, str) and not isinstance(value, str):
                 raise ValueError(
                     f"ClusterConfig field {dotted} must be a string"

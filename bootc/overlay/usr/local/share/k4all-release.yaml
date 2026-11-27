@@ -308,6 +308,171 @@ spec:
         - cert-manager
       custom: {}
 
+    # The volume snapshot API and its controller (external-snapshotter;
+    # v8.7.0 supports Kubernetes 1.25 and later): the VolumeSnapshots of
+    # KubeVirt's VM snapshots (Hangar's Snapshots tab), CDI's snapshot
+    # clones, ceph-rbd's VolumeSnapshotClass. TopoLVM's controller already
+    # runs the csi-snapshotter sidecar, which picks the API up when it
+    # appears. Gate "snapshots": on with virt or rook (the operator of k4all
+    # v2.7.0; an older one does not know the gate and installs nothing).
+    # CRDs and RBAC are upstream's files at the tag. The Deployment is
+    # inline: a tag's setup file runs the previous release's image (v8.7.0's
+    # runs v8.6.0), so bump its image together with version. One replica (it
+    # only reconciles snapshot objects, nothing waits on it), --v=2 instead
+    # of upstream's chatty 5; no host path, so no SELinux exception. With
+    # virt and rook both off it is removed only once no VolumeSnapshot is
+    # left (they could not be deleted without it), and the CRDs stay, with
+    # every VolumeSnapshotClass and VolumeSnapshotContent.
+    snapshot-controller:
+      type: manifest
+      version: "v8.7.0"
+      sources:
+        - "https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/{{ version }}/client/config/crd/snapshot.storage.k8s.io_volumesnapshotclasses.yaml"
+        - "https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/{{ version }}/client/config/crd/snapshot.storage.k8s.io_volumesnapshotcontents.yaml"
+        - "https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/{{ version }}/client/config/crd/snapshot.storage.k8s.io_volumesnapshots.yaml"
+        - "https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/{{ version }}/client/config/crd/groupsnapshot.storage.k8s.io_volumegroupsnapshotclasses.yaml"
+        - "https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/{{ version }}/client/config/crd/groupsnapshot.storage.k8s.io_volumegroupsnapshotcontents.yaml"
+        - "https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/{{ version }}/client/config/crd/groupsnapshot.storage.k8s.io_volumegroupsnapshots.yaml"
+        - "https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/{{ version }}/deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml"
+      inlineManifests:
+        - |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: snapshot-controller
+            namespace: kube-system
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: snapshot-controller
+            # As upstream: the controller is Ready once the CRDs are there
+            # (it waits up to 30 s for them).
+            minReadySeconds: 35
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 0
+                maxUnavailable: 1
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: snapshot-controller
+              spec:
+                serviceAccountName: snapshot-controller
+                containers:
+                  - name: snapshot-controller
+                    image: registry.k8s.io/sig-storage/snapshot-controller:v8.7.0
+                    args:
+                      - "--v=2"
+                      - "--leader-election=true"
+                    imagePullPolicy: IfNotPresent
+      featureGate: snapshots
+      dependsOn:
+        - calico
+        - cilium
+      custom: {}
+
+    # Rook/Ceph, optional: features.rook.enabled in the ClusterConfig
+    # (featureGate rook; older operators skip gates they do not know). Rook
+    # 1.21 runs Ceph 20 (Tentacle). The operator's rook-ceph hook (the
+    # k4all-operator of k4all v2.7.0) creates the CephCluster rook-ceph, the
+    # pool vm-pool, the StorageClass ceph-rbd (RWX Block, for live
+    # migration), its VolumeSnapshotClass and CDI's StorageProfile once
+    # each, with defaults from the node count (no CephCluster below 3 nodes
+    # unless features.rook.smallCluster is Allow) and the ClusterConfig's
+    # features.rook.storage.deviceFilter, then leaves them to Cairn: day-2
+    # changes (mgr/mon count, pool settings) stay. `image` is the Ceph image
+    # of that CephCluster, the one field k4all keeps (D18): a new image here
+    # upgrades Ceph; Helm does not use it. The ClusterConfig's RookReady
+    # condition reports the Ceph cluster. Neither chart is uninstalled while
+    # a CephCluster exists: delete it first (that destroys its data).
+    rook-ceph:
+      type: helm
+      version: "1.21.2"
+      repo: "https://charts.rook.io/release"
+      chart: rook-ceph
+      namespace: rook-ceph
+      image: "quay.io/ceph/ceph:v20.2.4"
+      values:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 512Mi
+        enableDiscoveryDaemon: false
+        monitoring:
+          enabled: false
+        # SELinux is enforcing on k4all nodes: Ceph's pods write host paths
+        # (/var/lib/rook), and without privileged Rook cannot chown them.
+        hostpathRequiresPrivileged: true
+      featureGate: rook
+      dependsOn:
+        - calico
+        - cilium
+        - snapshot-controller
+      custom: {}
+
+    # Rook 1.21's chart installs the ceph-csi operator but no driver: this
+    # chart declares the RBD driver under the provisioner name Rook's
+    # StorageClasses use (Rook's recommended values, CephFS, NFS and NVMe-oF
+    # off). snapshotPolicy volumeSnapshot adds the csi-snapshotter sidecar:
+    # without it a VolumeSnapshot of ceph-rbd never becomes ready (CDI picks
+    # snapshots as the DataImportCron format of rbd).
+    ceph-csi-drivers:
+      type: helm
+      version: "1.1.0"
+      repo: "https://ceph.github.io/ceph-csi-operator"
+      chart: ceph-csi-drivers
+      namespace: rook-ceph
+      values:
+        operatorConfig:
+          namespace: rook-ceph
+          driverSpecDefaults:
+            imageSet:
+              name: rook-csi-operator-image-set-configmap
+            nodePlugin:
+              priorityClassName: system-node-critical
+            controllerPlugin:
+              priorityClassName: system-cluster-critical
+              replicas: 1
+        drivers:
+          rbd:
+            enabled: true
+            name: rook-ceph.rbd.csi.ceph.com
+            snapshotPolicy: volumeSnapshot
+          cephfs:
+            enabled: false
+            name: rook-ceph.cephfs.csi.ceph.com
+          nfs:
+            enabled: false
+            name: rook-ceph.nfs.csi.ceph.com
+          nvmeof:
+            enabled: false
+            name: rook-ceph.nvmeof.csi.ceph.com
+      featureGate: rook
+      # The Driver CRD, the ceph-csi operator and its image set come with
+      # rook-ceph; the snapshotter sidecar needs the snapshot API.
+      dependsOn:
+        - rook-ceph
+        - snapshot-controller
+      custom: {}
+
+    # Cairn's cluster objects (roles cairn-viewer, cairn-editor,
+    # cairn-admin), from the GitHub Release of the plugin Headlamp runs
+    # (same tag as cairn-plugin above, with a "v"). Cairn is Rook's console:
+    # this component and Cairn's plugin come with features.rook.enabled.
+    # dependsOn: turning Rook off uninstalls the console first.
+    cairn:
+      type: manifest
+      version: "v0.1.1"
+      source: "https://github.com/kalik1/cairn/releases/download/{{ version }}/cairn-cluster.yaml"
+      featureGate: rook
+      dependsOn:
+        - rook-ceph
+      custom: {}
+
     # --- Certificates ---
     cert-manager:
       type: helm
@@ -361,17 +526,27 @@ spec:
           ingressClassName: traefik
           annotations:
             traefik.ingress.kubernetes.io/router.middlewares: traefik-redirect-https@kubernetescrd
-        # The k4all Headlamp plugin (headlamp-plugin/ in this repo), pinned
-        # like every component: an initContainer copies it from its image
-        # into an emptyDir mounted read-only at <pluginsDir>/k4all-headlamp-plugin,
-        # so pluginsDir stays usable for other plugins. A new plugin tag
-        # changes the pod template: the operator re-applies headlamp and the
-        # new pod starts with the new plugin. componentOverrides.headlamp
-        # that set initContainers, volumes or volumeMounts replace these
-        # lists (Helm does not merge lists): copy these entries into them.
+        # The Headlamp plugins, pinned like every component: the k4all
+        # addon (headlamp-plugin/ in this repo), Hangar, the console of
+        # KubeVirt (github.com/kalik1/hangar), and Cairn, the console of
+        # Rook/Ceph (github.com/kalik1/cairn). For each, an initContainer
+        # copies the plugin from its image into an emptyDir mounted
+        # read-only at <pluginsDir>/<name>-headlamp-plugin, so pluginsDir
+        # stays usable for other plugins. A new plugin tag changes the pod
+        # template: the operator re-applies headlamp and the new pod starts
+        # with the new plugin. The operator's headlamp hook finds the
+        # entries by name: it leaves out hangar-plugin without
+        # features.virt and cairn-plugin without Rook, and merges the
+        # entries of componentOverrides.headlamp with these by name
+        # (volumeMounts by mountPath) instead of Helm's list replace. An
+        # override entry with one of these names replaces it, unless it
+        # runs another tag of the same image (a copy made for an older
+        # release): k4all's pin stays. The hangar, hangar-node-agent and
+        # cairn components below are the same releases' cluster objects:
+        # bump their version with these tags.
         initContainers:
           - name: k4all-plugin
-            image: ghcr.io/gpillon/k4all-headlamp-plugin:0.1.2
+            image: ghcr.io/gpillon/k4all-headlamp-plugin:0.2.0
             imagePullPolicy: IfNotPresent
             command:
               - sh
@@ -397,13 +572,79 @@ spec:
             volumeMounts:
               - name: k4all-plugin
                 mountPath: /k4all-plugin
+          - name: hangar-plugin
+            image: ghcr.io/kalik1/hangar-headlamp-plugin:0.1.1
+            imagePullPolicy: IfNotPresent
+            command:
+              - sh
+              - -c
+              - cp -R /plugins/hangar-headlamp-plugin/. /hangar-plugin/
+            resources:
+              requests:
+                cpu: 10m
+                memory: 16Mi
+              limits:
+                memory: 32Mi
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 100
+              runAsGroup: 101
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                  - ALL
+              seccompProfile:
+                type: RuntimeDefault
+            volumeMounts:
+              - name: hangar-plugin
+                mountPath: /hangar-plugin
+          - name: cairn-plugin
+            image: ghcr.io/kalik1/cairn-headlamp-plugin:0.1.1
+            imagePullPolicy: IfNotPresent
+            command:
+              - sh
+              - -c
+              - cp -R /plugins/cairn-headlamp-plugin/. /cairn-plugin/
+            resources:
+              requests:
+                cpu: 10m
+                memory: 16Mi
+              limits:
+                memory: 32Mi
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 100
+              runAsGroup: 101
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                  - ALL
+              seccompProfile:
+                type: RuntimeDefault
+            volumeMounts:
+              - name: cairn-plugin
+                mountPath: /cairn-plugin
         volumes:
           - name: k4all-plugin
+            emptyDir:
+              sizeLimit: 16Mi
+          - name: hangar-plugin
+            emptyDir:
+              sizeLimit: 16Mi
+          - name: cairn-plugin
             emptyDir:
               sizeLimit: 16Mi
         volumeMounts:
           - name: k4all-plugin
             mountPath: /headlamp/plugins/k4all-headlamp-plugin
+            readOnly: true
+          - name: hangar-plugin
+            mountPath: /headlamp/plugins/hangar-headlamp-plugin
+            readOnly: true
+          - name: cairn-plugin
+            mountPath: /headlamp/plugins/cairn-headlamp-plugin
             readOnly: true
       # traefik: its Middleware traefik/redirect-https exists by the time
       # the headlamp hook writes the dashboard route.
@@ -449,6 +690,9 @@ spec:
         - "https://github.com/kubevirt/kubevirt/releases/download/{{ version }}/kubevirt-cr.yaml"
       namespace: kubevirt
       featureGate: virt
+      # The snapshot API first: VM snapshots and CDI's snapshot clones.
+      dependsOn:
+        - snapshot-controller
       # KubeVirt runs its operator and its infra (virt-api, virt-controller,
       # virt-exportproxy) only on control planes, with PodDisruptionBudgets
       # of minAvailable 1. With one control plane its drain can never end:
@@ -468,6 +712,21 @@ spec:
             namespace: kubevirt
           type: merge
           patch: '{"spec":{"infra":{"nodePlacement":{"affinity":{"nodeAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":[{"weight":100,"preference":{"matchExpressions":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists"}]}}]}}}}}}'
+        # A release invariant (D3): after a KubeVirt update, running VMs move
+        # to the new virt-launcher by live migration; a VM that cannot
+        # migrate keeps running on the old one until it restarts (no Evict).
+        # Without it KubeVirt updates no workload. Upstream's CR has
+        # workloadUpdateStrategy: {}, and this patch comes after its apply,
+        # so every apply ends with [LiveMigrate] (an operator test checks it
+        # with v0.5.7's apply). Hangar owns the rest of KubeVirt's VM policy
+        # (evictionStrategy, vmRolloutStrategy, cpuModel).
+        - target:
+            apiVersion: kubevirt.io/v1
+            kind: KubeVirt
+            name: kubevirt
+            namespace: kubevirt
+          type: merge
+          patch: '{"spec":{"workloadUpdateStrategy":{"workloadUpdateMethods":["LiveMigrate"]}}}'
       custom: {}
 
     virtctl:
@@ -501,26 +760,83 @@ spec:
           patch: '{"spec":{"config":{"podResourceRequirements":{"limits":{"memory":"2G"}}}}}'
       custom: {}
 
-    kubevirt-manager:
+    # Hangar's cluster objects, from the GitHub Release of the plugin
+    # Headlamp runs (same tag as hangar-plugin above, with a "v"): the
+    # roles hangar-viewer, -vm-operator, -vm-admin and -hardware-admin
+    # (for users other than cluster-admin) and the delete protection
+    # (ValidatingAdmissionPolicy hangar-protect-from-deletion: a VM, disk
+    # or DataVolume labelled hangar.magesgate.com/protected cannot be
+    # deleted). Hangar itself runs in Headlamp: nothing else to run.
+    hangar:
       type: manifest
-      version: "v1.5.4"
-      sources:
-        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/{{ version }}/kubernetes/bundled.yaml"
-        - "https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/{{ version }}/kubernetes/crd.yaml"
-      namespace: kubevirt-manager
+      version: "v0.1.1"
+      source: "https://github.com/kalik1/hangar/releases/download/{{ version }}/hangar-cluster.yaml"
       featureGate: virt
       dependsOn:
         - kubevirt
-      # The tagged manifest still uses the floating :nightly image. Patches are
-      # not templated: bump the image tag together with version.
-      patches:
-        - target:
-            apiVersion: apps/v1
-            kind: Deployment
-            name: kubevirt-manager
-            namespace: kubevirt-manager
-          type: strategic
-          patch: '{"spec":{"template":{"spec":{"containers":[{"name":"kubevirtmgr","image":"kubevirtmanager/kubevirt-manager:1.5.4"}]}}}}'
+        - cdi
+        - snapshot-controller
+      custom: {}
+
+    # Hangar's node agent (namespace hangar-system): one pod per node that
+    # publishes the node's PCI, USB and disk inventory (Hangar's Hardware
+    # tab) and binds to vfio-pci the PCI devices given to VMs from Hangar,
+    # with a udev rule so they stay bound after a reboot. Its agent
+    # container is privileged (spc_t under SELinux: it writes /sys and
+    # /etc/udev/rules.d) and sees the node's processes (hostPID), without
+    # any API access: its only input is the ConfigMap hangar-passthrough.
+    # Installed with virt unless the ClusterConfig sets
+    # features.virt.hangar.nodeAgent: false (D6; absent means installed),
+    # which uninstalls it from a cluster that runs it: the operator of k4all
+    # v2.7.0 checks that field by this component's name, on top of the virt
+    # gate (an older operator installs it with virt). management Unmanaged
+    # keeps the operator away from it. Its removal leaves the VMs and the
+    # devices already bound as they are.
+    hangar-node-agent:
+      type: manifest
+      version: "v0.1.1"   # same tag as hangar
+      source: "https://github.com/kalik1/hangar/releases/download/{{ version }}/hangar-node-agent.yaml"
+      featureGate: virt
+      dependsOn:
+        - kubevirt
+      custom: {}
+
+    # The metadata service of VMs on 169.254.169.254: OpenStack and EC2
+    # paths (cloud-init, cloudbase-init, cirros), IMDSv2, and the VM's
+    # ServiceAccount tokens for the audiences of the ClusterConfig. Part of
+    # the k4all-operator: no sources, its hook applies two
+    # MutatingAdmissionPolicies that add to each served VM's virt-launcher
+    # pod an init container redirecting 169.254.169.254:80 (NET_ADMIN
+    # only, container_t) and the server (uid 107, read-only, no
+    # capabilities); its metadata controller writes each VM's Secret
+    # k4all-md-<vm> from the VM's spec. On with
+    # spec.features.virt.metadata.enabled (gate virtMetadata: an operator
+    # before v0.6.0 does not know it and leaves this component out).
+    # The image is released with the operator, same tag: version is
+    # k4all-operator's version.
+    k4all-metadata:
+      type: manifest
+      version: "v0.6.0"   # same tag as k4all-operator
+      image: "ghcr.io/gpillon/k4all-metadata:{{ version }}"
+      featureGate: virtMetadata
+      dependsOn:
+        - kubevirt
+      custom: {}
+
+    # Hangar replaces kubevirt-manager. On clusters that ran it, the
+    # operator's kubevirt-manager hook removes its console and roles; it
+    # keeps a PriorityClass (vm-standard, vm-preemptible) while a VM or
+    # pod names it (kubevirt-manager wrote it into the VMs it made, which
+    # could neither start nor move without it), its image catalog CRD
+    # while it holds images, and its namespace while the user's objects
+    # are in it. No sources: an operator that deletes what a removed
+    # component's manifests list (before the hook) deletes nothing.
+    # The VMs are untouched.
+    kubevirt-manager:
+      type: manifest
+      management: Removed
+      version: "v1.5.4"
+      featureGate: virt
       custom: {}
 
     # --- GitOps ---
@@ -627,7 +943,14 @@ spec:
       # v0.5.8 (k4all v2.6.7): a ClusterUpgrade does not cordon a node that
       # runs a pod without a controller, names it, and never evicts one
       # (#99).
-      version: "v0.5.8"
+      # v0.6.0 (k4all v2.7.0): the ClusterConfig API of v2.7.0 (node
+      # settings, KubeVirt settings, features.rook, the metadata service),
+      # the Hangar, Rook, snapshot-controller and k4all-metadata components
+      # with their gates, uninstall guards that keep a component while its
+      # data lives, the Cilium pool from podNetwork on new installs and the
+      # PodNetworkOverlap check, and the upgrade-graph guards of #74 and #77
+      # (MigrationsAhead, DowngradeRefused).
+      version: "v0.6.0"
       versionUrl: "https://api.github.com/repos/gpillon/k4all-operator/releases"
       source: "https://github.com/gpillon/k4all-operator/releases/download/{{ version }}/install.yaml"
       namespace: k4all-operator-system

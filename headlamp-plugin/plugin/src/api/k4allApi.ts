@@ -5,8 +5,16 @@
  */
 
 import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
+import { classifyError } from '../model/errors';
+import { withRolloutPaused } from '../model/nodeSettings';
 import { escapePointerToken } from '../model/objects';
-import { annotationMergePatch, JsonPatchOp, precondition, writeQuery } from '../model/patch';
+import {
+  annotationMergePatch,
+  buildSpecPatch,
+  JsonPatchOp,
+  precondition,
+  writeQuery,
+} from '../model/patch';
 import {
   CLUSTER_UPGRADE_NAME,
   ClusterConfigObject,
@@ -43,6 +51,32 @@ export function patchClusterConfig(
 
 export function getClusterConfig(name: string): Promise<ClusterConfigObject> {
   return ApiProxy.request(apiPath('clusterconfigs', name)) as Promise<ClusterConfigObject>;
+}
+
+/**
+ * Pauses or resumes the node-settings rollout (spec.nodes.rollout.paused) at
+ * once, outside any settings draft, like Pause on the Upgrades page: a JSON
+ * Patch of that field on the latest ClusterConfig, guarded by its generation,
+ * rebuilt and sent again once when someone saved in between.
+ */
+export async function setNodeRolloutPaused(
+  name: string,
+  paused: boolean
+): Promise<ClusterConfigObject> {
+  for (let attempt = 0; ; attempt++) {
+    const cc = await getClusterConfig(name);
+    const ops = buildSpecPatch(cc, withRolloutPaused(cc.spec ?? {}, paused));
+    if (ops.length === 0) {
+      return cc;
+    }
+    try {
+      return await patchClusterConfig(name, ops, false);
+    } catch (err) {
+      if (attempt > 0 || classifyError(err).kind !== 'conflict') {
+        throw err;
+      }
+    }
+  }
 }
 
 /**

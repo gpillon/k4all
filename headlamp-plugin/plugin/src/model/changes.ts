@@ -4,8 +4,16 @@
  */
 
 import { Capabilities, CAPABILITY_RELEASE, CAPABILITY_SINCE } from './capabilities';
-import { componentActivation } from './components';
+import { belongsTo, componentActivation, Feature, FEATURE_LABEL } from './components';
 import { fieldForPath, FIELDS } from './fields';
+import { wantedGates } from './gates';
+import {
+  actionFor,
+  changedNodeFields,
+  clearedKubeletValue,
+  KubeletPrior,
+  NodeAction,
+} from './nodeSettings';
 import { dottedPath, getIn, isPlainObject, jsonEqual, Path } from './objects';
 import { activeIngress, effectiveIngress, INGRESS_LABEL } from './settings';
 import { ClusterConfigSpec, ComponentSpec } from './types';
@@ -37,23 +45,22 @@ export function formatValue(value: unknown, fallback = 'not set'): string {
   return String(value);
 }
 
-/** Components a feature installs, from the ReleaseManifest. */
+/**
+ * Components of the feature that the change installs (enabled) or removes:
+ * active on one side only, from the ReleaseManifest. A component another
+ * feature keeps (the snapshot controller with virt or Rook) is not named.
+ */
 function componentsOf(
-  feature: 'virt' | 'argocd' | 'ovsCni',
+  feature: Feature,
   components: Record<string, ComponentSpec>,
-  config: ClusterConfigSpec
+  before: ClusterConfigSpec,
+  after: ClusterConfigSpec
 ): string[] {
-  const on: ClusterConfigSpec = {
-    ...config,
-    features: {
-      ...config.features,
-      [feature]: { ...(config.features?.[feature] ?? {}), enabled: true },
-    },
-  };
   return Object.entries(components)
     .filter(([name, spec]) => {
-      const a = componentActivation(name, spec, on);
-      return a.feature === feature && a.active;
+      const a = componentActivation(name, spec, before);
+      const b = componentActivation(name, spec, after);
+      return (belongsTo(a, feature) || belongsTo(b, feature)) && a.active !== b.active;
     })
     .map(([name]) => name)
     .sort();
@@ -64,25 +71,30 @@ const FEATURE_OFF: Record<string, string> = {
     'Argo CD stops syncing. Applications it deployed keep running but are no longer reconciled.',
   ovsCni:
     'Pods and VMs attached to OVS secondary networks lose those interfaces when they restart.',
+  rook:
+    'k4all-operator keeps them installed while a CephCluster exists, and the Storage page says so: ' +
+    'delete what lives on Ceph and the CephCluster first (Cairn). k4all never wipes disks: before ' +
+    'turning Rook on again, wipe /var/lib/rook and the OSD disks by hand.',
 };
 
 /**
  * What turning the feature off does to its components (list), with the
  * installed operator: from v0.5.7 k4all-operator keeps virtualization while
- * VMs and their disks exist, before it deleted it from under them.
+ * VMs and their disks exist, before it deleted it from under them. It names
+ * kubevirt-manager only where the release still installs it (k4all v2.6.x;
+ * v2.7.0 removes it).
  */
-export function featureOffConsequence(
-  feature: 'virt' | 'argocd' | 'ovsCni',
-  list: string,
-  caps?: Capabilities
-): string {
+export function featureOffConsequence(feature: Feature, list: string, caps?: Capabilities): string {
   if (feature !== 'virt') {
     return `Uninstalls ${list}. ${FEATURE_OFF[feature]}`;
   }
   if (caps?.virtUninstallGuard) {
+    const kept = list.split(', ').includes('kubevirt-manager')
+      ? 'KubeVirt and kubevirt-manager'
+      : 'KubeVirt';
     return (
-      `Uninstalls ${list} once nothing runs on them: k4all-operator keeps KubeVirt and ` +
-      'kubevirt-manager while VirtualMachines or VirtualMachineInstances exist, and CDI while ' +
+      `Uninstalls ${list} once nothing runs on them: k4all-operator keeps ${kept} ` +
+      'while VirtualMachines or VirtualMachineInstances exist, and CDI while ' +
       'DataVolumes or PVCs made by CDI exist, and this switch shows what is left. Back up the VM ' +
       'disks you need, then delete the VMs and DataVolumes.'
     );
@@ -97,14 +109,15 @@ export function featureOffConsequence(
 }
 
 function featureChange(
-  feature: 'virt' | 'argocd' | 'ovsCni',
+  feature: Feature,
   label: string,
   enabled: boolean,
   components: Record<string, ComponentSpec>,
   base: ClusterConfigSpec,
+  draft: ClusterConfigSpec,
   caps?: Capabilities
 ): ChangeItem {
-  const names = componentsOf(feature, components, base);
+  const names = componentsOf(feature, components, base, draft);
   const list = names.length ? names.join(', ') : 'its components';
   return {
     key: `features.${feature}.enabled`,
@@ -152,12 +165,19 @@ const LIVE_DANGER: Record<string, string> = {
     'Each node loses connectivity for a few seconds; VMs and pods on OVS networks need the bridge.',
 };
 
+/** Cluster state the change texts can use when the page has it. */
+export interface ChangeContext {
+  /** What each kubelet field had before k4all wrote it (kube-system/kubelet-config's record). */
+  kubeletPrior?: KubeletPrior | null;
+}
+
 export function describeChanges(
   base: ClusterConfigSpec,
   draft: ClusterConfigSpec,
   components: Record<string, ComponentSpec> = {},
   /** What the installed k4all-operator can do; unknown: nothing optional. */
-  caps?: Capabilities
+  caps?: Capabilities,
+  ctx: ChangeContext = {}
 ): ChangeItem[] {
   const items: ChangeItem[] = [];
   const seen = new Set<string>();
@@ -168,18 +188,49 @@ export function describeChanges(
     }
   };
 
-  const features: ['virt' | 'argocd' | 'ovsCni', string][] = [
+  const features: [Feature, string][] = [
     ['virt', FIELDS.virtEnabled.label],
     ['argocd', FIELDS.argocdEnabled.label],
     ['ovsCni', FIELDS.ovsCniEnabled.label],
+    ['rook', FEATURE_LABEL.rook],
   ];
   for (const [feature, label] of features) {
     const before = base.features?.[feature]?.enabled === true;
     const after = draft.features?.[feature]?.enabled === true;
     if (before !== after) {
-      add(featureChange(feature, label, after, components, base, caps));
+      add(featureChange(feature, label, after, components, base, draft, caps));
     }
   }
+
+  // KubeVirt gates k4all owns: one item per gate, from k4all's two lists.
+  const gatesBefore = wantedGates(base);
+  const gatesAfter = wantedGates(draft);
+  const gateState = (l: typeof gatesBefore, g: string) =>
+    l.featureGates.includes(g) ? 'on' : l.disabledFeatureGates.includes(g) ? 'off' : undefined;
+  const gateNames = [
+    ...new Set([
+      ...gatesBefore.featureGates,
+      ...gatesBefore.disabledFeatureGates,
+      ...gatesAfter.featureGates,
+      ...gatesAfter.disabledFeatureGates,
+    ]),
+  ].sort((a, b) => a.localeCompare(b));
+  for (const gate of gateNames) {
+    const from = gateState(gatesBefore, gate);
+    const to = gateState(gatesAfter, gate);
+    if (from !== to) {
+      add({
+        key: `features.virt.kubevirt.gates.${gate}`,
+        label: `Feature gate ${gate}`,
+        from: from ?? NOT_OWNED,
+        to: to ?? NOT_OWNED,
+        severity: to === 'off' ? 'warning' : 'info',
+        consequence: GATE_EFFECT[to ?? 'none'](gate),
+      });
+    }
+  }
+
+  const nodeAction = actionFor(changedNodeFields(base.nodes, draft.nodes));
 
   const controller = activeIngress(components, base);
   const name = INGRESS_LABEL[controller];
@@ -228,7 +279,8 @@ export function describeChanges(
     if (
       leaf.startsWith('ingress.traefik') ||
       leaf.startsWith('ingress.nginx') ||
-      /^features\.(virt|argocd|ovsCni)\.enabled$/.test(leaf)
+      /^features\.(virt|argocd|ovsCni|rook)\.enabled$/.test(leaf) ||
+      /^features\.virt\.kubevirt\.(featureGates|disabledFeatureGates)$/.test(leaf)
     ) {
       continue; // described above
     }
@@ -252,6 +304,28 @@ export function describeChanges(
     }
     const isCilium = leaf.startsWith('networking.cni.cilium');
     const fieldKey = info ? dottedPath(info.path) : leaf;
+    let effect =
+      path[0] === 'nodes' && path[1] !== 'rollout' && nodeAction
+        ? NODE_ACTION_EFFECT[nodeAction]
+        : FIELD_EFFECT[fieldKey]?.(after);
+    // A cleared kubelet field gets back what kubelet-config had before k4all.
+    const cleared =
+      effect && path[0] === 'nodes' && path[1] === 'kubelet' && after === undefined
+        ? clearedKubeletValue(String(path[2]), ctx.kubeletPrior)
+        : undefined;
+    if (effect && cleared) {
+      effect = { ...effect, consequence: `${cleared.text} ${effect.consequence}` };
+    }
+    if (effect) {
+      add({
+        key: fieldKey,
+        label: info?.label ?? leaf,
+        from: formatValue(before, info?.fallback),
+        to: cleared ? cleared.label : formatValue(after, info?.fallback),
+        ...effect,
+      });
+      continue;
+    }
     add({
       key: fieldKey,
       label: info?.label ?? leaf,
@@ -278,6 +352,130 @@ export function describeChanges(
   }
   return items;
 }
+
+/** How a gate, a field, k4all does not own reads in the review. */
+const NOT_OWNED = 'not set by k4all';
+
+const GATE_EFFECT: Record<'on' | 'off' | 'none', (gate: string) => string> = {
+  on: gate =>
+    `k4all-operator adds ${gate} to the featureGates of the KubeVirt CR; KubeVirt reconfigures ` +
+    'its components, running VMs keep running.',
+  off: gate =>
+    `k4all-operator removes ${gate} from the featureGates of the KubeVirt CR and, on KubeVirt 1.8 ` +
+    'and later, lists it in disabledFeatureGates, even where Hangar or an admin set it.',
+  none: gate =>
+    `k4all stops owning ${gate}: the operator removes only the entry it added, and a value set ` +
+    'in Hangar or by an admin stays.',
+};
+
+interface Effect {
+  severity: ChangeSeverity;
+  consequence: string;
+}
+
+/** What the nodes do, by the strongest action of the node settings that change. */
+const NODE_ACTION_EFFECT: Record<NodeAction, Effect> = {
+  restart: {
+    severity: 'warning',
+    consequence:
+      'kubelet restarts on every node, one at a time, without a drain: running pods keep running.',
+  },
+  'drain-restart': {
+    severity: 'danger',
+    consequence:
+      'Every node, one at a time, is drained and its kubelet restarts with a fresh CPU manager ' +
+      'state. The plan above lists the order.',
+  },
+  'drain-reboot': {
+    severity: 'danger',
+    consequence:
+      'Every node, one at a time, is drained and reboots with the new kernel arguments. The plan ' +
+      'above lists the order.',
+  },
+};
+
+const NEXT_START = 'Applies to the VM pods created from now on (VM starts and live migrations).';
+
+const CREATION_INPUT =
+  'Read once, when k4all creates the Ceph cluster; once the cluster exists it does nothing ' +
+  '(manage the cluster in Cairn).';
+
+/** Effects of the k4all v2.7.0 fields, by their path; `after` is the new value. */
+const FIELD_EFFECT: Record<string, (after: unknown) => Effect> = {
+  'features.virt.hangar.nodeAgent': after =>
+    after === false
+      ? {
+          severity: 'warning',
+          consequence:
+            "Uninstalls hangar-node-agent: Hangar's Hardware tab and PCI passthrough stop working. " +
+            'Devices already bound to vfio-pci stay bound.',
+        }
+      : {
+          severity: 'info',
+          consequence:
+            'Installs hangar-node-agent, a privileged DaemonSet in hangar-system that only acts on ' +
+            "what Hangar's passthrough ConfigMap asks.",
+        },
+  'features.virt.kubevirt.vmStateStorageClass': after =>
+    after === undefined
+      ? {
+          severity: 'warning',
+          consequence:
+            'k4all stops owning it: the operator removes the value it wrote from the KubeVirt CR, and ' +
+            'KubeVirt falls back to the default StorageClass (or what Hangar sets there).',
+        }
+      : {
+          severity: 'info',
+          consequence:
+            'KubeVirt creates the persistent state of new VMs there; existing state volumes stay where they are.',
+        },
+  'features.virt.metadata.enabled': after =>
+    after === true
+      ? {
+          severity: 'info',
+          consequence:
+            'Installs k4all-metadata: the VMs of the scope get 169.254.169.254 from their next start or migration.',
+        }
+      : {
+          severity: 'warning',
+          consequence:
+            'Uninstalls k4all-metadata: 169.254.169.254 stops answering at once, running VMs included, and a VM ' +
+            'that restarts gets no k4all MAC or metadata server. VMs without a cloud-init disk then boot without ' +
+            'SSH keys or user-data.',
+        },
+  'features.virt.metadata.scope': after =>
+    after === 'All'
+      ? {
+          severity: 'warning',
+          consequence:
+            'Every VM in a namespace whose PodSecurity allows it gets the metadata server at its next start, labelled or not.',
+        }
+      : { severity: 'info', consequence: NEXT_START },
+  'features.virt.metadata.tokens.audiences': () => ({ severity: 'info', consequence: NEXT_START }),
+  'features.virt.metadata.tokens.expirationSeconds': () => ({
+    severity: 'info',
+    consequence: NEXT_START,
+  }),
+  'features.virt.metadata.vendorDataConfigMap': () => ({
+    severity: 'info',
+    consequence: NEXT_START,
+  }),
+  'features.rook.storage.deviceFilter': () => ({ severity: 'info', consequence: CREATION_INPUT }),
+  'features.rook.smallCluster': after =>
+    after === 'Allow'
+      ? {
+          severity: 'warning',
+          consequence: `${CREATION_INPUT} Below 3 nodes the cluster has no redundancy.`,
+        }
+      : { severity: 'info', consequence: CREATION_INPUT },
+  'nodes.rollout.paused': after =>
+    after === true
+      ? {
+          severity: 'info',
+          consequence: 'The rollout stops before the next node; the node in progress finishes.',
+        }
+      : { severity: 'info', consequence: 'The rollout goes on with the next node.' },
+};
 
 export function needsAcknowledgement(items: ChangeItem[]): boolean {
   return items.some(i => i.severity === 'danger');
@@ -312,12 +510,17 @@ export function serverAdjustments(
  */
 export const HOOKED_COMPONENTS = [
   'calico',
+  'cdi',
+  'ceph-csi-drivers',
   'cilium',
   'headlamp',
   'ingress-nginx',
+  'k4all-metadata',
   'kubevirt',
+  'kubevirt-manager',
   'metallb',
   'nmstate',
+  'rook-ceph',
   'topolvm',
   'traefik',
 ];

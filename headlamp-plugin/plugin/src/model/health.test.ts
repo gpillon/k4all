@@ -61,6 +61,84 @@ describe('clusterHealth', () => {
     expect(ids).toEqual(['applying', 'stale']);
   });
 
+  it('lists the uninstalls k4all-operator refuses and what it waits for', () => {
+    const rm = releaseManifest();
+    rm.status!.components!['cert-manager'] = { state: 'Installed', installedVersion: 'v1.21.3' };
+    rm.status!.components!.kubevirt = {
+      state: 'Installed',
+      message: 'uninstall refused: 2 VirtualMachines exist (default/a, default/b)',
+    };
+    rm.status!.components!.cdi = { state: 'Installed', message: 'waiting: kubevirt is kept' };
+    const cc = defaultClusterConfig();
+    const h = clusterHealth(input({ rm, rows: buildRows(rm, cc.spec!) }));
+    expect(h.banners).toEqual([
+      {
+        id: 'refused',
+        severity: 'warning',
+        title: 'k4all-operator keeps kubevirt installed',
+        detail:
+          'kubevirt: 2 VirtualMachines exist (default/a, default/b). It removes it once that is gone.',
+      },
+      { id: 'waiting', severity: 'info', title: 'Waiting: cdi', detail: 'cdi: kubevirt is kept' },
+    ]);
+    expect(h.level).toBe('healthy');
+  });
+
+  it('names a held group once, and queued uninstalls', () => {
+    const rm = releaseManifest();
+    rm.status!.components!['cert-manager'] = { state: 'Installed', installedVersion: 'v1.21.3' };
+    const held = 'uninstall refused: kubevirt: 2 VirtualMachines exist';
+    rm.status!.components!.kubevirt = { state: 'Installed', message: held };
+    rm.status!.components!.cdi = { state: 'Installed', message: held };
+    rm.status!.components!.hangar = {
+      state: 'Installed',
+      message: 'uninstall queued: waiting for kubevirt to be uninstalled first',
+    };
+    const cc = defaultClusterConfig();
+    const h = clusterHealth(input({ rm, rows: buildRows(rm, cc.spec!) }));
+    expect(h.banners.find(b => b.id === 'refused')).toEqual({
+      id: 'refused',
+      severity: 'warning',
+      title: 'k4all-operator keeps cdi, kubevirt installed',
+      detail: 'kubevirt: 2 VirtualMachines exist. It removes them once that is gone.',
+    });
+    expect(h.banners.find(b => b.id === 'queued')).toEqual({
+      id: 'queued',
+      severity: 'info',
+      title: 'Uninstalling in order: hangar',
+      detail: 'hangar: waiting for kubevirt to be uninstalled first',
+    });
+  });
+
+  it('follows the node-settings rollout', () => {
+    const cc = defaultClusterConfig();
+    cc.spec!.nodes = { iommu: true };
+    cc.status!.nodes = {
+      settingsHash: 'h',
+      rollout: { phase: 'Rolling', currentNode: 'k4all-2', message: 'draining k4all-2' },
+      perNode: [
+        { name: 'k4all-1', appliedHash: 'h' },
+        { name: 'k4all-2', appliedHash: 'old' },
+      ],
+    };
+    const h = clusterHealth(input({ cc }));
+    expect(h.banners.find(b => b.id === 'nodeSettings')).toEqual({
+      id: 'nodeSettings',
+      severity: 'info',
+      title: 'Node settings rollout on k4all-2',
+      detail: '1 of 2 nodes have the settings. draining k4all-2',
+    });
+    expect(h.level).toBe('progressing');
+    cc.status!.nodes.rollout = { phase: 'Blocked', message: 'a ClusterUpgrade runs' };
+    expect(clusterHealth(input({ cc })).banners.find(b => b.id === 'nodeSettings')).toMatchObject({
+      severity: 'warning',
+      title: 'Node settings rollout blocked',
+      detail: '1 of 2 nodes have the settings. a ClusterUpgrade runs',
+    });
+    cc.status!.nodes.rollout = { phase: 'Idle' };
+    expect(clusterHealth(input({ cc })).banners.some(b => b.id === 'nodeSettings')).toBe(false);
+  });
+
   it('is unknown without the custom resources', () => {
     expect(clusterHealth(input({ cc: null })).headline).toBe('No ClusterConfig');
   });

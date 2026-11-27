@@ -6,6 +6,7 @@ bootc's auto-update timer left active, scripts that never reach existing
 nodes, kubeadm configs that a newer kubeadm rejects.
 """
 
+import json
 import os
 import re
 import signal
@@ -338,6 +339,24 @@ def test_bootstrap_kubelet_config_allows_250_pods():
     assert kubelet[0]["maxPods"] == 250
 
 
+def test_new_installs_own_the_250_pods_kubeadm_gives_them():
+    # A new install's ClusterConfig owns maxPods (spec §3), with the value
+    # kubeadm's bootstrap config gives the cluster, so the node settings
+    # controller finds kubelet-config as it wants it: no rollout after the
+    # install. kubeadm init takes the value of /etc/k4all-config.yaml, so a
+    # kickstart's own maxPods agrees too.
+    with open(os.path.join(BOOTC, "overlay", "etc", "k4all-config.yaml.default"),
+              encoding="utf-8") as fh:
+        default = yaml.safe_load(fh)["spec"]
+    docs = list(yaml.safe_load_all(read(BIN, "overrides", "bootstrap",
+                                        "k8s-config-bootstrap.yaml")))
+    [kubelet] = [d for d in docs if d["kind"] == "KubeletConfiguration"]
+    assert default["nodes"]["kubelet"]["maxPods"] == kubelet["maxPods"] == 250
+    script = read(BIN, "overrides", "bootstrap", "setup-k8s-init.sh")
+    assert "'.spec.nodes.kubelet.maxPods // 250'" in script
+    assert '(select(.kind == "KubeletConfiguration") | .maxPods) = ' in script
+
+
 def test_bootstrap_init_pins_the_control_plane_to_the_kubelet():
     script = read(BIN, "overrides", "bootstrap", "setup-k8s-init.sh")
     assert ".kubernetesVersion) = " in script
@@ -381,6 +400,109 @@ def test_kube_vip_is_the_hosts():
         kube_vip = yaml.safe_load(fh)["spec"]["components"]["kube-vip"]
     assert kube_vip["management"] == "Unmanaged"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", kube_vip["version"])
+
+
+def test_rook_is_optional():
+    # Rook comes only with its feature: an operator that does not know the
+    # "rook" gate (before k4all v2.7.0) treats it as off and skips both
+    # charts. The CSI drivers need the ceph-csi operator and the Driver CRD
+    # of the rook-ceph chart.
+    components = release_components()
+    for name in ("rook-ceph", "ceph-csi-drivers"):
+        assert components[name]["featureGate"] == "rook", name
+        assert components[name]["namespace"] == "rook-ceph", name
+    assert "rook-ceph" in components["ceph-csi-drivers"]["dependsOn"]
+
+
+def test_cairn_goes_before_rook():
+    # The reconciler uninstalls a feature's components in reverse
+    # dependency order (consoles first): without dependsOn, Cairn's roles
+    # went first only by a tie-break on names.
+    assert release_components()["cairn"]["dependsOn"] == ["rook-ceph"]
+
+
+def test_rook_runs_under_selinux_with_snapshots():
+    # k4all nodes enforce SELinux: without privileged pods Rook cannot chown
+    # /var/lib/rook. Without the snapshotter sidecar (snapshotPolicy none, the
+    # chart's default) a VolumeSnapshot of ceph-rbd never becomes ready.
+    components = release_components()
+    assert components["rook-ceph"]["values"]["hostpathRequiresPrivileged"] is True
+    rbd = components["ceph-csi-drivers"]["values"]["drivers"]["rbd"]
+    assert rbd["name"] == "rook-ceph.rbd.csi.ceph.com"
+    assert rbd["snapshotPolicy"] == "volumeSnapshot"
+
+
+SNAPSHOTTER = "https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/{{ version }}/"
+SNAPSHOT_CRDS = [
+    "snapshot.storage.k8s.io_volumesnapshotclasses.yaml",
+    "snapshot.storage.k8s.io_volumesnapshotcontents.yaml",
+    "snapshot.storage.k8s.io_volumesnapshots.yaml",
+    "groupsnapshot.storage.k8s.io_volumegroupsnapshotclasses.yaml",
+    "groupsnapshot.storage.k8s.io_volumegroupsnapshotcontents.yaml",
+    "groupsnapshot.storage.k8s.io_volumegroupsnapshots.yaml",
+]
+
+
+def test_snapshot_controller_comes_with_virt_or_rook():
+    # D13: VM snapshots (KubeVirt, Hangar), CDI's snapshot clones and
+    # ceph-rbd's VolumeSnapshotClass need the snapshot API and its
+    # controller. Gate "snapshots": on with virt or rook; an operator that
+    # does not know it (before k4all v2.7.0) installs nothing.
+    comp = release_components()["snapshot-controller"]
+    assert comp["type"] == "manifest"
+    assert comp["featureGate"] == "snapshots"
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", comp["version"])
+    # The CRDs first (the Deployment's informers need them), then RBAC,
+    # all at the pinned tag.
+    assert comp["sources"] == (
+        [SNAPSHOTTER + "client/config/crd/" + crd for crd in SNAPSHOT_CRDS]
+        + [SNAPSHOTTER + "deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml"])
+    # Upstream's files carry kube-system; a component namespace would also
+    # land on the CRDs and ClusterRoles the operator's list does not know.
+    assert "namespace" not in comp
+    assert set(comp["dependsOn"]) == {"calico", "cilium"}
+
+
+def test_snapshot_controller_runs_the_pinned_image():
+    # The setup file of a tag runs the previous release's image (v8.7.0's
+    # runs v8.6.0): the Deployment is inline, its image bumped with version.
+    comp = release_components()["snapshot-controller"]
+    docs = [yaml.safe_load(m) for m in comp["inlineManifests"]]
+    assert [(d["kind"], d["metadata"]["namespace"], d["metadata"]["name"]) for d in docs] == \
+        [("Deployment", "kube-system", "snapshot-controller")]
+    pod = docs[0]["spec"]["template"]["spec"]
+    assert pod["serviceAccountName"] == "snapshot-controller"
+    [container] = pod["containers"]
+    assert container["image"] == \
+        "registry.k8s.io/sig-storage/snapshot-controller:" + comp["version"]
+    assert "--leader-election=true" in container["args"]
+
+
+def test_snapshot_users_come_after_the_snapshot_controller():
+    # Ordering only (dependsOn of an inactive component is ignored): the
+    # API is there when the Rook hook seeds ceph-rbd's VolumeSnapshotClass,
+    # when the CSI drivers' snapshotter sidecar starts, and when KubeVirt,
+    # CDI and Hangar first look for it.
+    components = release_components()
+    for name in ("rook-ceph", "ceph-csi-drivers", "kubevirt", "hangar"):
+        assert "snapshot-controller" in components[name]["dependsOn"], name
+
+
+def test_kubevirt_live_migrates_its_workloads():
+    # D3: a release invariant. After a KubeVirt update the VMs move to the
+    # new virt-launcher by live migration (those that cannot migrate keep
+    # running on the old one). A merge patch after upstream's CR, whose
+    # workloadUpdateStrategy is {}: the operator's apply does not undo it.
+    patches = [p for p in release_components()["kubevirt"]["patches"]
+               if p["target"]["kind"] == "KubeVirt"]
+    methods = [json.loads(p["patch"]).get("spec", {}).get("workloadUpdateStrategy")
+               for p in patches]
+    methods = [m for m in methods if m]
+    assert methods == [{"workloadUpdateMethods": ["LiveMigrate"]}]
+    patch = next(p for p in patches if "workloadUpdateStrategy" in p["patch"])
+    assert patch["type"] == "merge"
+    assert patch["target"] == {"apiVersion": "kubevirt.io/v1", "kind": "KubeVirt",
+                               "name": "kubevirt", "namespace": "kubevirt"}
 
 
 def test_topolvm_volumes_wait_for_their_pod():
@@ -577,3 +699,102 @@ def test_headlamp_carries_the_pinned_k4all_plugin():
     assert any(m.get("name") == "k4all-plugin" and m.get("mountPath") == mount
                and m.get("readOnly") is True
                for m in values.get("volumeMounts") or []), mount
+
+
+# --- Hangar and Cairn (k4all v2.7.0) ---------------------------------------
+# The operator's headlamp hook leaves out a plugin's entries, found by these
+# names, while its feature is off (hooks/headlamp_plugins.go).
+CONSOLE_PLUGINS = {
+    "hangar": ("hangar-plugin", "ghcr.io/kalik1/hangar-headlamp-plugin", "virt"),
+    "cairn": ("cairn-plugin", "ghcr.io/kalik1/cairn-headlamp-plugin", "rook"),
+}
+
+
+def plugin_tag(values, name, repo):
+    plugin = [c for c in values.get("initContainers") or []
+              if c.get("name") == name]
+    assert len(plugin) == 1, "headlamp has no %s initContainer" % name
+    image_repo, _, tag = plugin[0]["image"].split("@")[0].rpartition(":")
+    assert image_repo == repo, plugin[0]["image"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?", tag), \
+        "the %s image needs a release tag, not %r" % (name, tag)
+    return tag
+
+
+def test_headlamp_carries_the_pinned_console_plugins():
+    # Hangar (KubeVirt) and Cairn (Rook) are copied into Headlamp like the
+    # k4all plugin: pinned images, an emptyDir each, mounted read-only at
+    # <pluginsDir>/<package name>, the folder Headlamp loads the plugin from.
+    values = release_components()["headlamp"]["values"]
+    for component, (name, repo, _) in CONSOLE_PLUGINS.items():
+        plugin_tag(values, name, repo)
+        assert any(v.get("name") == name and "emptyDir" in v
+                   for v in values.get("volumes") or []), name
+        mount = "%s/%s-headlamp-plugin" % (
+            values["config"]["pluginsDir"].rstrip("/"), component)
+        assert any(m.get("name") == name and m.get("mountPath") == mount
+                   and m.get("readOnly") is True
+                   for m in values.get("volumeMounts") or []), mount
+
+
+# k4all component -> (console, file of the console's GitHub Release).
+CONSOLE_BUNDLES = {
+    "hangar": ("hangar", "hangar-cluster.yaml"),
+    "hangar-node-agent": ("hangar", "hangar-node-agent.yaml"),
+    "cairn": ("cairn", "cairn-cluster.yaml"),
+}
+
+
+def test_console_cluster_objects_come_from_their_plugin_release():
+    # Each console's cluster objects (roles, Hangar's delete protection and
+    # node agent) are files of the GitHub Release whose image Headlamp runs,
+    # behind the console's feature: one release pins plugin and objects.
+    components = release_components()
+    values = components["headlamp"]["values"]
+    for component, (console, asset) in CONSOLE_BUNDLES.items():
+        name, repo, gate = CONSOLE_PLUGINS[console]
+        comp = components[component]
+        assert comp["type"] == "manifest", component
+        assert comp["featureGate"] == gate, component
+        assert comp["version"] == "v" + plugin_tag(values, name, repo), component
+        assert comp["source"] == ("https://github.com/kalik1/%s/releases/"
+                                  "download/{{ version }}/%s" % (console, asset))
+        # Namespaced objects carry their namespace in the file: the
+        # component's namespace would also be set on cluster-scoped kinds
+        # the operator does not know (ValidatingAdmissionPolicy).
+        assert "namespace" not in comp, component
+    assert set(components["hangar"]["dependsOn"]) >= {"kubevirt", "cdi"}
+    assert "kubevirt" in components["hangar-node-agent"]["dependsOn"]
+
+
+def test_hangar_replaces_kubevirt_manager():
+    # kubevirt-manager is Removed. Without sources an operator that removes
+    # it from its manifests deletes nothing: the one pinned here removes it
+    # through its kubevirt-manager hook, which keeps the PriorityClasses VMs
+    # name, the image catalog with images in it and a namespace with the
+    # user's objects. Nothing may depend on it any more.
+    components = release_components()
+    kvm = components["kubevirt-manager"]
+    assert kvm["management"] == "Removed"
+    for field in ("source", "sources", "inlineManifests", "patches"):
+        assert field not in kvm, field
+    for name, comp in components.items():
+        assert "kubevirt-manager" not in comp.get("dependsOn", []), name
+
+
+def test_metadata_service_comes_with_the_operator():
+    # k4all-metadata is the operator's own component: its image is built
+    # and tagged with the operator's release, so a bump of one is a bump of
+    # the other. No sources (the operator's hook renders its policies), so
+    # an operator that does not know its gate must leave it out: under
+    # featureGate virt an operator before v0.6.0 would fail it ("no source
+    # URLs"). It needs KubeVirt's VirtualMachineInstance kind.
+    components = release_components()
+    md = components["k4all-metadata"]
+    assert md["type"] == "manifest"
+    assert md["version"] == components["k4all-operator"]["version"]
+    assert md["image"] == "ghcr.io/gpillon/k4all-metadata:{{ version }}"
+    assert md["featureGate"] == "virtMetadata"
+    assert md["dependsOn"] == ["kubevirt"]
+    for field in ("source", "sources", "inlineManifests", "patches", "namespace"):
+        assert field not in md, field

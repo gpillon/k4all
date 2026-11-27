@@ -3,7 +3,7 @@
  * explain it.
  */
 
-import { ComponentRow, summarize } from './components';
+import { componentNotices, ComponentRow, groupNotices, summarize } from './components';
 import {
   ClusterConfigObject,
   Condition,
@@ -139,6 +139,59 @@ export function clusterHealth({ rm, cc, rows, nodes, now }: HealthInput): Health
     }
   }
 
+  // Operator v0.5.7+: a component kept installed though it should go
+  // ("uninstall refused: "), v0.6.0: one that waits ("waiting: ").
+  // A held group (#96) carries one message on every member: name it once.
+  const notices = componentNotices(rm);
+  const banner = (
+    kind: 'refused' | 'waiting' | 'queued',
+    severity: Banner['severity'],
+    title: (names: string) => string,
+    tail = ''
+  ) => {
+    const list = notices.filter(n => n.kind === kind);
+    if (list.length === 0) {
+      return;
+    }
+    banners.push({
+      id: kind,
+      severity,
+      title: title(list.map(n => n.name).join(', ')),
+      detail:
+        groupNotices(list)
+          .map(g => g.label)
+          .join('; ') + tail.replace('$', list.length === 1 ? 'it' : 'them'),
+    });
+  };
+  banner(
+    'refused',
+    'warning',
+    names => `k4all-operator keeps ${names} installed`,
+    '. It removes $ once that is gone.'
+  );
+  banner('queued', 'info', names => `Uninstalling in order: ${names}`);
+  banner('waiting', 'info', names => `Waiting: ${names}`);
+
+  // Node settings (operator v0.6.0), from status.nodes.
+  const rollout = cc.status?.nodes?.rollout;
+  const phase = rollout?.phase;
+  if (phase === 'Rolling' || phase === 'Paused' || phase === 'Blocked') {
+    const hash = cc.status?.nodes?.settingsHash;
+    const perNode = cc.status?.nodes?.perNode ?? [];
+    const done = perNode.filter(n => !!hash && n.appliedHash === hash).length;
+    banners.push({
+      id: 'nodeSettings',
+      severity: phase === 'Rolling' ? 'info' : 'warning',
+      title:
+        phase === 'Rolling'
+          ? `Node settings rollout${rollout?.currentNode ? ` on ${rollout.currentNode}` : ''}`
+          : `Node settings rollout ${phase === 'Paused' ? 'paused' : 'blocked'}`,
+      detail:
+        `${done} of ${perNode.length} nodes have the settings.` +
+        (rollout?.message ? ` ${rollout.message}` : ''),
+    });
+  }
+
   if (summary.failed > 0) {
     const failed = rows.filter(r => r.state.tone === 'error').map(r => r.name);
     banners.push({
@@ -160,6 +213,7 @@ export function clusterHealth({ rm, cc, rows, nodes, now }: HealthInput): Health
   } else if (
     summary.busy > 0 ||
     banners.some(b => b.id === 'applying') ||
+    phase === 'Rolling' ||
     ready?.status !== 'True'
   ) {
     level = 'progressing';

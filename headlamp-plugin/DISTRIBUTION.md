@@ -97,8 +97,40 @@ against the release file with the new chart version.
 | k4all | operator | Kubernetes | Headlamp chart / app | headlamp-plugin API | plugin |
 |---|---|---|---|---|---|
 | v2.4.0 | v0.5.0 | 1.35 | 0.46.0 / v0.46.0 | 0.14.0 | 0.1.2 |
+| v2.7.0 | v0.6.0 | 1.36 | 0.46.0 / v0.46.0 | 0.14.0 | 0.2.0 |
 
 ## Changelog
+
+### 0.2.0
+
+For k4all v2.7.0 (k4all-operator v0.6.0); the pages are read-only with an
+older operator.
+
+- New pages with stable routes, linked from Hangar and Cairn:
+  `/k4all/settings/virtualization` (`#feature-gates`, `#vm-state`,
+  `#metadata`), `/k4all/settings/nodes`, `/k4all/settings/storage`.
+- KubeVirt gates from Hangar's gate tables (generated copy,
+  `src/model/gateTables.ts`), owned by k4all vs set elsewhere from the
+  KubeVirt CR annotations; VM state StorageClass; Hangar node agent;
+  metadata service.
+- Node settings with the plan before saving and the rollout with Pause /
+  Resume; hugepage memory per node; reserved CPUs per node.
+- Rook/Ceph: switch, creation inputs, disks per node, "created, manage it in
+  Cairn", turning it off.
+- Settings: links to the pages, `PodNetworkOverlap` banner. Components: the
+  v2.7.0 components' categories, kubevirt-manager Removed with what was
+  kept; re-applied components include cdi, kubevirt-manager and the Rook
+  charts. Overview: Hangar/Cairn, Rook, the rollout, refused uninstalls and
+  waits.
+- The CNI switch and the OVS bridge toggle wait for k4all-operator v0.7.0
+  (0.1.2 gated them on v0.6.0, which does not have them).
+- RBAC: the viewer and editor roles read the KubeVirt CR, StorageClasses,
+  StorageProfiles, CephClusters and the kubevirt-manager leftovers.
+- Blocked drains (k4all-operator v0.5.8, k4all#99): a node the operator
+  does not cordon because of a budget that allows no disruption or pods
+  that declare no controller gets what to do, a `kubectl delete pod` per
+  pod and the docs sections, on the Upgrades page and in the node-settings
+  rollout (DrainBlocked).
 
 ### 0.1.2
 

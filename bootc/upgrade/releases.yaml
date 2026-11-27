@@ -299,3 +299,51 @@ releases:
       the hops that start from v2.6.7: a hop from v2.6.6 still gives every
       pod 30 s. k4all-bridge.sh gives each pod its grace period too.
       Kubernetes, CRI-O, Fedora and the other components are unchanged.
+
+  - version: v2.7.0
+    kind: minor
+    minFrom: v2.6.7
+    kubernetes: "1.36.6"
+    crio: "1.36"
+    fedora: 45
+    # The sync brings k4all-operator v0.6.0, Hangar and Cairn v0.1.1 and the
+    # k4all addon 0.2.0.
+    syncManifest: true
+    notes: >-
+      k4all-operator v0.6.0 (from v0.5.8, through the manifest sync). Its
+      new ClusterConfig fields are optional and absent on existing clusters,
+      where k4all owns none of their settings: the hop changes no setting.
+      Hangar v0.1.1 replaces kubevirt-manager as the VM console: the
+      operator deletes kubevirt-manager's console and roles, and keeps what
+      is still in use (the PriorityClasses vm-standard and vm-preemptible
+      while a VM or pod names them, the image CRD while it holds images, the
+      namespace while the user's objects are in it). VMs are untouched. A
+      kubevirt-manager set Unmanaged stays, next to Hangar. With
+      Virtualization on, the hop installs Hangar, its privileged node agent
+      (features.virt.hangar.nodeAgent: false leaves it out) and
+      snapshot-controller (external-snapshotter v8.7.0), and Headlamp
+      restarts with the k4all addon 0.2.0. Cilium is applied once with the
+      same cilium-config, and KubeVirt without upstream's empty fields and
+      with workloadUpdateMethods [LiveMigrate]: KubeVirt's infra does not
+      restart, and VMs keep running.
+      New settings: node settings in spec.nodes (maxPods, CPU and topology
+      manager, hugepages, IOMMU), rolled out one node at a time (#60);
+      KubeVirt feature gates and the VM state StorageClass
+      (features.virt.kubevirt); a metadata service on 169.254.169.254 for
+      VMs that opt in with a label (features.virt.metadata: on for new
+      installs, off on existing clusters), which sets the chassis asset tag
+      cloud-init needs and skips namespaces that enforce PodSecurity
+      baseline; optional Rook/Ceph with the Cairn console (features.rook):
+      nothing below 3 nodes unless smallCluster is Allow, and no disk is
+      ever wiped. New Cilium clusters take their pool from
+      spec.cluster.podNetwork; running ones keep theirs, and the condition
+      PodNetworkOverlap reports overlaps (#72). A feature turned off goes as
+      one group, or not at all while one of its components refuses (#96).
+      The operator moves off a node it drains before the reboot (#97),
+      refuses to downgrade a component (DowngradeRefused; ReleaseManifest
+      annotation k4all.magesgate.com/allow-downgrade) and reconciles nothing
+      while the migration count is ahead of it (MigrationsAhead, #77).
+      k4all-upgrade never leaves a stream below a patch it cannot reach
+      (#74) and keeps the sync of a hop abandoned after its reboot (#76). A
+      minor: the kubevirt-manager removal and the new CRD cannot be undone
+      with bootc rollback. Kubernetes, CRI-O and Fedora are unchanged.

@@ -261,6 +261,47 @@ describe("nodeGuidance (by the operator's reason, never by message text)", () =>
     });
   });
 
+  // The operator has no reason for a node it does not cordon because its
+  // drain is blocked (ClusterUpgrade nodes[].reason has no value for it): the
+  // advice reads the shared drain's own texts, and nothing else.
+  it("explains a node whose drain is blocked, from the drain's own text", () => {
+    const g = nodeGuidance(
+      {
+        name: 'w-1',
+        phase: 'Pending',
+        message:
+          'runs pods that declare no controller: default/debug (a drain would delete them, and nothing ' +
+          'recreates them: delete them, or recreate them under a controller; see docs/upgrades.md, Pods ' +
+          'that declare no controller); the node is not cordoned',
+      },
+      spec
+    )!;
+    expect(g).toMatchObject({
+      title: 'w-1 runs pods that declare no controller',
+      severity: 'warning',
+      retry: false,
+    });
+    expect(g.commands.map(c => c.command)).toContain('kubectl delete pod -n default debug');
+    expect(g.links?.[0].href).toMatch(/docs\/upgrades.md#pods-that-declare-no-controller$/);
+  });
+
+  it('names pods that declare no controller among what can hold a drain past its timeout', () => {
+    const g = nodeGuidance(
+      {
+        name: 'w-1',
+        phase: 'Failed',
+        reason: 'DrainTimeout',
+        message: 'drain timed out after 20 minutes, 1 pods left: default/debug',
+      },
+      spec
+    )!;
+    expect(g.text).toMatch(/a pod that declares no controller \(the drain never evicts those/);
+    expect(g.links?.map(l => l.label)).toEqual([
+      'Drains that never end (docs/upgrades.md)',
+      'Pods that declare no controller (docs/upgrades.md)',
+    ]);
+  });
+
   it('does not guess from the message', () => {
     const g = nodeGuidance(
       { name: 'w-1', phase: 'Failed', message: 'drain timed out after 20 minutes' },

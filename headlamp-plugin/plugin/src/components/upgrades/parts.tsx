@@ -5,8 +5,11 @@
 
 import { Icon } from '@iconify/react';
 import {
+  Alert,
+  AlertTitle,
   alpha,
   Box,
+  Button,
   Chip,
   CircularProgress,
   IconButton,
@@ -24,6 +27,7 @@ import {
   DrainTimer,
   formatDuration,
   formatSpan,
+  Guidance,
   HopChange,
   OrderedNode,
   PlannedHop,
@@ -352,5 +356,52 @@ export function DrainTimerBar(props: { timer: DrainTimer; continueOnTimeout: boo
             }`}
       </Typography>
     </Box>
+  );
+}
+
+/** What to do about a node: the advice, its commands, the docs, and Retry where it helps. */
+export function GuidanceAlert(props: {
+  guidance: Guidance;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
+}) {
+  const g = props.guidance;
+  return (
+    <Alert
+      severity={g.severity}
+      action={
+        g.retry && props.onRetry ? (
+          <Button
+            color="inherit"
+            size="small"
+            onClick={props.onRetry}
+            disabled={props.retryDisabled}
+          >
+            Retry
+          </Button>
+        ) : undefined
+      }
+    >
+      <AlertTitle>{g.title}</AlertTitle>
+      <Typography variant="body2">{g.text}</Typography>
+      {g.commands.length > 0 && (
+        <Stack spacing={0.75} sx={{ mt: 1.25 }}>
+          {g.commands.map(c => (
+            <CommandLine key={c.command} {...c} />
+          ))}
+        </Stack>
+      )}
+      {g.links && g.links.length > 0 && (
+        <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+          {g.links.map(l => (
+            <Typography key={l.href} variant="body2" component="span">
+              <a href={l.href} target="_blank" rel="noreferrer">
+                {l.label}
+              </a>
+            </Typography>
+          ))}
+        </Stack>
+      )}
+    </Alert>
   );
 }

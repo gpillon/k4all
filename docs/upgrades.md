@@ -43,7 +43,11 @@ It also turns off bootc's own auto-update timer (see below).
 
 Kubernetes never moves more than one minor per release, and never in the
 same release as a Fedora major. Before it leaves a stream, a node always takes
-that stream's latest patch first.
+that stream's latest patch first. If no hop reaches that patch (its `minFrom`
+is a blocked release, say), the plan stops with no path instead of leaving the
+stream without it. The tools of v2.6.6 and before do not make this check, so CI
+refuses a graph in which a patch cannot be reached from its stream's minor
+release.
 
 The 2.x upgrade path:
 
@@ -61,9 +65,12 @@ The 2.x upgrade path:
 | v2.6.5 | patch with a ReleaseManifest sync: k4all-operator v0.5.4, whose KubeVirt emulation `auto` uses KVM on the nodes that have it (before, every cluster ran its VMs in software emulation); TopoLVM's `topolvm-node` waits for lvmd's socket instead of crash-looping on a new node; a first boot without network waits for it and keeps the DHCP domain; with firewalld on, each node opens the ports of the CNI it runs (`k4all-cni-firewalld`); new clusters accept 250 pods per node; `reinstall.sh --kubernetes` refuses on 2.x and a base reinstall no longer restores a local backup or re-applies the node's files over the cluster's |
 | v2.6.6 | patch with a ReleaseManifest sync: k4all-operator v0.5.7: turning Virtualization off is refused while VMs or their disks exist and otherwise lets KubeVirt and CDI uninstall themselves first (#94); KubeVirt/CDI feature gates kept on apply; a recreated TopoLVM StorageClass keeps its CDI StorageProfile (#80); no Failed status for a fresh KubeVirt/CDI (#81) or for a Helm release a stopped operator left pending; drains label their node and a budget that allows no disruption holds the hop (#86, #87); `k4all-upgrade` checks a saved plan before each hop (#73) |
 | v2.6.7 | patch with a ReleaseManifest sync: before the reboot each pod gets its own grace period (at most `podStopMaxSeconds`, 300 s), so VMs shut down cleanly on single-node clusters (#98); pods that declare no controller are named before anything changes: a CLI hop stops in PREFLIGHT, and k4all-operator v0.5.8's ClusterUpgrade waits instead of deleting them (#99); both protect the hops that start from v2.6.7 |
-| v2.7.0 | unattended join: `kubeadm init` and `join` become declarative (Kubernetes unchanged) |
-| v2.8.0 | cluster components ready for Kubernetes 1.37 (once upstream supports it) |
-| v2.9.0 | Kubernetes 1.37 |
+| v2.7.0 | ReleaseManifest sync: k4all-operator v0.6.0 and the ClusterConfig settings for node settings (#60), KubeVirt gates and the VM state StorageClass, the metadata service and optional Rook/Ceph; Hangar replaces kubevirt-manager (what is still in use stays), Cairn for Ceph, the k4all addon 0.2.0 settings pages; new Cilium clusters take their pool from `podNetwork`, and `PodNetworkOverlap` reports an overlap (#72); every new field is optional, so the hop changes no setting (Kubernetes unchanged) |
+| v2.7.x | patches: the cluster components made ready for Kubernetes 1.37, one at a time; v2.7.1 is upgrade readiness and remediations (k4all-operator v0.7.0) |
+| v2.8.0 | Kubernetes 1.37 and CRI-O 1.37 |
+
+Declarative `kubeadm init` and `join` (unattended join) come when they are
+ready; no release is planned for them.
 
 ### How releases are cut
 
@@ -77,6 +84,10 @@ v2.Y stream is frozen. The only release it can still get is an exit patch:
 - it fixes only the hop to v2.(Y+1).0 and changes nothing in the cluster;
 - v2.(Y+1).0's `minFrom` moves up to it when the hop needs the fix;
 - it shows up in the upgrade graph with the next release cut from main.
+
+The release commit adds the release's notes as
+`docs/release-notes/<version>.md` (see the README there): the release job
+publishes them as the end of the GitHub release body.
 
 A minor syncs the ReleaseManifest only when the sync is what makes it a
 minor. The decision and the check are in
@@ -237,6 +248,21 @@ To give up the remaining hops instead, run
 the k4all-operator paused (annotation `upgrade-in-progress`). A HOLD before
 the reboot leaves the cluster as it was: the operator runs again, and the
 hop pauses it once more if it goes on.
+
+A hop abandoned after its reboot leaves the node on the new release. When
+that release syncs its ReleaseManifest and the node is the bootstrap node,
+the sync has not run (or not to the end), and the next plan would start from
+the new release without it. So the node remembers it: `status` shows a
+`Sync:` line, `upgrade-message` says it, and `run`, the timer and the agent
+start no hop, not even an `upgrade-done` for that release, until the sync is
+done:
+
+```bash
+sudo k4all-upgrade sync-manifest
+```
+
+When the manifest reached the cluster some other way, `sudo k4all-upgrade
+clear-hold --sync-done` forgets the sync instead.
 
 ## Multi-node clusters
 
@@ -657,7 +683,9 @@ starts. A corrected target is picked up at the next minute.
 A HOLD during the hop works as described above: after `clear-hold` and
 `resume`, the operator goes on by itself. `clear-hold --abandon` also removes
 `upgrade-target` and writes `upgrade-phase: ABANDONED`. The node then does not
-retry on its own: retry from the operator.
+retry on its own: retry from the operator. After a hop abandoned in SYNC on
+the bootstrap node, the retry is refused (`TargetRejected`) until
+`sync-manifest` has run on that node (see the HOLD section).
 
 To see what a node reports:
 
@@ -665,6 +693,194 @@ To see what a node reports:
 kubectl get node <name> -o jsonpath='{.metadata.annotations}'
 sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
 ```
+
+### The node that runs the operator (from v2.7.0)
+
+From k4all-operator v0.6.0 (k4all v2.7.0) the node that runs the operator's
+pod goes last among the nodes of its type. The bootstrap node still goes
+first, and the workers still go after the control planes. Its drain never
+counts the operator's own pod. Once every other pod has left the node, the
+operator evicts its own pod, and only then asks for the hop (#97). The next
+pod of its Deployment, the next leader, starts on another node: the
+`draining` label keeps it off this one. It waits for the old pod to go, then
+asks for the hop and drives the rest of the upgrade. Before v0.6.0 the leader
+went down with that node's reboot, and nothing drove the upgrade until the
+node was back.
+
+The operator evicts itself once per drain. It does so only when another node
+is Ready and schedulable, and never a pod put back on the node after the
+drain started. A single node is not drained, so nothing changes there.
+
+The node-settings rollout (next section) and a ClusterUpgrade never change two
+nodes at once. A ClusterUpgrade cordons no node while a node is in its
+node-settings step, and a node-settings step does not start during a
+ClusterUpgrade.
+
+## Node settings (from v2.7.0)
+
+From k4all v2.7.0 (k4all-operator v0.6.0) the ClusterConfig sets node
+settings for every node in `spec.nodes` (#60). The k4all addon writes them on
+its Nodes page (`/k4all/settings/nodes`).
+
+```yaml
+spec:
+  nodes:
+    kubelet:
+      maxPods: 250
+      cpuManagerPolicy: static          # none | static
+      reservedSystemCPUs: "0-1"         # required with static
+      topologyManagerPolicy: single-numa-node
+      topologyManagerScope: container   # container | pod
+    hugepages:
+      "1Gi": 4                          # pages per node; 0 or absent: none
+      "2Mi": 0
+    iommu: true                         # intel_iommu=on / amd_iommu=on, iommu=pt
+    rollout:
+      paused: false                     # stop before the next node
+```
+
+A field left out is not k4all's. k4all writes nothing for it and leaves what
+kubeadm or the admin set. A cluster that moves to v2.7.0 changes nothing until
+someone sets a field. Clearing a field undoes what k4all had written for it,
+and only that. A kubelet field gets back the value `kubelet-config` had
+before k4all first wrote it: a cluster's maxPods goes back to the 250 kubeadm
+gave it, not to the kubelet's default of 110. A field that was not there
+before goes again. The kernel arguments k4all added are removed. Putting a
+value back is a rollout like any other, with the action class of what
+changes back.
+
+| Setting | Where k4all writes it | What the node does (action class) |
+|---|---|---|
+| `kubelet.maxPods` | `kube-system/kubelet-config` | `restart`: kubelet restarts; no drain |
+| `kubelet.cpuManagerPolicy`, `reservedSystemCPUs`, `topologyManagerPolicy`, `topologyManagerScope` | `kube-system/kubelet-config` | `drain-restart`: drained; the CPU and memory manager state files are removed; kubelet restarts |
+| `hugepages`, `iommu` | kernel arguments (`rpm-ostree kargs`) | `drain-reboot`: drained, then reboots |
+
+`kube-system/kubelet-config` is kubeadm's KubeletConfiguration for every
+node. Nodes that join later get it, and `kubeadm upgrade` keeps it. A node
+does what its heaviest change needs. Only maxPods changes: a restart. Hugepages
+change too: a drain and a reboot.
+
+### The rollout
+
+The operator takes one node at a time: the workers, then the control planes,
+then the bootstrap node, and the node that runs the operator last. It talks
+to each node through annotations on its Node, as for upgrades
+([ADR-0011](adr/0011-node-settings-roll-out-through-node-annotations.md)).
+
+| Annotation (`k4all.magesgate.com/…`) | Written by | Meaning |
+|---|---|---|
+| `node-settings-target` | operator | settings hash the node must apply, written once it is drained |
+| `node-settings-applied` | node | settings hash the node applied, once kubelet is Ready with it |
+| `node-settings-message` | node | why the node waits (`waiting: …`) or refuses the settings (any other text); removed with `applied` |
+| `node-settings-step` | operator | the node is in its step, from the cordon to the uncordon (JSON: hash, action class, who cordoned it, the drain's start) |
+| `draining` (a label) | operator | from the cordon to the uncordon, as in an upgrade |
+
+On `kube-system/kubelet-config` the operator keeps the annotation
+`k4all.magesgate.com/node-settings`. It is JSON with the settings hash, the
+kubelet fields k4all wrote, what each of them had before k4all first wrote
+it, the hugepages and IOMMU, and the settings of older hashes some node still
+has. The nodes read the kernel arguments from there.
+
+For each node, the operator:
+
+1. writes the settings into `kubelet-config`, the first time for these
+   settings;
+2. cordons and drains the node, with the drain of a ClusterUpgrade and its
+   `spec.drain` (timeout, PDB settle time, `continueOnTimeout`). A single node
+   is cordoned only: its workloads stop for the reboot. A `restart` needs no
+   drain, so the node is not cordoned. A node whose drain could never end
+   (a budget that allows no disruption) is not cordoned, as in an upgrade;
+3. writes `node-settings-target`;
+4. waits for `node-settings-applied` to name the target and the node to be
+   Ready, then uncordons the node;
+5. waits for the PodDisruptionBudgets to have their healthy pods back, at most
+   the settle time, and goes on with the next node.
+
+On the node, `k4all-upgrade agent` (every minute) sees a target other than
+`applied`:
+
+- While an upgrade hop runs on the node, it waits and says so in the message.
+- It checks that `kubelet-config` carries that settings hash.
+- It refuses, with a message, kernel arguments set by hand that would clash
+  (hand-set hugepages, or another IOMMU value), and a CPU manager or kernel
+  argument change on a node that is not cordoned.
+- It runs `kubeadm upgrade node phase kubelet-config`, which writes
+  `/var/lib/kubelet/config.yaml` from `kubelet-config`.
+- When the CPU manager policy or the reserved CPUs change, it stops kubelet
+  and removes `/var/lib/kubelet/cpu_manager_state` and
+  `memory_manager_state`.
+- It sets or removes only the kernel arguments it added itself. It keeps
+  their list in `/etc/k4all/node-settings.json`, and a kernel argument set by
+  hand is never touched.
+- It restarts kubelet, or reboots when the kernel arguments changed, the same
+  way a hop does: kubelet and the pods are stopped first.
+- Once kubelet is Ready, it writes `node-settings-applied`.
+
+`spec.nodes.rollout.paused: true` stops the rollout before the next node; the
+node in progress finishes. Settings changed while a node drains go to that
+node at once. A node that refuses the settings holds the rollout until the
+cause is fixed or the settings change.
+
+The rollout does not start a node while a ClusterUpgrade is Progressing or
+Paused, or while a node runs a hop (also one started by hand). It does not
+write `kubelet-config` then either. A node in its step finishes.
+
+Nodes on a release older than v2.7.0 have no agent for the settings. They
+are skipped, with a message, and get them after their upgrade. A
+Kubernetes hop's kubeadm also writes `config.yaml` from `kubelet-config`.
+So a node the rollout has not reached yet (paused, or older) can get new CPU
+manager settings without their reset. From v2.7.0 the hop then removes the
+two state files before its reboot, when kubelet and every pod are stopped.
+
+### Status and validation
+
+`status.nodes` of the ClusterConfig shows the rollout:
+
+- `settingsHash`: the settings every node must have;
+- `rollout.phase`: `Idle` (every node has them), `Rolling`, `Paused` or
+  `Blocked`, with `currentNode` and `message`;
+- `perNode`: each node's `appliedHash`, `phase` (`Done`, `Pending`,
+  `Draining`, `Applying`, `Skipped`) and `message`.
+
+The condition `NodeSettingsRollout` is True once every node has the settings.
+Otherwise it is False, and its reason says why:
+
+| Reason | Meaning |
+|---|---|
+| `Rolling` | the rollout is moving |
+| `Paused` | `spec.nodes.rollout.paused` |
+| `Invalid` | the settings do not fit a node |
+| `UpgradeInProgress` | a ClusterUpgrade or a hop runs |
+| `NodeRefused` | a node's agent refuses the settings |
+| `DrainBlocked` | a budget that allows no disruption, or a pod that declares no controller, keeps a node's drain from ending (the message names them; see [Drains that never end](#drains-that-never-end) and [Pods that declare no controller](#pods-that-declare-no-controller)) |
+| `DrainTimeout` | a drain took longer than the timeout; the node stays cordoned and the drain goes on |
+| `NodesSkipped` | the nodes left are older than v2.7.0 |
+| `KubeletConfigMissing` | there is no `kube-system/kubelet-config` |
+
+The operator refuses settings that do not fit, before it writes anything, and
+names the node:
+
+- the reserved CPUs must exist on every node and leave CPUs for its pods;
+- the hugepages may take at most 80 % of the smallest node's memory (the
+  addon warns from 50 %);
+- maxPods must fit each node's pod CIDR. That is at most 250 with Cilium's
+  /24 (`cluster-pool-ipv4-mask-size` of `cilium-config`), or each node's
+  `spec.podCIDR`. Calico takes its address blocks on demand, so there is no
+  limit.
+
+To follow a rollout:
+
+```bash
+kubectl get clusterconfig -o jsonpath='{.items[0].status.nodes}'
+kubectl get node <name> -o jsonpath='{.metadata.annotations}'
+sudo cat /etc/k4all/node-settings.json; sudo rpm-ostree kargs
+```
+
+Kernel arguments live in the OS deployment, like
+`/etc/k4all/node-settings.json`. A `bootc rollback` therefore boots the
+previous deployment with the kernel arguments it had. Whether a later
+`bootc upgrade` carries them over is checked on a test VM before v2.7.0
+ships.
 
 ## Things to know
 
@@ -844,6 +1060,26 @@ sudo journalctl -u k4all-upgrade-agent -u k4all-upgrade-resume
   drain and every namespace deletion, and the ReleaseManifest still said
   Ready. A cluster already hit: see issue #94 for the recovery, which keeps
   the VM disks.
+- From v2.7.0 (k4all-operator v0.6.0) the operator never moves a component
+  below the version it has installed. A release that pins a component
+  lower leaves it as it runs: the component is `Failed` with "not
+  downgrading: the release pins <version>, older than the installed
+  <version> (...)", and the ReleaseManifest has the condition
+  `DowngradeRefused`, which names the components. To allow one downgrade,
+  annotate the ReleaseManifest with
+  `k4all.magesgate.com/allow-downgrade: "<component>=<version>"` (entries
+  separated by commas); an entry allows exactly that version, so a stale
+  annotation allows nothing else. A pin that is not a version (`latest`)
+  is never refused (#77).
+- From v2.7.0 (k4all-operator v0.6.0) an operator that finds more
+  migrations recorded on the ClusterConfig than it knows (an older
+  operator after a newer one) reconciles no component. The ClusterConfig
+  and the ReleaseManifest get the condition `MigrationsAhead`, the
+  ReleaseManifest is not Ready, and the operator does not update itself
+  either: put the newer operator back by hand (#77). The k4all-operator
+  component is refused like any other, so a manifest sync that pins an
+  older operator does not get Ready, and the hop stops in HOLD on the
+  bootstrap node.
 
 ## Ingress: Traefik (v2.4.0)
 

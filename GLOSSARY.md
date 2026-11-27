@@ -170,3 +170,25 @@ _Avoid_: role (Kubernetes' control-plane role covers both bootstrap and control)
 **Bootstrap node**:
 The control plane that created the cluster. It goes first in every hop, and it is the only node that runs the manifest sync.
 _Avoid_: master, first node, primary
+
+## Node settings
+
+**Node settings**:
+The kubelet settings, hugepages and IOMMU that the ClusterConfig sets for every node. k4all owns only the ones it sets.
+_Avoid_: node performance, tuning, node config (a NodeConfig reports a node's network interfaces)
+
+**Settings hash**:
+The name of one set of node settings. A node reports the hash of the settings it has.
+_Avoid_: settings version, generation
+
+**Action class**:
+What a node does to take a change of its node settings: a kubelet restart, a drain and a kubelet restart, or a drain and a reboot. A change takes the heaviest class of what it changes.
+_Avoid_: impact, mode, disruption level
+
+**Node-settings rollout**:
+Giving every node the cluster's node settings, one node at a time. It never runs during a ClusterUpgrade.
+_Avoid_: node update, rolling restart, upgrade
+
+**Rollout step**:
+One node's turn in the node-settings rollout, from its cordon to its uncordon (or, for a restart, from the request to the answer).
+_Avoid_: hop (a hop moves a node to another release)

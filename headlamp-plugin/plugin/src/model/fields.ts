@@ -14,7 +14,15 @@ import { Path } from './objects';
 
 export type ApplyMode = 'live' | 'install' | 'node';
 
-export type FieldGroup = 'features' | 'ingress' | 'networking' | 'cluster' | 'proxy';
+export type FieldGroup =
+  | 'features'
+  | 'ingress'
+  | 'networking'
+  | 'cluster'
+  | 'proxy'
+  | 'virt'
+  | 'nodes'
+  | 'storage';
 
 export interface FieldInfo {
   path: Path;
@@ -44,7 +52,7 @@ export const FIELDS = {
     label: 'Virtualization',
     group: 'features',
     mode: 'live',
-    help: 'KubeVirt, CDI, kubevirt-manager and virtctl, to run virtual machines next to containers.',
+    help: 'KubeVirt, CDI, virtctl and Hangar, the virtual machine console in this dashboard, to run virtual machines next to containers.',
   },
   virtEmulation: {
     path: ['features', 'virt', 'emulation'],
@@ -53,6 +61,170 @@ export const FIELDS = {
     mode: 'live',
     help: 'auto uses hardware virtualization (/dev/kvm) when the node has it, and emulation otherwise.',
     fallback: 'auto',
+  },
+  // k4all v2.7.0 (operator v0.6.0): absent means "not owned by k4all".
+  vmStateStorageClass: {
+    path: ['features', 'virt', 'kubevirt', 'vmStateStorageClass'],
+    label: 'VM state StorageClass',
+    group: 'virt',
+    mode: 'live',
+    help:
+      'Where KubeVirt keeps the persistent EFI variables and TPM of the VMs that ask for them. ' +
+      'Not set: the value in the KubeVirt CR (Hangar) applies, else the default StorageClass.',
+    fallback: 'not set by k4all',
+  },
+  hangarNodeAgent: {
+    path: ['features', 'virt', 'hangar', 'nodeAgent'],
+    label: 'Hangar node agent',
+    group: 'virt',
+    mode: 'live',
+    help:
+      "Hangar's privileged agent on every node (namespace hangar-system): the host inventory of " +
+      "Hangar's Hardware tab, and the vfio-pci binding of PCI devices given to VMs.",
+    fallback: 'release default (installed)',
+  },
+  metadataEnabled: {
+    path: ['features', 'virt', 'metadata', 'enabled'],
+    label: 'Metadata service',
+    group: 'virt',
+    mode: 'live',
+    help:
+      'An OpenStack and EC2 compatible metadata server on 169.254.169.254 inside each VM pod: ' +
+      'cloud-init reads the SSH keys and user-data from it, without a cloud-init disk.',
+  },
+  metadataScope: {
+    path: ['features', 'virt', 'metadata', 'scope'],
+    label: 'Metadata service: which VMs',
+    group: 'virt',
+    mode: 'live',
+    help: 'Labelled: VMs whose template has the opt-in label. All: every VM where PodSecurity allows it.',
+    fallback: 'Labelled',
+  },
+  metadataAudiences: {
+    path: ['features', 'virt', 'metadata', 'tokens', 'audiences'],
+    label: 'Metadata service: token audiences',
+    group: 'virt',
+    mode: 'live',
+    help: 'Audiences of the workload-identity tokens a VM can ask for. Never the API server.',
+    fallback: "operator's default",
+  },
+  metadataExpiration: {
+    path: ['features', 'virt', 'metadata', 'tokens', 'expirationSeconds'],
+    label: 'Metadata service: token lifetime (s)',
+    group: 'virt',
+    mode: 'live',
+    help: 'Lifetime of those tokens, at least 600 seconds; kubelet renews them.',
+    fallback: "operator's default",
+  },
+  metadataVendorData: {
+    path: ['features', 'virt', 'metadata', 'vendorDataConfigMap'],
+    label: 'Metadata service: vendor-data ConfigMap',
+    group: 'virt',
+    mode: 'live',
+    help: "A ConfigMap in each VM's namespace with cloud-init vendor-data; a namespace without it serves none.",
+    fallback: 'none',
+  },
+  rookEnabled: {
+    path: ['features', 'rook', 'enabled'],
+    label: 'Rook/Ceph storage',
+    group: 'storage',
+    mode: 'live',
+    help:
+      'Ceph on the blank disks of the nodes, with a replicated ReadWriteMany block StorageClass ' +
+      '(ceph-rbd) for live migration, managed in the Cairn console.',
+  },
+  rookDeviceFilter: {
+    path: ['features', 'rook', 'storage', 'deviceFilter'],
+    label: 'Disks for Ceph',
+    group: 'storage',
+    mode: 'live',
+    help:
+      'A regular expression on device names (^sdb$, ^nvme[01]n1$). Not set: every blank disk of ' +
+      'every node; a disk with a partition table, a filesystem or LVM is never taken.',
+    fallback: 'every blank disk',
+  },
+  rookSmallCluster: {
+    path: ['features', 'rook', 'smallCluster'],
+    label: 'Below 3 nodes',
+    group: 'storage',
+    mode: 'live',
+    help: 'Refuse: create nothing until there are 3 nodes. Allow: one mon, pool size the node count, no redundancy.',
+    fallback: 'Refuse',
+  },
+  nodesMaxPods: {
+    path: ['nodes', 'kubelet', 'maxPods'],
+    label: 'Max pods per node',
+    group: 'nodes',
+    mode: 'live',
+    help: 'Pods kubelet runs at most on a node (10 to 1000; at most 250 with Cilium, which gives each node a /24).',
+    fallback: 'not set by k4all',
+  },
+  nodesCpuManager: {
+    path: ['nodes', 'kubelet', 'cpuManagerPolicy'],
+    label: 'CPU manager',
+    group: 'nodes',
+    mode: 'live',
+    help:
+      'static gives Guaranteed pods (and VMs with dedicated CPUs) with whole-CPU requests CPUs of ' +
+      'their own; it needs reserved CPUs.',
+    fallback: 'not set by k4all',
+  },
+  nodesReservedCPUs: {
+    path: ['nodes', 'kubelet', 'reservedSystemCPUs'],
+    label: 'Reserved CPUs',
+    group: 'nodes',
+    mode: 'live',
+    help: 'CPUs kept for the system and kubelet (0-1, 0,2): no pod gets them. Every node must have them.',
+    fallback: 'not set by k4all',
+  },
+  nodesTopologyPolicy: {
+    path: ['nodes', 'kubelet', 'topologyManagerPolicy'],
+    label: 'Topology manager',
+    group: 'nodes',
+    mode: 'live',
+    help: 'How CPU, memory and device allocations are aligned on NUMA nodes.',
+    fallback: 'not set by k4all',
+  },
+  nodesTopologyScope: {
+    path: ['nodes', 'kubelet', 'topologyManagerScope'],
+    label: 'Topology manager scope',
+    group: 'nodes',
+    mode: 'live',
+    help: 'Align each container, or the whole pod.',
+    fallback: 'not set by k4all',
+  },
+  nodesHugepages1Gi: {
+    path: ['nodes', 'hugepages', '1Gi'],
+    label: '1 GiB hugepages per node',
+    group: 'nodes',
+    mode: 'live',
+    help: 'Reserved at boot (kernel argument), for VMs and pods that ask for hugepages-1Gi.',
+    fallback: 'not set by k4all',
+  },
+  nodesHugepages2Mi: {
+    path: ['nodes', 'hugepages', '2Mi'],
+    label: '2 MiB hugepages per node',
+    group: 'nodes',
+    mode: 'live',
+    help: 'Reserved at boot (kernel argument), for VMs and pods that ask for hugepages-2Mi.',
+    fallback: 'not set by k4all',
+  },
+  nodesIommu: {
+    path: ['nodes', 'iommu'],
+    label: 'IOMMU',
+    group: 'nodes',
+    mode: 'live',
+    help:
+      'intel_iommu=on or amd_iommu=on with iommu=pt, for PCI passthrough to VMs. Off removes only ' +
+      'the kernel arguments k4all added, never ones set by hand.',
+    fallback: 'not set by k4all',
+  },
+  nodesRolloutPaused: {
+    path: ['nodes', 'rollout', 'paused'],
+    label: 'Node settings rollout paused',
+    group: 'nodes',
+    mode: 'live',
+    help: 'Stops the rollout before the next node; the node in progress finishes.',
   },
   argocdEnabled: {
     path: ['features', 'argocd', 'enabled'],

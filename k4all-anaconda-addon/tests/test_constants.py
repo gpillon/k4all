@@ -78,6 +78,21 @@ class TestConstants:
         assert features["ovsCni"]["enabled"] is False
         assert features["ovsBridge"]["enabled"] is True
 
+    def test_cluster_config_v270_defaults(self):
+        # A new install of k4all v2.7.0 (spec §3): the metadata service on
+        # for the VMs labelled for it (D10; it does nothing while virt is
+        # off), Rook off but settable from a kickstart, Hangar's node agent
+        # at the release's default (no hangar key: installed with virt,
+        # D6), no KubeVirt settings owned, and the 250 pods per node kubeadm
+        # already gives new installs, now in the ClusterConfig.
+        from com_k4all_installer.constants import DEFAULT_CLUSTER_CONFIG
+        features = DEFAULT_CLUSTER_CONFIG["features"]
+        assert features["virt"]["metadata"] == {"enabled": True, "scope": "Labelled"}
+        assert "hangar" not in features["virt"]
+        assert "kubevirt" not in features["virt"]
+        assert features["rook"] == {"enabled": False}
+        assert DEFAULT_CLUSTER_CONFIG["nodes"] == {"kubelet": {"maxPods": 250}}
+
     def test_cluster_config_cluster(self):
         from com_k4all_installer.constants import DEFAULT_CLUSTER_CONFIG
         cluster = DEFAULT_CLUSTER_CONFIG["cluster"]

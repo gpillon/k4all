@@ -8,7 +8,6 @@ import { Icon } from '@iconify/react';
 import { Link } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import {
   Alert,
-  AlertTitle,
   Box,
   Button,
   Chip,
@@ -43,7 +42,7 @@ import {
   UpgradeView,
 } from '../../model/upgrades';
 import { Mono, Panel, TonePill } from '../common/ui';
-import { CommandLine, DrainTimerBar, HopTrail } from './parts';
+import { DrainTimerBar, GuidanceAlert, HopTrail } from './parts';
 import { UpgradeFlow } from './useUpgradeFlow';
 
 function nodeHealth(node: NodeLike | undefined): {
@@ -166,41 +165,6 @@ export function UpgradeNodesTable(props: {
         </TableBody>
       </Table>
     </Box>
-  );
-}
-
-export function GuidanceAlert(props: {
-  guidance: Guidance;
-  onRetry?: () => void;
-  retryDisabled?: boolean;
-}) {
-  const g = props.guidance;
-  return (
-    <Alert
-      severity={g.severity}
-      action={
-        g.retry && props.onRetry ? (
-          <Button
-            color="inherit"
-            size="small"
-            onClick={props.onRetry}
-            disabled={props.retryDisabled}
-          >
-            Retry
-          </Button>
-        ) : undefined
-      }
-    >
-      <AlertTitle>{g.title}</AlertTitle>
-      <Typography variant="body2">{g.text}</Typography>
-      {g.commands.length > 0 && (
-        <Stack spacing={0.75} sx={{ mt: 1.25 }}>
-          {g.commands.map(c => (
-            <CommandLine key={c.command} {...c} />
-          ))}
-        </Stack>
-      )}
-    </Alert>
   );
 }
 

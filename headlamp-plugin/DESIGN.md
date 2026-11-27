@@ -1,9 +1,10 @@
 # k4all Headlamp plugin: design
 
-Status: built and unit-tested (278 tests), not yet run against a live
+Status: built and unit-tested (416 tests), not yet run against a live
 cluster. Ships from k4all v2.4.0 (k4all-operator v0.5.0, Traefik, Headlamp
-chart 0.46.0, Kubernetes 1.35 and later). User guide: `docs/headlamp-plugin.md`.
-Packaging and release: `DISTRIBUTION.md`.
+chart 0.46.0, Kubernetes 1.35 and later); plugin 0.2.0 adds the k4all v2.7.0
+pages (k4all-operator v0.6.0, section 3.8-3.10). User guide:
+`docs/headlamp-plugin.md`. Packaging and release: `DISTRIBUTION.md`.
 
 ## 1. Summary
 
@@ -26,6 +27,12 @@ k4all tasks are done through guided screens instead of editing
   ClusterConfig, so they survive upgrades), management policy, re-apply.
 - A **k4all** section on Headlamp's Node page (role, release, upgrade phase,
   interfaces).
+- From k4all v2.7.0 (operator v0.6.0), three settings pages with stable
+  routes the Hangar and Cairn consoles link to: **Virtualization** (KubeVirt
+  gates k4all owns, VM state StorageClass, Hangar's node agent, the metadata
+  service), **Node settings** (max pods, CPU manager, reserved CPUs, topology
+  manager, hugepages, IOMMU, with the plan of the rollout and its progress),
+  **Storage** (Rook/Ceph, created once, then Cairn's).
 
 Every save is a JSON Patch checked by a server-side dry run, shown as a
 human-readable change list plus a YAML diff, guarded against concurrent edits.
@@ -73,20 +80,26 @@ Non-goals (and why):
   upgrade. Customization goes to `componentOverrides` instead.
 - **Install-time settings** (pod/service networks, API endpoint, HA,
   firewalld, proxy): shown read-only, see 4. CNI and OVS bridge are
-  read-only until k4all-operator v0.6.0 (4.1).
+  read-only until k4all-operator v0.7.0 (4.1).
+- **What a console owns**: Ceph day-2 (OSDs, pools, mon/mgr counts) is
+  Cairn's, gates k4all does not list and the other KubeVirt settings are
+  Hangar's. The pages show them and link there.
 - **NodeConfig**: it has no spec, only status, shown on the Node page.
 
 ## 3. Screens
 
 Sidebar (cluster scope): `k4all` (icon `mdi:hexagon-multiple-outline`) with
-Overview, Upgrades, Settings, Components. Routes, all cluster-prefixed by
-Headlamp:
+Overview, Upgrades, Settings, Virtualization, Node settings, Storage,
+Components. Routes, all cluster-prefixed by Headlamp:
 
 | Route name | Path | Screen |
 |---|---|---|
 | `k4all-overview` | `/k4all` | Overview |
 | `k4all-upgrades` | `/k4all/upgrades` | Upgrades |
 | `k4all-settings` | `/k4all/settings?tab=features\|ingress\|networking\|install` | Settings |
+| `k4all-settings-virtualization` | `/k4all/settings/virtualization` (anchors `#feature-gates`, `#vm-state`, `#metadata`) | Virtualization (3.8) |
+| `k4all-settings-nodes` | `/k4all/settings/nodes` | Node settings (3.9) |
+| `k4all-settings-storage` | `/k4all/settings/storage` | Storage (3.10) |
 | `k4all-components` | `/k4all/components` | Components |
 | `k4all-component` | `/k4all/components/:name` | Component detail |
 | (details section) | Headlamp `/node/:name` | k4all section on the Node page |
@@ -117,6 +130,19 @@ Headlamp:
 The upgrade card follows the upgrade while one runs (current → target, hop
 x of y, nodes done, progress bar). With an operator older than v0.4.0 it
 says which release brings upgrades from Headlamp.
+
+From operator v0.6.0 the Features panel adds Rook/Ceph (readiness from the
+`RookReady` condition) and links the consoles (Hangar under Virtualization,
+Cairn under Rook). Banners, each with a button to its page: components
+k4all-operator keeps installed though they should go (status message
+`uninstall refused: …`, Components), components uninstalled in order
+behind another member of their group (`uninstall queued: …`, #96; their
+state reads "Uninstall queued"), components that wait (`waiting: …`, the
+neutral wait of v0.6.0), and the node-settings rollout while Rolling,
+Paused or Blocked (`status.nodes`, Node settings). The messages after the
+prefixes are shown as the operator writes them; every member of a held
+group carries the same message, which is listed once with the components
+it holds (here and on the feature switches).
 
 Health headline: Healthy, Reconciling (components busy, settings not yet
 applied, Ready not True), Upgrading (node annotation or Ready reason
@@ -222,8 +248,9 @@ Every row carries an apply badge: **Live** (the operator applies it),
   ReleaseManifest `featureGate`s, so it follows the release), and for
   Virtualization the emulation select, what turning it off does with the
   installed operator, and "Removal refused" with the operator's reason for
-  each component whose status message starts with `uninstall refused: `. The OVS bridge card is dashed and
-  locked with "Coming with k4all-operator v0.6.0"; with that operator it
+  each component whose status message starts with `uninstall refused: `,
+  and "Waiting" for `waiting: `. The OVS bridge card is dashed and
+  locked with "Coming with k4all-operator v0.7.0"; with that operator it
   gets a switch (4.1).
 - **Ingress**: the release's ingress controller, from the ReleaseManifest
   (`traefik` active → Traefik; else `ingress-nginx` active → ingress-nginx):
@@ -249,18 +276,31 @@ Every row carries an apply badge: **Live** (the operator applies it),
   outside the settings draft. The Overview's Ingress card counts them, with
   a link here.
 - **Networking**: a CNI panel (read-only with "Coming with k4all-operator
-  v0.6.0", a select with that operator), then on Cilium clusters switches for
+  v0.7.0", a select with that operator), then on Cilium clusters switches for
   L2 announcements, Hubble, Gateway API and a chip input for devices, with
   suggestions from the interfaces the nodes report (NodeConfig status).
 - **Install-time**: four read-only panels (cluster network, API endpoint,
   control plane HA, nodes) with a help tooltip giving the reason for each;
   CNI and OVS bridge carry the capability note.
+- Above the tabs (plugin 0.2.0): cards linking the three v2.7.0 pages (with
+  the capability chip on older operators), and the `PodNetworkOverlap`
+  banner: True (warning, the operator's message: what overlaps and what to
+  do) or Unknown (the check failed); False shows only the `Note: …` of its
+  message, as information, when there is one (a 10.0.0.0/8 pool holding the
+  service network).
 
 ### 3.4 Components
 
 Filter (All / Needs attention / Active / Off), and "Show removed": components
-with `management: Removed` (ingress-nginx from v2.4.0) are hidden unless it
-is on. A sortable, searchable table
+with `management: Removed` (ingress-nginx from v2.4.0, kubevirt-manager from
+v2.7.0) are hidden unless it is on. Categories cover the v2.7.0 components
+(hangar, hangar-node-agent, k4all-metadata under Virtualization; cairn,
+rook-ceph, ceph-csi-drivers, snapshot-controller under Storage). The
+kubevirt-manager row says it was replaced by Hangar and what its removal
+keeps while in use; its page checks each kept object on the cluster
+(PriorityClasses vm-standard and vm-preemptible, CRD
+images.kubevirt-manager.io, namespace kubevirt-manager: kept, removed or
+unknown), since the operator only logs it (D25). A sortable, searchable table
 (Headlamp's `Table`): component (with icons for "has overrides" and "re-apply
 requested"), category, state pill (with the operator message as tooltip),
 version (`installed → release` with the upgrade path as tooltip), management
@@ -310,13 +350,133 @@ vocabulary is reused everywhere: tone pills (dot or spinner + label), panels
 with icon titles, setting rows (label and help left, control right, apply
 badge), a segmented bar for component states, gradient icon tiles in page
 headers, kind chips (minor filled, patch outlined), the hop trail, copyable
-command lines. Icons are `mdi:` names; the plugin registers the 65 it uses
+command lines. Icons are `mdi:` names; the plugin registers the 77 it uses
 with Headlamp's Iconify instance (`src/icons.ts`), because Headlamp bundles
 only a handful and fetches the rest from api.iconify.design, which an
 air-gapped cluster cannot reach (a test keeps the list complete). All
 controls carry accessible names; dialogs use RadioGroup/FormControlLabel;
 destructive actions (feature off, CNI/OVS change, starting an upgrade,
 stopping one) need an explicit acknowledgement or confirmation.
+
+### 3.8 Virtualization (k4all v2.7.0)
+
+`/k4all/settings/virtualization`, one edit session on the ClusterConfig
+like Settings (same review, dry run, diff, rebase). With an operator before
+v0.6.0 a notice says which operator brings the settings and the new
+controls are read-only; the virt switch and emulation stay editable.
+
+- **Virtualization** card: the Features card (switch, emulation, refused
+  uninstalls and waits per component, #93's behaviour); its "turning off"
+  text names only what goes (the snapshot controller stays while Rook is
+  on). Next to it, **Hangar**: the node agent switch
+  (`features.virt.hangar.nodeAgent`: off is written `false`, on goes back to
+  the release default unless it was `true`), its component state, a link to
+  Hangar.
+- **KubeVirt feature gates** (`#feature-gates`): one row per gate of the
+  running KubeVirt's minor (Hangar's `gateTables.ts`, copied verbatim as
+  `src/model/gateTables.ts` with a header naming the Hangar commit), plus
+  the gates listed in the CR, its annotations or the ClusterConfig. Columns:
+  maturity (GA, Beta, Alpha, Deprecated, Discontinued, unknown), on by
+  default, on now (and the state once the operator applied the draft, from
+  the §7.2 merge), set by (**k4all**: in the ClusterConfig, with "not
+  applied yet" until the annotation agrees; **set elsewhere**: in the CR but
+  not in `k4all.magesgate.com/feature-gates` /
+  `disabled-feature-gates`; none), and k4all's setting: Not set, On
+  (`featureGates`), Off (`disabledFeatureGates`; disabled for GA). Turning
+  one hot-plug gate on turns the other off (as Hangar does), with a notice.
+  Filter: gates someone set plus Alpha/Beta (default), or all; search; a
+  field to turn on a gate the tables do not know. Without a KubeVirt CR the
+  release's kubevirt version picks the table. Errors (block saving): GA gate
+  off, a gate in both lists, both hot-plug gates; warnings: GA or
+  Discontinued entries that do nothing, gates the version does not know, a
+  hot-plug rival set elsewhere (the live one wins in the operator).
+- **VM state** (`#vm-state`): `vmStateStorageClass` picker (Not set by k4all
+  + the StorageClasses), with where new state volumes go now and their
+  access mode as KubeVirt 1.9 picks them (backend-storage: Filesystem
+  volumes; the StorageProfile's Filesystem RWX, else RWO, else RWX when the
+  class is set). Warnings: no such StorageClass; RWO (KubeVirt copies the
+  state at each live migration, spec §7.1); no Filesystem entry in the
+  StorageProfile (KubeVirt then asks for RWX Filesystem, which RBD cannot
+  give: `ceph-rbd`'s seeded profile is RWX Block only).
+- **Metadata service** (`#metadata`): enabled, scope (Labelled / All),
+  token audiences and lifetime, vendor-data ConfigMap; an explanation of the
+  opt-in label `k4all.magesgate.com/metadata: enabled`, the ServiceAccount
+  label, the masquerade interface it needs, and that PodSecurity baseline
+  and restricted namespaces are skipped (their VMs keep a cloud-init disk).
+  Errors: lifetime under 600 s, an empty audience or the API server's own,
+  a ConfigMap name that is not one. The sub-settings wait for the switch.
+- Conditions `KubeVirtSettings` and `MetadataService` show when not True.
+
+### 3.9 Node settings (k4all v2.7.0)
+
+`/k4all/settings/nodes`: kubelet (max pods, CPU manager, reserved CPUs with
+each node's CPU count, topology manager policy and scope; each "Not set by
+k4all" by default) and hugepages (1Gi, 2Mi per node, with the memory per
+node: capacity, hugepage bytes, share with a bar) and IOMMU. Clearing a
+field removes it (and the objects it leaves empty), so k4all stops owning
+it. Checks (`model/nodeSettings.ts`): max pods 10-1000, at most 250 with
+Cilium (/24 per node); the static CPU manager needs reserved CPUs; reserved
+CPUs must parse as a cpuset, exist on every node and leave one for pods;
+hugepages over 50 % of a node warn, over 80 % are refused (the operator's
+limit); a topology manager without the static CPU manager only aligns
+devices (info).
+
+**The plan**, shown under the form while editing and again in the review:
+the action class from the changed fields (max pods only: kubelet restart,
+no drain; CPU manager, reserved CPUs, topology: drain and kubelet restart;
+hugepages, IOMMU: drain and reboot; the strongest wins; 0 hugepages and
+IOMMU off count as absent, as the operator reads them), the nodes in the
+operator's order (`nodesettings.ordered`: workers, nodes without a known
+`node-type` annotation, control planes, the bootstrap node, by name; the
+node running k4all-operator last of all, when its pod can be listed), per
+node the drain (none,
+drain, or on a single node cordon only) and what follows, nodes on a
+release before v2.7.0 skipped until their hop, and what stops (single
+node: the workloads). The review asks for the acknowledgement on drain
+classes.
+
+**Rollout** (when `status.nodes` or `spec.nodes` exists): phase (Idle,
+Rolling, Pausing, Paused, Blocked), the current node and the message, the
+`NodeSettingsRollout` condition with what to do for each reason that holds
+the rollout (Invalid, UpgradeInProgress, NodeRefused, DrainBlocked,
+DrainTimeout, NodesSkipped, KubeletConfigMissing, KubeletConfigUnreadable;
+none for RolledOut, Rolling, Paused), nodes done of total (applied hash
+equal to `settingsHash`), per node the phase (done, pending, draining,
+applying, skipped) and the message: a pending node's `next: <class>` in
+words, and while applying the node agent's message, `waiting: …` as
+progress and anything else as a refusal.
+
+Clearing a kubelet field is a change like any other (max pods: restart; CPU
+or topology fields: drain and restart). The operator puts back what
+`kube-system/kubelet-config` had before k4all first wrote the field, or
+removes the field when it had none (kubelet's default: 110 pods, CPU
+manager none, ...). It records those values in the ConfigMap's annotation
+`k4all.magesgate.com/node-settings` (`prior`); the page reads it when the
+user may, and the field's note and the review name the value it goes back
+to ("250 (before k4all)", "kubelet default (110)"), else the rule. Pause / Resume write
+`spec.nodes.rollout.paused` at once (a JSON Patch on the latest object,
+guarded by its generation, rebuilt and sent once more on a conflict), like
+Pause on the Upgrades page.
+
+### 3.10 Storage (k4all v2.7.0)
+
+`/k4all/settings/storage`: the Rook/Ceph card (switch, components, refused
+uninstalls and waits), the `RookReady` condition, and:
+
+- before the CephCluster exists, the creation inputs: disks
+  (`storage.deviceFilter`, a regular expression, with the disks of each node
+  from Hangar's node agent inventory: becomes an OSD, in use: skipped, not
+  matched; "unknown" without the agent or the permission), below 3 nodes
+  (`smallCluster` Refuse / Allow, with what k4all creates for the node
+  count: mons, mgrs, pool size, and the no-redundancy warning);
+- once it exists: "Created: manage it in Cairn", the CephClusters with
+  phase and health, links to Cairn (overview, hosts and OSDs, pools), and
+  the creation inputs as read-only facts that do nothing now;
+- **Turning Rook off**: while a CephCluster exists the operator keeps Rook
+  (the refusal as written), with the steps (Cairn: move or delete what lives
+  on Ceph; delete the CephCluster with its cleanup policy if wanted; then
+  the uninstall follows); k4all never wipes disks: wipe `/var/lib/rook` and
+  the OSD disks by hand before turning Rook on again (D24).
 
 ## 4. Field mapping
 
@@ -325,12 +485,12 @@ on the field with k4all-operator v0.4.0.
 
 | UI control | CR path | Plugin | Consumer and effect |
 |---|---|---|---|
-| Virtualization switch | `features.virt.enabled` | edit | operator feature gate: installs/uninstalls kubevirt, cdi, kubevirt-manager, virtctl |
+| Virtualization switch | `features.virt.enabled` | edit | operator feature gate: installs/uninstalls kubevirt, cdi, virtctl, hangar, hangar-node-agent (Hangar, the VM console, from k4all v2.7.0; kubevirt-manager before) |
 | Software emulation | `features.virt.emulation` (`auto`/`true`/`false`) | edit | operator virt hook patches KubeVirt `useEmulation` |
 | Argo CD switch | `features.argocd.enabled` | edit | operator feature gate: argocd chart |
 | OVS secondary networks | `features.ovsCni.enabled` | edit | operator feature gate: multus-cni, ovs-cni |
-| OVS bridge | `features.ovsBridge.enabled` | read-only; edit with operator ≥ v0.6.0 | today: NodeConfig controller creates per-node NNCPs when on, never removes them; Cilium hook adds `ovs-bridge` to devices |
-| CNI | `networking.cni.type` | read-only; edit with operator ≥ v0.6.0 | today: switching would re-create every pod network; kubeadm/firewall set up at install |
+| OVS bridge | `features.ovsBridge.enabled` | read-only; edit with operator ≥ v0.7.0 | today: NodeConfig controller creates per-node NNCPs when on, never removes them; Cilium hook adds `ovs-bridge` to devices |
+| CNI | `networking.cni.type` | read-only; edit with operator ≥ v0.7.0 | today: switching would re-create every pod network; kubeadm/firewall set up at install |
 | Ingress dedicated IP (ingress-nginx) | `ingress.nginx.dedicatedIP` | edit (ingress-nginx releases) | ingress-nginx hook: LoadBalancer on that IP; MetalLB pool |
 | Default IngressClass (ingress-nginx) | `ingress.nginx.isDefault` (always written) | edit (ingress-nginx releases) | ingress-nginx hook: `ingressClassResource.default`, host ports vs LoadBalancer |
 | Traefik dedicated IP | `ingress.traefik.dedicatedIP` | edit (Traefik releases) | Traefik hook: LoadBalancer Service on that IP; MetalLB pool (`DedicatedIPs`, v0.4.0) |
@@ -350,7 +510,16 @@ on the field with k4all-operator v0.4.0.
 | Overrides of component X | `componentOverrides.X.values`, `componentOverrides.X.helmArgs` | edit (Helm components) | operator deep-merges values over the release values, then applies helmArgs with Helm's `--set` parser |
 | Management | ReleaseManifest `spec.components.X.management` | edit | operator: Managed / Unmanaged / Removed (uninstall) |
 | Re-apply | ReleaseManifest annotation `k4all.magesgate.com/force-resync: X\|all` | write | operator resets Installed+Managed components to Pending and removes the annotation |
+| KubeVirt gates k4all turns on / off | `features.virt.kubevirt.featureGates` / `.disabledFeatureGates` | edit (operator ≥ v0.6.0) | VirtHook merges them into the KubeVirt CR (§7.2 of the v2.7.0 spec), records them in the CR annotations |
+| VM state StorageClass | `features.virt.kubevirt.vmStateStorageClass` | edit (≥ v0.6.0) | VirtHook writes the KubeVirt CR's `vmStateStorageClass` |
+| Hangar node agent | `features.virt.hangar.nodeAgent` | edit (≥ v0.6.0) | `hangar-node-agent` component installed unless `false` |
+| Metadata service | `features.virt.metadata.{enabled,scope,tokens.audiences,tokens.expirationSeconds,vendorDataConfigMap}` | edit (≥ v0.6.0) | `k4all-metadata` component (MutatingAdmissionPolicy) |
+| Rook/Ceph | `features.rook.enabled`, `.storage.deviceFilter`, `.smallCluster` | edit (≥ v0.6.0); the inputs read-only once a CephCluster exists | rook gate: rook-ceph, ceph-csi-drivers, cairn; RookHook creates the cluster once |
+| Node settings | `nodes.kubelet.{maxPods,cpuManagerPolicy,reservedSystemCPUs,topologyManagerPolicy,topologyManagerScope}`, `nodes.hugepages.{1Gi,2Mi}`, `nodes.iommu` | edit (≥ v0.6.0) | node-settings controller: `kube-system/kubelet-config`, kernel arguments, one node at a time |
+| Rollout pause | `nodes.rollout.paused` | write at once (Pause / Resume) | stops before the next node |
 | (status) | ClusterConfig `status.{observedGeneration,lastReconcileTime,features}` | read | applied/stale indicators, feature readiness |
+| (status) | ClusterConfig `status.nodes.{settingsHash,rollout,perNode}`, conditions `PodNetworkOverlap`, `KubeVirtSettings`, `NodeSettingsRollout`, `RookReady`, `MetadataService` | read | rollout progress, banners |
+| (other APIs) | KubeVirt CR (`developerConfiguration` gates, the k4all annotations, `observedKubeVirtVersion`), StorageClasses, CDI StorageProfiles, CephClusters, the operator's pod node, Hangar's node agent `inventory.json` (pods/proxy) | read, polled every 30-60 s | gates, VM state, Rook, plan order, disks |
 | (status) | ReleaseManifest `status.{conditions,components}`, `spec.osImage.imageTag`, `status.resolvedOSImageTag` | read | health, states, versions, k4all release, operator version (4.1) |
 | (status) | Node annotations `k4all.magesgate.com/upgrade-in-progress`, `release`, `node-type`, `upgrade-phase`, `upgrade-message` | read | hop per node, release, role, host phase and HOLD reason |
 | (status) | NodeConfig `status.{nodeType,availableInterfaces}` | read | node role, device suggestions |
@@ -365,20 +534,27 @@ release's spec version) in one table, `src/model/capabilities.ts`:
 | Capability | Since | Effect in the plugin |
 |---|---|---|
 | `clusterUpgrade` | v0.4.0 (k4all v2.4.0) | explains a missing ClusterUpgrade API (the API itself is detected by discovery) |
-| `cniSwitch` | v0.6.0 | CNI select in Networking, change reviewed as dangerous |
-| `ovsBridgeToggle` | v0.6.0 | OVS bridge switch in Features, change reviewed as dangerous |
+| `cniSwitch` | v0.7.0 | CNI select in Networking, change reviewed as dangerous |
+| `ovsBridgeToggle` | v0.7.0 | OVS bridge switch in Features, change reviewed as dangerous |
+| `virtSettings` | v0.6.0 (k4all v2.7.0) | gates, VM state, node agent, metadata on the Virtualization page |
+| `nodeSettings` | v0.6.0 (k4all v2.7.0) | the Node settings page and its Pause / Resume |
+| `rookStorage` | v0.6.0 (k4all v2.7.0) | the Storage page; Rook in the Overview |
 | `virtUninstallGuard` | v0.5.7 (k4all v2.6.6) | turning Virtualization off is reviewed as "uninstalls once nothing runs on them" (the operator keeps KubeVirt and kubevirt-manager while VMs exist, CDI while DataVolumes or PVCs made by CDI exist); older operators are reviewed as deleting KubeVirt and CDI from under running VMs |
 
 An unknown or unparsable version has no optional capability. Fields that
 turn live carry `liveWith: <capability>` in `fields.ts`; the controls and
 the review texts for them already exist. Enabling them for real therefore
-needs no plugin change, only that operator v0.6.0 implements the switch on
+needs no plugin change, only that operator v0.7.0 implements the switch on
 these same fields (`networking.cni.type`, `features.ovsBridge.enabled`);
 if it chooses other fields or a different flow, the paths in `fields.ts`
 and the consequence texts in `changes.ts` (`LIVE_DANGER`) are the places to
-adjust, before the plugin version pinned with v0.6.0 is released. (Plugin
+adjust, before the plugin version pinned with v0.7.0 is released. (Plugin
 0.1.1 gated them on v0.5.0; v0.5.0, which k4all v2.4.0 pins, does not have
-them, so 0.1.2 gates them on v0.6.0.)
+them, so 0.1.2 gated them on v0.6.0; the k4all v2.7.0 spec moved the CNI
+switch and the OVS bridge removal to v0.7.0, so 0.2.0 gates them there.)
+The v2.7.0 settings are in CRD fields older operators do not have: with
+them the pages are read-only (and `fieldValidation=Strict` would refuse the
+fields anyway).
 
 ### 4.2 ClusterUpgrade
 
@@ -431,11 +607,24 @@ that the operator creates (v0.4.0+).
   - DrainTimeout: `kubectl get pods -A -o wide --field-selector
     spec.nodeName=<node>`, `kubectl get pdb -A`; Retry, or turn on
     continue-on-timeout and then Retry (the drain starts over for a full
-    timeout);
+    timeout); the text names pods that declare no controller among the
+    causes (the drain never evicts them, operator v0.5.8) and links "Drains
+    that never end" and "Pods that declare no controller" (docs/upgrades.md);
   - NodeNotReady: not a failure, the upgrade waits for that node to be Ready
     (`kubectl describe node`);
   - host phase ROLLBACK_REBOOT while it happens; any other Failed node: its
-    message, `k4all-upgrade status`, no Retry.
+    message, `k4all-upgrade status`, no Retry;
+  - the one exception to "never from message texts", for want of a reason
+    (O-10): a node the operator does not cordon because its drain could
+    never end (a PodDisruptionBudget that allows no disruption, k4all#87) or
+    would delete pods that declare no controller (k4all#99, operator
+    v0.5.8), or a drain that waits for such pods. `model/drainBlock.ts`
+    reads only the phrases of the operator's shared drain
+    (`drain.BlockedMessage`, `drain.Drain`): the budgets and pods it names,
+    what to do (relax the budget or move the workload; delete the pods or
+    recreate them under a controller), a `kubectl delete pod` per named pod,
+    and the docs sections. The Node settings rollout panel shows the same
+    advice for DrainBlocked.
   Retry is offered only for DrainTimeout and Abandoned. A failed plan (Failed
   condition reason NoPath, Downgrade or NodeNotReported) shows the message
   with what to do: another target, or Stop.
@@ -472,7 +661,7 @@ same patch with `dryRun=All`. The API server runs defaulting, validation and
 admission and returns the object it would store. The review dialog shows:
 
 1. the changes in words, each with severity (info / warning / danger) and its
-   consequence (e.g. "Uninstalls cdi, kubevirt, kubevirt-manager, virtctl
+   consequence (e.g. "Uninstalls cdi, hangar, hangar-node-agent, kubevirt, virtctl
    once nothing runs on them…"), with the components a feature
    brings read from the ReleaseManifest;
 2. for settings: "After saving, k4all-operator applies these components
@@ -626,6 +815,8 @@ therefore wrapped in `K4allLive` (`src/api/live.tsx`, logic in
 | Management, re-apply | `patch` on `releasemanifests` |
 | Start, pause, resume, stop, retry upgrades; upgrade settings | `patch` on `clusterupgrades`, name `k4all` |
 | Ingresses on the nginx class | `list,watch` on `ingresses` (`networking.k8s.io`); "Switch to traefik": `patch` on `ingresses`, and on `services` for backend-protocol HTTPS |
+| v2.7.0 pages | `list` on `kubevirts` (`kubevirt.io`), `storageclasses`, `storageprofiles` (`cdi.kubevirt.io`), `cephclusters` (`ceph.rook.io`); `get` on the kubevirt-manager leftovers; saving and Pause / Resume: `patch` on `clusterconfigs` |
+| Optional | `list` pods in `k4all-operator-system` (the operator's node, last in the plan), `list` pods and `get` pods/proxy in `hangar-system` (the disks Ceph would take), `get` the ConfigMap `kube-system/kubelet-config` (what a cleared kubelet field goes back to); without them the pages say "unknown" or give the rule |
 
 The plugin asks the API server (SelfSubjectAccessReview via
 `getAuthorization('patch')`, with the name `k4all` for the ClusterUpgrade)
@@ -676,7 +867,10 @@ tagged, if possible).
 | **O-4** | CRD (kubebuilder markers) | `format: ipv4/ipv6` (or CEL) on dedicated IPs; CEL `self == oldSelf` with a message on install-time fields (networks, API endpoint, `ha.*`), not on fields a migration rewrites | the plugin already treats them as read-only; server messages would show up in the dry run |
 | **O-5** | operator status | Set `status.features.ovsBridgeReady` (declared, never written); per-component `observedGeneration` or a ReleaseManifest `status.observedGeneration` | Overview could show a sync in progress |
 | **O-6** | operator `cilium_hook.go` | Enable Cilium's ingress controller when `ingress.cilium.dedicatedIP` is set; today the IP only reaches the MetalLB pool | the field is labelled "added to the MetalLB address pool" |
-| **O-7** | operator v0.6.0 | CNI switch and OVS bridge on/off on the existing fields `networking.cni.type` and `features.ovsBridge.enabled` (the plugin's controls turn on by version, 4.1), with progress in status | read-only with "coming with k4all-operator v0.6.0" |
+| **O-7** | operator v0.7.0 | CNI switch and OVS bridge on/off on the existing fields `networking.cni.type` and `features.ovsBridge.enabled` (the plugin's controls turn on by version, 4.1), with progress in status | read-only with "coming with k4all-operator v0.7.0" |
+| **O-8** | operator v0.6.0 (RookHook) | The seeded `ceph-rbd` StorageProfile lists RWX Block only. KubeVirt 1.9 creates VM state (EFI/TPM) volumes in Filesystem mode and, without a Filesystem entry, asks for RWX Filesystem, which RBD cannot provide: `vmStateStorageClass: ceph-rbd` would leave such VMs Pending. A Filesystem ReadWriteOnce entry in the seeded profile fixes it (KubeVirt then copies the state on migration) | the VM state row warns |
+| **O-10** | operator (ClusterUpgrade API) | A machine-readable reason for a node whose drain is blocked before the cordon (`nodes[].reason`, e.g. `DrainBlocked`, with the kind: budget or pods without a controller). Today the node stays Pending with only `drain.BlockedMessage` as its message; the enum change is an API change | the plugin reads the shared drain's phrases (4.3) |
+| ~~O-9~~ | operator v0.6.0 | Activation rules of v0.6.0 (`engine.FeatureEnabled`, `shouldInstall`), mirrored in `components.ts`: gate `rook` = `features.rook.enabled`; gate `snapshots` (snapshot-controller) = virt or Rook; gate `virtMetadata` (k4all-metadata) = virt and `features.virt.metadata.enabled`; `hangar-node-agent` left out by name when `features.virt.hangar.nodeAgent` is `false`. **Done** (operator feat/270-remainders, feat/270-metadata) | the Components page and the feature cards show these states |
 | ~~U-1~~ | `ReleaseInfo` | `minFrom`, `crio`, and `path` (the hops the operator would plan) in `availableReleases`. **Done** (k4all-operator 7ef70c4). | the review and the list show the operator's own path |
 | ~~U-2~~ | status | `currentReleaseInfo`. **Done**. | the "from" of every change |
 | ~~U-3~~ | `nodes[]` | `reason` (DrainTimeout, HostHold, Abandoned, TargetRejected, RollbackRebooted, NodeNotReady) and `hostPhase` for every node. **Done**. | guidance by reason only |
@@ -696,7 +890,7 @@ tagged, if possible).
 2. **Precondition on `metadata.generation`, not `resourceVersion`**: status
    writes bump resourceVersion every reconcile and would make every save a
    conflict.
-3. **CNI type and OVS bridge are read-only** until operator v0.6.0 (user
+3. **CNI type and OVS bridge are read-only** until operator v0.7.0 (user
    decision: editable from the plugin once the operator supports it), gated
    by the installed operator version (4.1).
 4. **Proxy is read-only**: the cluster resource does not reach the nodes.
@@ -739,6 +933,21 @@ tagged, if possible).
 20. **Switching an Ingress applies at once** after its own review, outside
     the settings draft; Helm and Argo CD are only detected and warned about,
     the plugin does not touch their sources.
+21. **The v2.7.0 settings live on their own pages**, each its own edit
+    session on the ClusterConfig (the same save flow), not more Settings
+    tabs: consoles link to stable paths and anchors, and a page shows the
+    live objects its settings act on (KubeVirt CR, nodes, CephClusters).
+22. **Absent means not owned**: every new control has a "Not set by k4all"
+    state, and clearing a value removes the field and the objects it leaves
+    empty, never an explicit empty value.
+23. **Gate ownership from the annotation, maturity from Hangar's tables**,
+    copied verbatim (one source for both consoles); the plugin refuses a GA
+    gate in the off list, which the operator would write anyway.
+24. **The node plan is predicted from the changed fields**, in the
+    operator's own order (workers, control planes, the bootstrap node, the
+    operator's node last); once saved the rollout shows its real state.
+25. **Pause / Resume of the node rollout apply at once**, like the upgrade's,
+    outside the draft.
 
 ## 10. Code layout, build, tests
 
@@ -747,7 +956,7 @@ plugin/
   package.json, package-lock.json, tsconfig.json
   src/index.tsx                     registrations (sidebar, routes, Node section)
   src/model/                        pure logic, no React, fully unit-tested
-    types.ts                        CRD types (mirror of api/v1alpha1, v0.4.0)
+    types.ts                        CRD types (mirror of api/v1alpha1, v0.6.0)
     capabilities.ts                 what the installed operator supports
     objects.ts                      path get/set, JSON equality, JSON pointers
     patch.ts                        diff → JSON Patch, preconditions, applyOps, query
@@ -767,6 +976,15 @@ plugin/
     upgrades.ts                     path (operator's), view, conditions, durations,
                                     node order, drain timer, estimate, guidance by
                                     reason, ClusterUpgrade writes
+    gates.ts, gateTables.ts         KubeVirt gates: tables (generated copy of
+                                    Hangar's), the §7.2 merge, state, ownership
+                                    from the annotations, setter, checks
+    nodeSettings.ts                 action classes, the plan, hugepage math, CPU
+                                    checks, the rollout view, pause
+    storage.ts                      Rook view, defaults per node count, disks
+                                    Ceph would take, checks
+    virtSettings.ts                 VM state StorageClass and access mode,
+                                    metadata service checks
     health.ts                       health headline, banners, node rows
     overrides.ts                    overrides form <-> componentOverrides
     textDiff.ts                     line diff, folding, YAML dump
@@ -774,7 +992,13 @@ plugin/
   src/icons.ts                      offline registration of the mdi icons used
   src/api/                          KubeObject classes, discovery, K4allLive (live
                                     data for every route), hooks, writes
+  src/api/clusterObjects.ts         KubeVirt CR, StorageClasses, StorageProfiles,
+                                    CephClusters, operator pod, agent inventories,
+                                    kubevirt-manager leftovers (polled)
   src/components/                   pages and widgets (MUI + Headlamp)
+    settings/editorShell.tsx        the edit session, stale notice, unsaved bar
+                                    every settings page shares
+    virtualization/, nodes/, storage/  the k4all v2.7.0 pages and their sections
     upgrades/                       Upgrades page, review and settings dialogs,
                                     progress, release list, Overview card, write flow
 ```
@@ -785,7 +1009,18 @@ npm ci
 npm run lint && npm run tsc && npm test && npm run build   # dist/main.js
 ```
 
-Tests: 277 (vitest, jsdom). The model tests cover patch generation and
+Tests: 416 (vitest, jsdom). Plugin 0.2.0 adds model tests for the gates
+(tables by version, the operator's merge, KubeVirt's on/off rules, owner
+from the annotations, pending, the hot-plug pair, GA refusal), the node
+settings (action classes from the changed fields, the plan and its order,
+single node, skipped nodes, hugepage math, CPU and max pods checks, the
+rollout view, pause), Rook (defaults per node count, created vs creation
+inputs, refused turn-off and its steps, disks Ceph would take), the VM
+state access mode and the metadata checks, the new component activation
+rules, capabilities by operator version, the refusal/waiting prefixes, the
+health banners, the change texts and the pause write (requests as sent,
+one retry on a conflict); and rendering tests of every new section, the
+review with the plan, the links and banners. Before: 277. The model tests cover patch generation and
 application, preconditions, rebase/conflicts, the editor reducer, the
 ingress controller of the release (ingress-nginx and Traefik), Traefik
 inherited values and exposure, capabilities, the live data (watch or poll
@@ -845,6 +1080,8 @@ see DISTRIBUTION.md) with the real ClusterUpgrade controller.
 
 - An app-bar indicator while an upgrade runs (needs a cheap watch).
 - Overrides editor with Monaco and the chart's values schema for completion.
-- CNI switch and OVS bridge once operator v0.6.0 ships (4.1).
+- CNI switch and OVS bridge once operator v0.7.0 ships (4.1).
+- Per-node groups of node settings (the v2.7.0 field names are chosen for
+  them), and per-node kernel arguments in the plan from Hangar's inventory.
 - Italian (and other) translations through Headlamp's i18n.
 - Storybook stories for the pages with mocked resources.

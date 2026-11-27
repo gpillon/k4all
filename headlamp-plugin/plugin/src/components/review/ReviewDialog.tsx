@@ -28,7 +28,7 @@ import React from 'react';
 import { ChangeItem, ChangeSeverity, formatValue, needsAcknowledgement } from '../../model/changes';
 import { Issue } from '../../model/validation';
 import { Mono } from '../common/ui';
-import { SaveFlow } from './useSaveFlow';
+import { ReviewData, SaveFlow } from './useSaveFlow';
 import { YamlDiff } from './YamlDiff';
 
 const SEVERITY_ICON: Record<ChangeSeverity, { icon: string; color: 'info' | 'warning' | 'error' }> =
@@ -79,9 +79,11 @@ export interface ReviewDialogProps {
   title: string;
   /** Non-blocking validation messages to repeat in the review. */
   warnings?: Issue[];
+  /** Shown above the change list in the review, from the reviewed draft (the node rollout plan). */
+  extra?: (data: ReviewData) => React.ReactNode;
 }
 
-export function ReviewDialog({ flow, title, warnings = [] }: ReviewDialogProps) {
+export function ReviewDialog({ flow, title, warnings = [], extra }: ReviewDialogProps) {
   const { phase } = flow;
   const [ack, setAck] = React.useState(false);
   const open = phase.kind !== 'idle';
@@ -163,6 +165,7 @@ export function ReviewDialog({ flow, title, warnings = [] }: ReviewDialogProps) 
                 replayed on the newer version; check them again before applying.
               </Alert>
             )}
+            {extra?.(reviewData)}
             <Box>
               <Typography variant="overline" color="text.secondary">
                 {reviewData.items.length} change{reviewData.items.length === 1 ? '' : 's'}
