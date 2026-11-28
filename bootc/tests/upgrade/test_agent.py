@@ -796,7 +796,8 @@ def test_agent_leaves_the_phases_after_a_reboot_to_resume(node):
     host.annotations.pop(PHASE)
     assert agent(host) == 0                  # booted, resume not started yet
     new = host.calls[calls:]
-    assert all(c[:1] == ["kubectl"] for c in new), new
+    # kubectl, and the loader's --help for the x86-64 level: no phase runs
+    assert all(c[:1] in (["kubectl"], [ku.LD_SO_X86_64]) for c in new), new
     assert state(host)["phase"] == "REBOOT"
     assert host.annotations[PHASE] == "REBOOT"
     assert host.annotations[RELEASE] == "v2.4.0", "not committed yet"
