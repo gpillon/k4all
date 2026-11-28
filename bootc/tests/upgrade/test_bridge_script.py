@@ -32,13 +32,15 @@ def node(tmp_path):
               admin=True, free_kib=50 * 1024 * 1024, node_type=None,
               release_manifest=None, kube_vip_manifest=None, vip_up=True,
               graces=(("pod-a", "30"), ("pod-b", "30")), ps_fails=False,
-              networks=(("pod-a", "POD"), ("pod-b", "NODE")), inspect_fails=False):
+              networks=(("pod-a", "POD"), ("pod-b", "NODE")), inspect_fails=False,
+              status_sleep=0):
         status = {"status": {"booted": {"image": {"image": {"image": booted}}},
                              "staged": ({"image": {"image": {"image": staged}}}
                                         if staged else None)}}
         (tmp_path / "status.json").write_text(json.dumps(status))
-        _fake(bin_dir, "bootc", 'if [ "$1" = status ]; then cat %s; else echo "bootc $*" >> %s; fi\n'
-              % (tmp_path / "status.json", log))
+        _fake(bin_dir, "bootc", 'if [ "$1" = status ]; then sleep %s; cat %s; '
+              'else echo "bootc $*" >> %s; fi\n'
+              % (status_sleep, tmp_path / "status.json", log))
         _fake(bin_dir, "systemctl", 'echo "systemctl $*" >> %s\n' % log)
         # systemd-run: record the wrapper, then run the command after "--"
         _fake(bin_dir, "systemd-run",
@@ -535,3 +537,24 @@ def test_digest_is_used_once_ci_stamps_it(node, tmp_path):
     proc = subprocess.run(["bash", str(stamped), "--dry-run"], env=env,
                           capture_output=True, text=True)
     assert "ghcr.io/gpillon/k4all-bootc@sha256:abc" in proc.stdout
+
+
+# #131 (#49 item 5): bootc holds its lock while it downloads, and `bootc
+# status` waits until the download ends.
+def test_a_busy_bootc_stops_the_bridge_with_a_reason(node):
+    setup, run = node
+    setup(status_sleep=5)
+    proc, calls = run(env_extra={"K4ALL_BOOTC_STATUS_TIMEOUT": "1"})
+    assert proc.returncode == 1
+    assert ("bootc busy (download in progress): 'bootc status' did not answer "
+            "within 1 s") in proc.stderr
+    assert calls == [], "nothing changed"
+
+
+def test_a_bootc_status_timeout_that_is_not_a_number_is_refused(node):
+    setup, run = node
+    setup()
+    proc, calls = run(env_extra={"K4ALL_BOOTC_STATUS_TIMEOUT": "5m"})
+    assert proc.returncode == 1
+    assert "K4ALL_BOOTC_STATUS_TIMEOUT must be a number of seconds" in proc.stderr
+    assert calls == []

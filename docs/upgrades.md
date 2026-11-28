@@ -922,6 +922,17 @@ reached by rollback. The next hop's image keeps the kernel arguments.
   operator only through the ReleaseManifest sync of a k4all release, never
   because a newer operator was published.
 - `update-node.sh` still exists and now calls `k4all-upgrade`.
+- `bootc status` waits for bootc's lock, and a download holds it for
+  minutes: a hop's STAGE, or a `bootc switch` or `bootc upgrade` run by hand.
+  From v2.7.2 `k4all-upgrade` never waits on it for long:
+  - the agent, `k4all-upgrade status` and the preflight give it 30 seconds,
+    then say `bootc busy (download in progress)`. The preflight waits (not
+    yet, no HOLD) and the agent tries again at its next pass;
+  - the hop's own steps give it 300 seconds. When it does not answer in
+    PRE_REBOOT, kubeadm comes from dl.k8s.io and kubeadm pulls the
+    control-plane images;
+  - `k4all-bridge.sh` gives it 300 seconds (`K4ALL_BOOTC_STATUS_TIMEOUT`) and
+    stops without changing anything.
 - From v2.6.4 every node pins the kubelet's `--node-ip` in
   `/etc/sysconfig/kubelet` (`KUBELET_EXTRA_ARGS`), from
   `k4all-node-ip.service` at every boot. A `--node-ip` you or a restore set

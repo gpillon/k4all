@@ -152,6 +152,10 @@ class FakeHost(ku.Host):
         self.pod_stop_rc = {}       # pod id -> rc of its stop (default 0)
         self.pod_stop_tries = {}    # pod id -> crictl stopp tries (default 1)
         self.sleeps = []            # seconds of every Host.sleep, in order
+        # `bootc status` waits for bootc's lock while another bootc command
+        # downloads: with this set, every call runs out of its time (rc 124)
+        self.bootc_busy = False
+        self.bootc_status_timeouts = []     # the timeout of every `bootc status`
         self.cluster_config = {
             "apiVersion": "kubeadm.k8s.io/v1beta4",
             "kind": "ClusterConfiguration",
@@ -257,6 +261,13 @@ class FakeHost(ku.Host):
     def run(self, argv, check=True, input_text=None, timeout=None):
         argv = list(argv)
         self.calls.append(argv)
+        if argv[:2] == ["bootc", "status"]:
+            self.bootc_status_timeouts.append(timeout)
+            if self.bootc_busy:
+                proc = Proc(returncode=124, stderr="timed out after %s s" % timeout)
+                if check:
+                    raise ku.UpgradeError("bootc status failed: %s" % proc.stderr)
+                return proc
         proc = self._dispatch(argv, input_text)
         if check and proc.returncode != 0:
             raise ku.UpgradeError("%s failed: %s" % (" ".join(argv), proc.stderr))
