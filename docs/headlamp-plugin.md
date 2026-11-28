@@ -249,7 +249,7 @@ again, wipe `/var/lib/rook` on every node and the disks the OSDs used.
 The Virtualization, Node settings and Storage pages need k4all-operator
 v0.6.0 (k4all v2.7.0); with an older operator they say so and are
 read-only. Switching the CNI (Calico, Cilium) and turning the OVS bridge on
-or off are read-only, marked "coming with k4all-operator v0.7.0". Once the
+or off are read-only, marked "coming with k4all-operator v0.8.0". Once the
 cluster runs that operator, the same rows become editable.
 
 ## Users other than admin

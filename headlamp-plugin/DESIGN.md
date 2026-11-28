@@ -80,7 +80,7 @@ Non-goals (and why):
   upgrade. Customization goes to `componentOverrides` instead.
 - **Install-time settings** (pod/service networks, API endpoint, HA,
   firewalld, proxy): shown read-only, see 4. CNI and OVS bridge are
-  read-only until k4all-operator v0.7.0 (4.1).
+  read-only until k4all-operator v0.8.0 (4.1).
 - **What a console owns**: Ceph day-2 (OSDs, pools, mon/mgr counts) is
   Cairn's, gates k4all does not list and the other KubeVirt settings are
   Hangar's. The pages show them and link there.
@@ -250,7 +250,7 @@ Every row carries an apply badge: **Live** (the operator applies it),
   installed operator, and "Removal refused" with the operator's reason for
   each component whose status message starts with `uninstall refused: `,
   and "Waiting" for `waiting: `. The OVS bridge card is dashed and
-  locked with "Coming with k4all-operator v0.7.0"; with that operator it
+  locked with "Coming with k4all-operator v0.8.0"; with that operator it
   gets a switch (4.1).
 - **Ingress**: the release's ingress controller, from the ReleaseManifest
   (`traefik` active → Traefik; else `ingress-nginx` active → ingress-nginx):
@@ -276,7 +276,7 @@ Every row carries an apply badge: **Live** (the operator applies it),
   outside the settings draft. The Overview's Ingress card counts them, with
   a link here.
 - **Networking**: a CNI panel (read-only with "Coming with k4all-operator
-  v0.7.0", a select with that operator), then on Cilium clusters switches for
+  v0.8.0", a select with that operator), then on Cilium clusters switches for
   L2 announcements, Hubble, Gateway API and a chip input for devices, with
   suggestions from the interfaces the nodes report (NodeConfig status).
 - **Install-time**: four read-only panels (cluster network, API endpoint,
@@ -495,8 +495,8 @@ on the field with k4all-operator v0.4.0.
 | Software emulation | `features.virt.emulation` (`auto`/`true`/`false`) | edit | operator virt hook patches KubeVirt `useEmulation` |
 | Argo CD switch | `features.argocd.enabled` | edit | operator feature gate: argocd chart |
 | OVS secondary networks | `features.ovsCni.enabled` | edit | operator feature gate: multus-cni, ovs-cni |
-| OVS bridge | `features.ovsBridge.enabled` | read-only; edit with operator ≥ v0.7.0 | today: NodeConfig controller creates per-node NNCPs when on, never removes them; Cilium hook adds `ovs-bridge` to devices |
-| CNI | `networking.cni.type` | read-only; edit with operator ≥ v0.7.0 | today: switching would re-create every pod network; kubeadm/firewall set up at install |
+| OVS bridge | `features.ovsBridge.enabled` | read-only; edit with operator ≥ v0.8.0 | today: NodeConfig controller creates per-node NNCPs when on, never removes them; Cilium hook adds `ovs-bridge` to devices |
+| CNI | `networking.cni.type` | read-only; edit with operator ≥ v0.8.0 | today: switching would re-create every pod network; kubeadm/firewall set up at install |
 | Ingress dedicated IP (ingress-nginx) | `ingress.nginx.dedicatedIP` | edit (ingress-nginx releases) | ingress-nginx hook: LoadBalancer on that IP; MetalLB pool |
 | Default IngressClass (ingress-nginx) | `ingress.nginx.isDefault` (always written) | edit (ingress-nginx releases) | ingress-nginx hook: `ingressClassResource.default`, host ports vs LoadBalancer |
 | Traefik dedicated IP | `ingress.traefik.dedicatedIP` | edit (Traefik releases) | Traefik hook: LoadBalancer Service on that IP; MetalLB pool (`DedicatedIPs`, v0.4.0) |
@@ -540,8 +540,8 @@ release's spec version) in one table, `src/model/capabilities.ts`:
 | Capability | Since | Effect in the plugin |
 |---|---|---|
 | `clusterUpgrade` | v0.4.0 (k4all v2.4.0) | explains a missing ClusterUpgrade API (the API itself is detected by discovery) |
-| `cniSwitch` | v0.7.0 | CNI select in Networking, change reviewed as dangerous |
-| `ovsBridgeToggle` | v0.7.0 | OVS bridge switch in Features, change reviewed as dangerous |
+| `cniSwitch` | v0.8.0 | CNI select in Networking, change reviewed as dangerous |
+| `ovsBridgeToggle` | v0.8.0 | OVS bridge switch in Features, change reviewed as dangerous |
 | `virtSettings` | v0.6.0 (k4all v2.7.0) | gates, VM state, node agent, metadata on the Virtualization page |
 | `nodeSettings` | v0.6.0 (k4all v2.7.0) | the Node settings page and its Pause / Resume |
 | `rookStorage` | v0.6.0 (k4all v2.7.0) | the Storage page; Rook in the Overview |
@@ -550,14 +550,15 @@ release's spec version) in one table, `src/model/capabilities.ts`:
 An unknown or unparsable version has no optional capability. Fields that
 turn live carry `liveWith: <capability>` in `fields.ts`; the controls and
 the review texts for them already exist. Enabling them for real therefore
-needs no plugin change, only that operator v0.7.0 implements the switch on
+needs no plugin change, only that operator v0.8.0 implements the switch on
 these same fields (`networking.cni.type`, `features.ovsBridge.enabled`);
 if it chooses other fields or a different flow, the paths in `fields.ts`
 and the consequence texts in `changes.ts` (`LIVE_DANGER`) are the places to
-adjust, before the plugin version pinned with v0.7.0 is released. (Plugin
+adjust, before the plugin version pinned with v0.8.0 is released. (Plugin
 0.1.1 gated them on v0.5.0; v0.5.0, which k4all v2.4.0 pins, does not have
 them, so 0.1.2 gated them on v0.6.0; the k4all v2.7.0 spec moved the CNI
-switch and the OVS bridge removal to v0.7.0, so 0.2.0 gates them there.)
+switch and the OVS bridge removal to v0.7.0, so 0.2.0 gates them there; the
+k4all v2.7.2 decisions moved them to v0.8.0, so 0.3.0 gates them there.)
 The v2.7.0 settings are in CRD fields older operators do not have: with
 them the pages are read-only (and `fieldValidation=Strict` would refuse the
 fields anyway).
@@ -873,7 +874,7 @@ tagged, if possible).
 | **O-4** | CRD (kubebuilder markers) | `format: ipv4/ipv6` (or CEL) on dedicated IPs; CEL `self == oldSelf` with a message on install-time fields (networks, API endpoint, `ha.*`), not on fields a migration rewrites | the plugin already treats them as read-only; server messages would show up in the dry run |
 | **O-5** | operator status | Set `status.features.ovsBridgeReady` (declared, never written); per-component `observedGeneration` or a ReleaseManifest `status.observedGeneration` | Overview could show a sync in progress |
 | **O-6** | operator `cilium_hook.go` | Enable Cilium's ingress controller when `ingress.cilium.dedicatedIP` is set; today the IP only reaches the MetalLB pool | the field is labelled "added to the MetalLB address pool" |
-| **O-7** | operator v0.7.0 | CNI switch and OVS bridge on/off on the existing fields `networking.cni.type` and `features.ovsBridge.enabled` (the plugin's controls turn on by version, 4.1), with progress in status | read-only with "coming with k4all-operator v0.7.0" |
+| **O-7** | operator v0.8.0 | CNI switch and OVS bridge on/off on the existing fields `networking.cni.type` and `features.ovsBridge.enabled` (the plugin's controls turn on by version, 4.1), with progress in status | read-only with "coming with k4all-operator v0.8.0" |
 | **O-8** | operator v0.6.0 (RookHook) | The seeded `ceph-rbd` StorageProfile lists RWX Block only. KubeVirt 1.9 creates VM state (EFI/TPM) volumes in Filesystem mode and, without a Filesystem entry, asks for RWX Filesystem, which RBD cannot provide: `vmStateStorageClass: ceph-rbd` would leave such VMs Pending. A Filesystem ReadWriteOnce entry in the seeded profile fixes it (KubeVirt then copies the state on migration) | the VM state row warns |
 | **O-10** | operator (ClusterUpgrade API) | A machine-readable reason for a node whose drain is blocked before the cordon (`nodes[].reason`, e.g. `DrainBlocked`, with the kind: budget or pods without a controller). Today the node stays Pending with only `drain.BlockedMessage` as its message; the enum change is an API change | the plugin reads the shared drain's phrases (4.3) |
 | ~~O-9~~ | operator v0.6.0 | Activation rules of v0.6.0 (`engine.FeatureEnabled`, `shouldInstall`), mirrored in `components.ts`: gate `rook` = `features.rook.enabled`; gate `snapshots` (snapshot-controller) = virt or Rook; gate `virtMetadata` (k4all-metadata) = virt and `features.virt.metadata.enabled`; `hangar-node-agent` left out by name when `features.virt.hangar.nodeAgent` is `false`. **Done** (operator feat/270-remainders, feat/270-metadata) | the Components page and the feature cards show these states |
@@ -896,7 +897,7 @@ tagged, if possible).
 2. **Precondition on `metadata.generation`, not `resourceVersion`**: status
    writes bump resourceVersion every reconcile and would make every save a
    conflict.
-3. **CNI type and OVS bridge are read-only** until operator v0.7.0 (user
+3. **CNI type and OVS bridge are read-only** until operator v0.8.0 (user
    decision: editable from the plugin once the operator supports it), gated
    by the installed operator version (4.1).
 4. **Proxy is read-only**: the cluster resource does not reach the nodes.
@@ -1086,7 +1087,7 @@ see DISTRIBUTION.md) with the real ClusterUpgrade controller.
 
 - An app-bar indicator while an upgrade runs (needs a cheap watch).
 - Overrides editor with Monaco and the chart's values schema for completion.
-- CNI switch and OVS bridge once operator v0.7.0 ships (4.1).
+- CNI switch and OVS bridge once operator v0.8.0 ships (4.1).
 - Per-node groups of node settings (the v2.7.0 field names are chosen for
   them), and per-node kernel arguments in the plan from Hangar's inventory.
 - Italian (and other) translations through Headlamp's i18n.

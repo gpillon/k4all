@@ -125,7 +125,7 @@ describe('describeChanges', () => {
     ]);
   });
 
-  it('flags a CNI switch and the OVS bridge as dangerous (operator v0.7.0)', () => {
+  it('flags a CNI switch and the OVS bridge as dangerous (operator v0.8.0)', () => {
     const items = describeChanges(
       base(),
       setIn(
