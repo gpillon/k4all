@@ -5,11 +5,14 @@ sidebar. It shows the state of the cluster, runs upgrades, and changes the
 common settings without editing YAML.
 
 Open Headlamp on NodePort 32323 (`https://<node-ip>:32323/`) and log in with
-the admin token:
+the admin token. A control plane shows it at root's login (`sudo -i`), or:
 
 ```bash
-kubectl get secret admin-user -n headlamp -o jsonpath='{.data.token}' | base64 -d
+kubectl get secret headlamp-admin-token -n headlamp -o jsonpath='{.data.token}' | base64 -d
 ```
+
+On a cluster restored from 1.x the Secret is `admin-user`. From v2.7.2,
+`sudo k4all-login-info` prints whichever one exists.
 
 ## Pages
 

@@ -1,0 +1,16 @@
+[Unit]
+Description=K4All - The login message of /root/.bash_profile calls k4all-login-info
+Documentation=https://github.com/gpillon/k4all
+# At every boot, after a restore (which brings back the .bash_profile of the
+# backup, a 1.x one included) and after ph3 (which writes the block on a new
+# control plane). Only the K4ALL HELPER block changes, and only once.
+After=local-fs.target fck8s-restore.service fck8s-k8s-setup-ph3.service
+ConditionPathExists=/root/.bash_profile
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/k4all-login-info --update-profile /root/.bash_profile
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

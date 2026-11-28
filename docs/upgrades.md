@@ -985,6 +985,26 @@ reached by rollback. The next hop's image keeps the kernel arguments.
     next reboot.
   - The same hold applies to every Helm component whose release was last
     written outside k4all-operator.
+- A cluster restored from 1.x keeps its 1.x Headlamp, `Unmanaged` like the
+  other components found at the restore, so Headlamp has no k4all section.
+  Headlamp keeps no state of its own, so handing it to k4all is safe:
+
+  ```bash
+  kubectl patch releasemanifest k4all --type merge \
+    -p '{"spec":{"components":{"headlamp":{"management":"Managed"}}}}'
+  ```
+
+  The operator upgrades the same Helm release in place, with the k4all
+  plugin. NodePort 32323 and the 1.x Secret `headlamp/admin-user` stay, and
+  it adds the Secret `headlamp/headlamp-admin-token`. If the component turns
+  Failed with `not taking over: …` (`ValuesDropRefused`), carry or accept
+  the listed values as for Cilium above.
+- From v2.7.2 the login message of a control plane comes from
+  `k4all-login-info`. `k4all-login-info.service` rewrites the `K4ALL HELPER`
+  block of `/root/.bash_profile` into a call of that script at every boot,
+  and the block is written only when it differs. It shows the token of
+  `headlamp/headlamp-admin-token`, else of the 1.x `headlamp/admin-user`,
+  else how to get one (`kubectl -n headlamp create token headlamp-admin`).
 - From v2.6.4 KubeVirt's operator and infra (virt-api, virt-controller,
   virt-exportproxy) prefer control planes instead of requiring them. Before,
   the drain of a cluster's only control plane never ended with KubeVirt on:

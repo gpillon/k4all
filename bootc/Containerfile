@@ -173,7 +173,9 @@ RUN systemctl enable fck8s-first-boot.service && \
     systemctl enable k4all-node-ip.service && \
     # Opens the firewalld ports of the CNI that runs on the node, when the
     # CNI writes its configuration (k4all-cni-firewalld).
-    systemctl enable k4all-cni-firewalld.path
+    systemctl enable k4all-cni-firewalld.path && \
+    # The login message's K4ALL HELPER block calls k4all-login-info.
+    systemctl enable k4all-login-info.service
 
 # Upgrades: k4all-upgrade walks release hops (kubeadm first, then reboot).
 # bootc's own timer runs `bootc upgrade --apply`, which would reboot into a

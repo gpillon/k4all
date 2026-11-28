@@ -207,6 +207,11 @@ check_file_contains "/etc/systemd/system/fck8s-k8s-setup-init.service" \
     "StartLimitBurst" "init has restart rate limiting"
 check_file_contains "/etc/systemd/system/fck8s-auto-join.service" \
     "StartLimitBurst" "auto-join has restart rate limiting"
+check_file_contains "/etc/systemd/system/k4all-login-info.service" \
+    "After=.*fck8s-restore.service" "login-info runs after the restore"
+check_file_contains "/etc/systemd/system/k4all-login-info.service" \
+    "ExecStart=/usr/local/bin/k4all-login-info --update-profile" \
+    "login-info rewrites the K4ALL HELPER block"
 
 # fstrim trims every mounted filesystem (#131): Fedora's unit lists /etc/fstab
 # first, where bootc's / is read-only and TopoLVM's volumes are absent.

@@ -138,23 +138,14 @@ sh /var/opt/k4all/bin/check-advertise-address.sh
 ' >> /root/.bash_profile
 fi
 
+# The login message: k4all-login-info prints it (k4all-login-info.service
+# keeps the block of older installs and restores the same).
 if ! grep -q "#### K4ALL HELPER ####" /root/.bash_profile; then
 
   printf '\n
 #### K4ALL HELPER ####
 #### pls, DO NOT REMOVE "K4ALL HELPER" tags, or you could mess up updates :) ###
-
-HOST_IP=$(hostname -I | awk '"'"'{print $1}'"'"')
-echo ""
-echo "Welcome! Connect to the dashboard using those addresses: "
-if [ -f /etc/login_data ]; then
-    cat /etc/login_data
-fi
-echo " - Nodeport Fallback Route: http://$HOST_IP:32323"
-echo ""
-echo "Using this token"
-echo "$(kubectl get secret headlamp-admin-token -n headlamp -o jsonpath={".data.token"} | base64 -d)"
-echo ""
+if [ -x /usr/local/bin/k4all-login-info ]; then /usr/local/bin/k4all-login-info; fi
 #### END K4ALL HELPER ####
 ' >> /root/.bash_profile
 fi
