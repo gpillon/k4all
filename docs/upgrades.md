@@ -132,6 +132,7 @@ window:
   start: "02:30"    # node local time
   durationMinutes: 120
 # podStopMaxSeconds: 300   # from v2.6.7, see below
+# maxThinPoolPercent: 90   # from v2.7.2, see below
 ```
 
 - `mode: auto`: `k4all-upgrade.timer` checks every 15 minutes, and inside the
@@ -166,8 +167,22 @@ asks for.
 to stop right before a reboot. Each pod gets its own grace period, at least
 30 seconds and at most this. The pods on the pod network stop first and the
 host-network ones after them, so the reboot waits at most twice this. On a single node the preflight warns about the
-pods that ask for more (`k4all-upgrade status`, `Warning:`). A value that is
+pods that ask for more (`k4all-upgrade status`, `Warning:`, while the hop
+runs; from v2.7.2 the commit no longer keeps this advice, #119). A value that is
 not a whole number stops every command until it is fixed.
+
+`maxThinPoolPercent` (from v2.7.2, default 90) protects a node whose
+`/sysroot` or `/var` sits on a thin LV, as on nodes installed by 1.x. `df`
+sees only the filesystem: the thin pool under it can be almost full while
+`df` shows plenty, a hop downloads an image, and a full pool takes its
+filesystems down. The preflight reads the pool's data and metadata use
+(`lvs`) and stops in HOLD when either is above this percentage. The HOLD names
+the pool and both numbers. Free space in the pool (`fstrim --all`, which
+`fstrim.timer` runs weekly from v2.7.2) or extend it (`lvextend`), then
+`k4all-upgrade clear-hold && k4all-upgrade resume`. `100` turns the check off.
+A value that is not a number above 0 and at most 100 stops every command until
+it is fixed. Hops that start from v2.7.2 run the check; the hop into v2.7.2
+runs the preflight of the release it starts from.
 
 bootc ships its own `bootc-fetch-apply-updates.timer`, which runs
 `bootc upgrade --apply`. That command would reboot a node into a new
@@ -177,7 +192,8 @@ Don't unmask it.
 ## What a hop does
 
 1. **Preflight.** The node runs the release the hop starts from, and no other
-   deployment is staged. There is enough space on `/sysroot` and `/var`.
+   deployment is staged. There is enough space on `/sysroot` and `/var`
+   and, from v2.7.2, in the thin pool under them (`maxThinPoolPercent`).
    The apiserver and all nodes are Ready. Right after a boot they may need a
    minute: on control planes the tool waits up to 5 minutes
    (`apiserverReadyTimeoutMinutes` in `/etc/k4all-upgrade.yaml`) before it
@@ -649,7 +665,8 @@ their own.
 
 On each node `k4all-upgrade-agent.timer` runs `k4all-upgrade agent` every
 minute and after boot (from v2.2.4; until an operator writes
-`upgrade-target`, it only publishes `release` and `node-type`). The agent reads the node's own Node object, with
+`upgrade-target`, it only publishes `release` and `node-type`, and from
+v2.7.2 `x86-64-level` on x86_64 nodes). The agent reads the node's own Node object, with
 `/etc/kubernetes/admin.conf` on control planes and
 `/etc/kubernetes/kubelet.conf` on workers. The Node name is the kubelet's
 (the `system:node:<name>` client certificate).
@@ -666,6 +683,7 @@ minute and after boot (from v2.2.4; until an operator writes
 | `upgrade-reason` | node | next to `HOLD`: `TargetRejected` (the target is not a legal hop) or `RollbackRebooted` (the node rolled back); absent for any other HOLD |
 | `upgrade-done` | node | the target, once its hop is committed; removed when the operator removes `upgrade-target` |
 | `upgrade-in-progress` | node | the pause gate, as before |
+| `x86-64-level` (from v2.7.2) | node | x86_64 nodes only: the CPU's x86-64 level, `v1` to `v4`: the highest one glibc's loader reports supported (`/lib64/ld-linux-x86-64.so.2 --help`), else what the flags of `/proc/cpuinfo` add up to; found once per boot (`/run/k4all/x86-64-level`). The operator picks the cephcsi build for CPUs below x86-64-v3 from it (#121). Absent on aarch64, on nodes that run an older release, and when the node cannot tell |
 
 When `upgrade-target` names a newer release, the agent runs that hop in any
 mode, outside the window, and also when it is a minor. The node is not drained
@@ -922,6 +940,17 @@ reached by rollback. The next hop's image keeps the kernel arguments.
   operator only through the ReleaseManifest sync of a k4all release, never
   because a newer operator was published.
 - `update-node.sh` still exists and now calls `k4all-upgrade`.
+- `bootc status` waits for bootc's lock, and a download holds it for
+  minutes: a hop's STAGE, or a `bootc switch` or `bootc upgrade` run by hand.
+  From v2.7.2 `k4all-upgrade` never waits on it for long:
+  - the agent, `k4all-upgrade status` and the preflight give it 30 seconds,
+    then say `bootc busy (download in progress)`. The preflight waits (not
+    yet, no HOLD) and the agent tries again at its next pass;
+  - the hop's own steps give it 300 seconds. When it does not answer in
+    PRE_REBOOT, kubeadm comes from dl.k8s.io and kubeadm pulls the
+    control-plane images;
+  - `k4all-bridge.sh` gives it 300 seconds (`K4ALL_BOOTC_STATUS_TIMEOUT`) and
+    stops without changing anything.
 - From v2.6.4 every node pins the kubelet's `--node-ip` in
   `/etc/sysconfig/kubelet` (`KUBELET_EXTRA_ARGS`), from
   `k4all-node-ip.service` at every boot. A `--node-ip` you or a restore set

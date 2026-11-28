@@ -1748,6 +1748,47 @@ def test_a_refused_uninstall_does_not_hold_the_sync(make_host, capsys):
     assert "kubevirt: uninstall refused: " + vms % "kubevirt" in capsys.readouterr().out
 
 
+def test_the_history_keeps_the_refusals_and_drops_the_advice(make_host, capsys):
+    # #119: the preflight's advice (a VM the single node's reboot cuts
+    # short) is over with the hop; what the sync could not do is not.
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    write_graph(host, STREAM_23)
+    manifest = json.loads(json.dumps(NEW_MANIFEST))
+    comps = manifest["spec"]["components"]
+    comps["kubevirt"] = {"type": "manifest", "version": "v1.10.0", "featureGate": "virt"}
+    host.write(ku.IMAGE_RELEASE_MANIFEST, yaml.safe_dump(manifest))
+    host.release_manifest = {"metadata": {"name": "k4all"}, "spec": {"components": {
+        "k4all-operator": dict(comps["k4all-operator"])}}}
+    vms = "1 VirtualMachine (default/vm1) exists: delete it or set kubevirt Unmanaged first"
+    host.refused = {"kubevirt": vms}
+    host._refresh_status()
+    owner = {"apiVersion": "kubevirt.io/v1", "kind": "VirtualMachineInstance",
+             "name": "win11", "uid": "u", "controller": True}
+    host.pods = [{"metadata": {"namespace": "vms", "name": "virt-launcher-win11-k8d2c",
+                               "ownerReferences": [owner]},
+                  "spec": {"nodeName": host.node_name(),
+                           "terminationGracePeriodSeconds": 3630},
+                  "status": {"phase": "Running"}}]
+
+    run_cli(host, "run", "--to", "v2.4.0", "--yes")
+    assert state(host)["hop"]["preflightWarning"].startswith(ku.GRACE_WARNING_PREFIX)
+    capsys.readouterr()
+    run_cli(host, "resume")
+    st = finish(host)
+
+    refused = "kubevirt: uninstall refused: " + vms
+    assert st["phase"] == "DONE"
+    assert st["history"][-1]["warning"] == refused, "only the refusal"
+    assert [m for m in host.logs if "Stop them before the hop" in m] == \
+        [m for m in host.logs if m.startswith("WARNING: " + ku.GRACE_WARNING_PREFIX)], \
+        "logged once, at the preflight"
+    capsys.readouterr()
+    assert run_cli(host, "status") == 0
+    out = capsys.readouterr().out
+    assert "Warning:   %s (hop to v2.4.0)" % refused in out
+    assert "Stop them before the hop" not in out
+
+
 # --- pure helpers -------------------------------------------------------------
 def test_operator_only_step_is_skipped_when_the_operator_does_not_change():
     cluster = {"spec": {"components": {"k4all-operator": {"version": "v0.2.0",

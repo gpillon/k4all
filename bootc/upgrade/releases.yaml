@@ -375,3 +375,21 @@ releases:
       gate (#111). k4all-upgrade status no longer calls a newer release a
       rollback after sync-manifest (#112); it shows once the node runs v2.7.1.
       Kubernetes, CRI-O, Fedora and the other components are unchanged.
+  - version: v2.7.2
+    kind: patch
+    minFrom: v2.7.0
+    # Kubernetes 1.36.6 -> 1.36.7: the first patch whose hop runs kubeadm
+    # before its reboot (#132). The component pins of the sync and their
+    # notes come with #137.
+    kubernetes: "1.36.7"
+    crio: "1.36"
+    fedora: 45
+    syncManifest: true
+    notes: >-
+      Kubernetes 1.36.7 (from 1.36.6). Every node's hop runs kubeadm before
+      its reboot: each control plane restarts its static pods once (etcd
+      3.6.8, CoreDNS v1.14.2 and the pause image do not change), and auto
+      mode runs it in the maintenance window. A node installed from an older
+      image joins with a kubelet one patch behind the apiserver, which the
+      version skew policy allows. The manifest sync applies the release
+      manifest of the image (k4all-operator v0.6.1).
