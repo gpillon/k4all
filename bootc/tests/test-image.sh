@@ -208,6 +208,21 @@ check_file_contains "/etc/systemd/system/fck8s-k8s-setup-init.service" \
 check_file_contains "/etc/systemd/system/fck8s-auto-join.service" \
     "StartLimitBurst" "auto-join has restart rate limiting"
 
+# fstrim trims every mounted filesystem (#131): Fedora's unit lists /etc/fstab
+# first, where bootc's / is read-only and TopoLVM's volumes are absent.
+FSTRIM_DROPIN=/usr/lib/systemd/system/fstrim.service.d/10-k4all.conf
+check_file_contains "$FSTRIM_DROPIN" \
+    "^ExecStart=/usr/bin/fstrim --all --verbose --quiet-unsupported\$" \
+    "the fstrim drop-in trims every mounted filesystem"
+check "systemctl cat fstrim.service shows the k4all drop-in" \
+    "systemctl cat fstrim.service | grep -qxF '# $FSTRIM_DROPIN'"
+state="$(unit_state fstrim.timer)"
+if [ "$state" = "enabled" ]; then
+    pass "fstrim.timer is enabled"
+else
+    fail "fstrim.timer is enabled (is-enabled: ${state:-unknown})"
+fi
+
 # =============================================================================
 echo ""
 info "8. CONFIGURATION FILES"
