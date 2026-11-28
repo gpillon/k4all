@@ -20,11 +20,40 @@ _k4all_release_file() {
 
 # traefik_is_active [manifest]: true when the release manifest (default: the
 # one in the image) runs Traefik as the ingress controller, as k4all does from
-# v2.4.0, unless the component is Removed.
+# v2.4.0, unless the component is Removed. It says what the release installs,
+# not what serves Ingresses now: for that, see traefik_ingress_class.
 traefik_is_active() {
     local manifest="${1:-$K4ALL_RELEASE_BASE}"
     [ -f "$manifest" ] || return 1
     [ "$(yq e '(.spec.components.traefik != null) and ((.spec.components.traefik.management // "Managed") != "Removed")' "$manifest" 2>/dev/null)" = "true" ]
+}
+
+# The controller of Traefik's IngressClass (the k4all Traefik chart creates
+# the IngressClass traefik with it).
+TRAEFIK_CONTROLLER="traefik.io/ingress-controller"
+
+# traefik_ingress_class: the IngressClass that Traefik serves, by the rule of
+# the operator's headlamp hook (k4all-operator#65): one whose spec.controller
+# is Traefik's and that is not being deleted; traefik when it is one of them,
+# else the first by name. Prints its name and returns 0; returns 1 when the
+# cluster has none, and 2 when the IngressClasses cannot be read (API down,
+# early boot), so that a caller never acts on a guess. The release manifest
+# is not enough (k4all#156): a cluster restored from 1.x lists Traefik while
+# its 1.x ingress-nginx still serves, and has no such IngressClass.
+traefik_ingress_class() {
+    local classes name
+    # kubectl's own error, if any, goes to stderr: the journal says why.
+    classes=$(kubectl --kubeconfig="$KUBECONFIG" get ingressclasses.networking.k8s.io \
+        -o json) || return 2
+    [ -n "$classes" ] || return 2
+    name=$(jq -r --arg controller "$TRAEFIK_CONTROLLER" '
+        [.items[] | select(.spec.controller == $controller
+                           and .metadata.deletionTimestamp == null)
+         | .metadata.name]
+        | if any(.[]; . == "traefik") then "traefik" else (sort | .[0] // empty) end
+        ' <<< "$classes" 2>/dev/null) || return 2
+    [ -n "$name" ] || return 1
+    printf '%s\n' "$name"
 }
 
 # --- CRI-O's example CNI networks -----------------------------------------
