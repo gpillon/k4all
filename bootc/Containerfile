@@ -145,6 +145,8 @@ COPY systemd/*.path /etc/systemd/system/
 COPY overlay/etc/systemd/system/kubelet.service.d/ /etc/systemd/system/kubelet.service.d/
 COPY overlay/usr/lib/systemd/system/ovs-delete-transient-ports.service.d/ \
      /usr/lib/systemd/system/ovs-delete-transient-ports.service.d/
+COPY overlay/usr/lib/systemd/system/fstrim.service.d/ \
+     /usr/lib/systemd/system/fstrim.service.d/
 
 # Enable services that should start at boot
 RUN systemctl enable crio.service && \
