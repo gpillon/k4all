@@ -6,7 +6,8 @@ K4ALL_TEST_YQ to its path, or put it first in PATH (GitHub's runners have it).
 
 The same scripts ship from the v2.2.4 bridge on. What they do with Traefik
 depends on the image's release manifest (Traefik from v2.4.0), so the tests
-write that manifest themselves instead of reading the repository's.
+write that manifest themselves instead of reading the repository's; for
+update-routes.sh also on the cluster's IngressClasses (k4all#156).
 """
 
 import json
@@ -270,8 +271,9 @@ def test_a_missing_ingress_section_is_the_one_of_the_image(migrate, traefik, key
 
 
 # --- update-routes.sh ----------------------------------------------------------
-# kubectl for one Ingress (headlamp/headlamp) and the redirect Middleware,
-# kept in a JSON file; JSON patches are applied like the apiserver does.
+# kubectl for one Ingress (headlamp/headlamp), the redirect Middleware and the
+# IngressClasses (None: the API cannot be reached), kept in a JSON file; JSON
+# patches are applied like the apiserver does.
 FAKE_KUBECTL = r'''#!/usr/bin/env python3
 import json, os, sys
 state_path = os.environ["FAKE_KUBE_STATE"]
@@ -291,6 +293,13 @@ def walk(doc, path):
         doc = doc[int(part)] if isinstance(doc, list) else doc[part]
     return doc, parts[-1]
 
+if args[:2] == ["get", "ingressclasses.networking.k8s.io"]:
+    if state["ingressclasses"] is None:
+        print("The connection to the server was refused", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({"apiVersion": "v1", "kind": "List",
+                      "items": state["ingressclasses"]}))
+    sys.exit(0)
 if args[:2] == ["get", "middlewares.traefik.io"]:
     sys.exit(0 if state["middleware"] else 1)
 if args[:2] == ["get", "ingress"]:
@@ -335,6 +344,23 @@ def hook_ingress(ip="192.168.6.200"):
     }
 
 
+def ingress_class(name, controller="traefik.io/ingress-controller",
+                  deleting=False):
+    meta = {"name": name}
+    if deleting:
+        meta["deletionTimestamp"] = "2026-01-01T00:00:00Z"
+    return {"apiVersion": "networking.k8s.io/v1", "kind": "IngressClass",
+            "metadata": meta, "spec": {"controller": controller}}
+
+
+# The IngressClasses of the k4all Traefik chart: its own, and nginx for the
+# ingress-nginx provider (k4all-release.yaml).
+TRAEFIK_CLASSES = [ingress_class("nginx", "k8s.io/ingress-nginx"),
+                   ingress_class("traefik")]
+# A cluster restored from 1.x: only the 1.x ingress-nginx's class.
+NGINX_ONLY = [ingress_class("nginx", "k8s.io/ingress-nginx")]
+
+
 def rule(host):
     return {"host": host, "http": {"paths": [{
         "path": "/", "pathType": "Prefix",
@@ -369,12 +395,14 @@ def routes(tmp_path):
     state_path = tmp_path / "kube.json"
     log_path = tmp_path / "kubectl.log"
 
-    def run(config, ingress, middleware=True, traefik="Managed"):
+    def run(config, ingress, middleware=True, traefik="Managed",
+            classes=TRAEFIK_CLASSES):
         (root / "etc/k4all-config.yaml").write_text(config)
         (root / "usr/local/share/k4all-release.yaml").write_text(
             _release_manifest(traefik))
         state_path.write_text(json.dumps({"ingress": ingress,
-                                          "middleware": middleware}))
+                                          "middleware": middleware,
+                                          "ingressclasses": classes}))
         return again()
 
     def again():
@@ -479,3 +507,106 @@ def test_a_missing_ingress_is_not_an_error(routes):
     assert ingress is None and patches(calls) == []
     assert "does not exist yet" in proc.stdout
     assert routes.login_data.exists()
+
+
+# --- the dashboard class follows the cluster (k4all#156) -------------------
+# The rule of the operator's headlamp hook (k4all-operator#65): Traefik's
+# class only when the cluster has an IngressClass of Traefik's controller.
+
+
+@pytest.fixture
+def traefik_class(tmp_path):
+    """traefik_ingress_class of k4all-utils with the fake kubectl."""
+    if shutil.which("jq") is None:
+        pytest.skip("needs jq (the image has it)")
+    bin_dir = _bin_dir(tmp_path)
+    _exe(bin_dir / "kubectl", FAKE_KUBECTL.replace(
+        "#!/usr/bin/env python3", "#!" + sys.executable))
+    state_path = tmp_path / "kube.json"
+    log_path = tmp_path / "kubectl.log"
+
+    def call(classes):
+        state_path.write_text(json.dumps({"ingress": None, "middleware": False,
+                                          "ingressclasses": classes}))
+        env = dict(os.environ, PATH="%s:%s" % (bin_dir, os.environ["PATH"]),
+                   FAKE_KUBE_STATE=str(state_path), FAKE_KUBE_LOG=str(log_path))
+        proc = subprocess.run(
+            ["bash", "-c", 'source "$1"; traefik_ingress_class', "bash",
+             os.path.join(BIN, "k4all-utils")],
+            env=env, capture_output=True, text=True, check=False)
+        return proc.returncode, proc.stdout.strip()
+
+    return call
+
+
+@pytest.mark.parametrize("classes, name", [
+    (TRAEFIK_CLASSES, "traefik"),
+    ([ingress_class("edge")], "edge"),
+    ([ingress_class("zeta"), ingress_class("edge")], "edge"),
+    ([ingress_class("edge"), ingress_class("traefik")], "traefik"),
+    ([ingress_class("edge", deleting=True), ingress_class("zeta")], "zeta"),
+], ids=["traefik", "another name", "first by name", "traefik first",
+        "not one being deleted"])
+def test_the_class_traefik_serves(traefik_class, classes, name):
+    assert traefik_class(classes) == (0, name)
+
+
+@pytest.mark.parametrize("classes", [
+    [], NGINX_ONLY, [ingress_class("traefik", "example.com/other")],
+    [ingress_class("traefik", deleting=True)],
+], ids=["none", "only nginx", "traefik of another controller",
+        "being deleted"])
+def test_no_class_without_traefiks_controller(traefik_class, classes):
+    assert traefik_class(classes) == (1, "")
+
+
+def test_an_unreachable_api_is_not_no_class(traefik_class):
+    assert traefik_class(None) == (2, "")
+
+
+def class_patches(calls):
+    return [op for c in patches(calls) for op in json.loads(c[c.index("-p") + 1])
+            if op["path"] == "/spec/ingressClassName"]
+
+
+def test_a_restored_1x_dashboard_keeps_nginx(routes):
+    # The release lists Traefik; the 1.x ingress-nginx still serves.
+    proc, ingress, calls = routes(traefik_config(), hook_ingress(),
+                                  classes=NGINX_ONLY)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "keeps its class" in proc.stdout
+    assert class_patches(calls) == []
+    assert ingress["spec"]["ingressClassName"] == "nginx"
+    assert ingress["metadata"]["annotations"] == {
+        "nginx.ingress.kubernetes.io/backend-protocol": "HTTP"}
+    # its routes are still added, for the controller that serves them
+    assert len(ingress["spec"]["rules"]) == 3
+    assert ["get", "middlewares.traefik.io"] not in [c[:2] for c in calls]
+
+    proc, _, calls = routes.again()
+    assert patches(calls) == [] and "up to date" in proc.stdout
+
+
+def test_the_dashboard_moves_to_traefiks_class_by_any_name(routes):
+    _, ingress, _ = routes(traefik_config(), hook_ingress(),
+                           classes=NGINX_ONLY + [ingress_class("edge")])
+    assert ingress["spec"]["ingressClassName"] == "edge"
+    assert ingress["metadata"]["annotations"] == {MIDDLEWARES: REDIRECT}
+
+
+def test_a_dashboard_on_a_missing_traefik_class_moves_to_the_one_there(routes):
+    ingress = hook_ingress()
+    ingress["spec"]["ingressClassName"] = "traefik"
+    _, ingress, _ = routes(traefik_config(), ingress,
+                           classes=[ingress_class("edge")])
+    assert ingress["spec"]["ingressClassName"] == "edge"
+
+
+def test_an_unreachable_api_patches_nothing(routes):
+    proc, ingress, calls = routes(traefik_config(), hook_ingress(), classes=None)
+
+    assert proc.returncode != 0
+    assert "not patched" in proc.stderr
+    assert patches(calls) == []
+    assert ingress == hook_ingress()

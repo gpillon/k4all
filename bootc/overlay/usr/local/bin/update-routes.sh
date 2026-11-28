@@ -8,7 +8,8 @@
 # is pinned from k4all v2.4.0) the headlamp hook writes its own
 # dashboard.<IP>.nip.io rule and leaves the others alone (older hooks rewrite
 # the Ingress; this script adds its rules back at the next run). The class
-# and the annotations change only once the image runs Traefik (v2.4.0).
+# and the annotations change only once the image runs Traefik (v2.4.0) and
+# the cluster has Traefik's IngressClass, as in the operator's hook.
 
 set -euo pipefail
 
@@ -61,19 +62,43 @@ NIP_HOST="$INGRESS_IP.nip.io"
 
 update_motd "$FQDN" "$NIP_HOST"
 
+# The Ingress moves to Traefik when the image runs Traefik and the cluster
+# has an IngressClass of Traefik's controller (traefik_ingress_class), the
+# rule of the operator's headlamp hook (k4all-operator#65). A cluster
+# restored from 1.x lists Traefik in its release while its 1.x ingress-nginx
+# still serves, with no such class: there the Ingress keeps its class, as a
+# traefik class would be served by nobody (k4all#156). When the
+# IngressClasses cannot be read (API down, early boot), nothing is patched on
+# a guess: the next run of the timer tries again.
 TRAEFIK=false
+TRAEFIK_CLASS=""
 MIDDLEWARE=false
 if traefik_is_active "$RELEASE_MANIFEST"; then
-    TRAEFIK=true
-    # A route that names a missing Middleware is not served at all.
-    if kubectl --kubeconfig="$KUBECONFIG" get middlewares.traefik.io \
-            "$REDIRECT_NAME" -n "$REDIRECT_NAMESPACE" -o name >/dev/null 2>&1; then
-        MIDDLEWARE=true
-    fi
+    class_rc=0
+    TRAEFIK_CLASS=$(traefik_ingress_class) || class_rc=$?
+    case $class_rc in
+        0)
+            TRAEFIK=true
+            # A route that names a missing Middleware is not served at all.
+            if kubectl --kubeconfig="$KUBECONFIG" get middlewares.traefik.io \
+                    "$REDIRECT_NAME" -n "$REDIRECT_NAMESPACE" -o name >/dev/null 2>&1; then
+                MIDDLEWARE=true
+            fi
+            ;;
+        1)
+            echo "No IngressClass of $TRAEFIK_CONTROLLER: Ingress" \
+                 "$INGRESS_NAMESPACE/$INGRESS_NAME keeps its class"
+            ;;
+        *)
+            echo "Cannot list the IngressClasses: Ingress $INGRESS_NAMESPACE/$INGRESS_NAME" \
+                 "not patched, the next run tries again" >&2
+            exit 1
+            ;;
+    esac
 fi
 
 # JSON patch for the Ingress on stdin: the missing rules, and with Traefik
-# the traefik class and the redirect Middleware instead of the
+# its IngressClass ($class) and the redirect Middleware instead of the
 # nginx.ingress.kubernetes.io annotations. [] when nothing changes. The test
 # of resourceVersion makes a concurrent write (the operator's hook) fail the
 # patch instead of being overwritten.
@@ -92,8 +117,8 @@ read -r -d '' ROUTES_PATCH <<'JQ' || true
      else empty end),
     ($wanted[] | select(. as $h | $hosts | any(.[]; . == $h) | not)
      | {op: "add", path: "/spec/rules/-", value: {host: ., http: $http}}),
-    (if $traefik and .spec.ingressClassName != "traefik"
-     then {op: "add", path: "/spec/ingressClassName", value: "traefik"}
+    (if $traefik and .spec.ingressClassName != $class
+     then {op: "add", path: "/spec/ingressClassName", value: $class}
      else empty end),
     (if $want != $have
      then {op: "add", path: "/metadata/annotations", value: $want}
@@ -110,8 +135,8 @@ if [ -z "$ingress" ]; then
     exit 0
 fi
 
-ops=$(jq -c --argjson traefik "$TRAEFIK" --argjson middleware "$MIDDLEWARE" \
-    --arg ref "$REDIRECT_REF" \
+ops=$(jq -c --argjson traefik "$TRAEFIK" --arg class "$TRAEFIK_CLASS" \
+    --argjson middleware "$MIDDLEWARE" --arg ref "$REDIRECT_REF" \
     --argjson wanted "$(jq -cn --arg a "dashboard.$FQDN" --arg b "dashboard.$NIP_HOST" '[$a, $b]')" \
     "$ROUTES_PATCH" <<< "$ingress")
 
