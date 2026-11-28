@@ -574,6 +574,24 @@ def test_another_staged_deployment_blocks_kernel_argument_changes(host):
     assert not karg_edits(host) and host.reboots == 0
 
 
+def test_a_busy_bootc_makes_the_agent_wait_instead_of_blocking(host):
+    # #131 (#49 item 5): `bootc status` waits for bootc's lock while a
+    # download holds it, for minutes
+    host.unschedulable = True
+    host.bootc_busy = True
+    host.operator_sets("h1", hugepages={"1Gi": 4})
+    assert agent(host) == 0
+    assert host.annotations[MESSAGE] == (
+        "waiting: bootc busy (download in progress): `bootc status` did not "
+        "answer within %d s" % ku.BOOTC_STATUS_QUICK)
+    assert host.bootc_status_timeouts == [ku.BOOTC_STATUS_QUICK]
+    assert not karg_edits(host) and host.reboots == 0
+
+    host.bootc_busy = False             # the download is over
+    agent(host)
+    assert karg_edits(host) and host.reboots == 1
+
+
 # --- the hop's reboot ------------------------------------------------------
 def hop_reboot(host):
     upgrader = ku.Upgrader(host, ku.load_config(host))

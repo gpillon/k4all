@@ -877,8 +877,34 @@ def load_yaml_file(host, path):
 # =========================================================================
 # Facts about the node
 # =========================================================================
-def bootc_status(host):
-    return json.loads(host.run(["bootc", "status", "--json"]).stdout)
+# `bootc status` waits for bootc's lock, and a download holds it for
+# minutes (`bootc switch --download-only` of a hop, a `bootc upgrade` by
+# hand): every call has a timeout (#131, #49 item 5). The hop's own calls
+# wait BOOTC_STATUS_TIMEOUT; the agent's, `status` and the preflight's wait
+# BOOTC_STATUS_QUICK, then say bootc is busy and try again later.
+BOOTC_STATUS_TIMEOUT = 300
+BOOTC_STATUS_QUICK = 30
+BOOTC_BUSY = "bootc busy (download in progress)"
+
+
+class BootcBusy(UpgradeError):
+    """`bootc status` did not answer in time: another bootc command holds
+    its lock. Nothing changed; the caller falls back or tries later."""
+
+
+def bootc_status(host, timeout=BOOTC_STATUS_TIMEOUT):
+    got = host.run(["bootc", "status", "--json"], check=False, timeout=timeout)
+    if got.returncode == 124:
+        raise BootcBusy("%s: `bootc status` did not answer within %d s"
+                        % (BOOTC_BUSY, timeout))
+    if got.returncode != 0:
+        raise UpgradeError("bootc status --json failed (rc=%d): %s"
+                           % (got.returncode,
+                              (got.stderr or got.stdout or "").strip()[-800:]))
+    try:
+        return json.loads(got.stdout)
+    except ValueError as exc:
+        raise UpgradeError("bootc status --json printed no JSON: %s" % exc)
 
 
 def _deployment(status, which):
@@ -900,8 +926,9 @@ def version_from_ref(ref):
     return normalize_version(tag) if is_version(tag) else None
 
 
-def current_version(host, status=None):
-    """The k4all release the node is booted into."""
+def current_version(host, status=None, timeout=BOOTC_STATUS_TIMEOUT):
+    """The k4all release the node is booted into. bootc is asked only when
+    the image has neither file (``timeout``: for `bootc status`)."""
     if host.exists(VERSION_FILE):
         text = host.read(VERSION_FILE).strip()
         if is_version(text):
@@ -916,7 +943,7 @@ def current_version(host, status=None):
                 return normalize_version(tag)
         except (UpgradeError, ValueError, OSError):
             pass
-    status = status if status is not None else bootc_status(host)
+    status = status if status is not None else bootc_status(host, timeout)
     ref, _ = deployment_image(_deployment(status, "booted"))
     version = version_from_ref(ref)
     if version:
@@ -2210,8 +2237,9 @@ def _read_kubelet_configmap(host, kc):
 def _other_staged(host):
     """The image of a staged deployment that is not the booted image (a hop's,
     or one staged by hand), None when there is none: the reboot for kernel
-    arguments would boot it."""
-    status = bootc_status(host)
+    arguments would boot it. BootcBusy when bootc does not answer soon: the
+    agent says so and tries at its next pass."""
+    status = bootc_status(host, BOOTC_STATUS_QUICK)
     staged = _deployment(status, "staged")
     if not staged:
         return None
@@ -2371,7 +2399,10 @@ def _apply_node_settings(host, upgrader, node, state, target):
                 "cordoned: the k4all-operator drains it first"
                 % (what, upgrader._node_name()))
     if karg_change or not booted:
-        staged = _other_staged(host)
+        try:
+            staged = _other_staged(host)
+        except BootcBusy as exc:
+            return WAITING + str(exc)
         if staged:
             return ("another deployment is staged (%s): the reboot for the kernel "
                     "arguments would boot it; finish or remove it first" % staged)
@@ -2691,7 +2722,12 @@ class Upgrader:
     # --- PREFLIGHT -------------------------------------------------------
     def preflight(self, state):
         host, hop = self.host, state["hop"]
-        status = bootc_status(host)
+        try:
+            status = bootc_status(host, BOOTC_STATUS_QUICK)
+        except BootcBusy as exc:
+            # another bootc command runs (a download by hand): nothing of
+            # the hop has started, so wait for it
+            raise NotYet(str(exc))
         staged = _deployment(status, "staged")
         if staged and not _same_image(staged, hop["image"]):
             ref, _ = deployment_image(staged)
@@ -3824,7 +3860,11 @@ class Upgrader:
         dest = "%s/bin/kubeadm-%s" % (STATE_DIR, version)
         if host.exists(dest) and self._kubeadm_is(dest, version):
             return host.path(dest)
-        staged = _deployment(bootc_status(host), "staged") or {}
+        try:
+            staged = _deployment(bootc_status(host), "staged") or {}
+        except BootcBusy as exc:
+            host.log("%s; kubeadm comes from dl.k8s.io" % exc)
+            staged = {}
         checksum = (staged.get("ostree") or {}).get("checksum")
         if checksum:
             data = host.run_bytes(["ostree", "--repo=" + host.path(OSTREE_REPO),
@@ -3872,7 +3912,11 @@ class Upgrader:
         """Load the control-plane images shipped in the staged image, or pull
         them, so `kubeadm upgrade` does not wait on the network."""
         host = self.host
-        staged = _deployment(bootc_status(host), "staged") or {}
+        try:
+            staged = _deployment(bootc_status(host), "staged") or {}
+        except BootcBusy as exc:
+            host.log("%s; kubeadm pulls the control-plane images" % exc)
+            staged = {}
         ostree = staged.get("ostree") or {}
         cache = "/sysroot/ostree/deploy/%s/deploy/%s.%s%s" % (
             ostree.get("stateroot", "default"), ostree.get("checksum", ""),
@@ -4535,7 +4579,7 @@ def uncommitted_release_line(state, booted):
 def cmd_status(host, cfg, args):
     state = load_state(host)
     try:
-        version = current_version(host)
+        version = current_version(host, timeout=BOOTC_STATUS_QUICK)
     except UpgradeError as exc:
         version = "unknown (%s)" % exc
     info = {"version": version, "mode": cfg["mode"], "autoAllow": cfg["autoAllow"],
@@ -4808,7 +4852,7 @@ def _release_now(host, state):
     if _active(state):
         return state.get("current")
     try:
-        return current_version(host)
+        return current_version(host, timeout=BOOTC_STATUS_QUICK)
     except UpgradeError:
         return (state or {}).get("current")
 
@@ -4898,7 +4942,7 @@ def cmd_agent(host, cfg, args, upgrader):
             # Not even upgrade-done for the release the node boots: the
             # operator would take its hop as finished.
             refuse_while_sync_pending(state)
-            current = current_version(host)
+            current = current_version(host, timeout=BOOTC_STATUS_QUICK)
             if parse_version(target) == parse_version(current):
                 done = target
             else:

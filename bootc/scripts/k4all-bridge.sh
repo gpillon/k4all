@@ -32,6 +32,8 @@ ROOT="${K4ALL_ROOT:-}"
 MIN_FREE_GIB=3
 POD_STOP_SECONDS=30
 POD_STOP_MAX_SECONDS="${K4ALL_POD_STOP_MAX_SECONDS:-300}"
+# `bootc status` waits for bootc's lock, which a download holds for minutes.
+BOOTC_STATUS_TIMEOUT="${K4ALL_BOOTC_STATUS_TIMEOUT:-300}"
 
 NOW=false
 DRY_RUN=false
@@ -77,6 +79,8 @@ BRIDGE_IMAGE="${K4ALL_BRIDGE_IMAGE:-$BRIDGE_IMAGE}"
 [ "$(id -u)" -eq 0 ] || [ -n "$ROOT" ] || die "run as root (sudo)"
 [[ "$POD_STOP_MAX_SECONDS" =~ ^[0-9]+$ ]] \
     || die "K4ALL_POD_STOP_MAX_SECONDS must be a number of seconds, got '$POD_STOP_MAX_SECONDS'"
+[[ "$BOOTC_STATUS_TIMEOUT" =~ ^[1-9][0-9]*$ ]] \
+    || die "K4ALL_BOOTC_STATUS_TIMEOUT must be a number of seconds, got '$BOOTC_STATUS_TIMEOUT'"
 [ "$POD_STOP_MAX_SECONDS" -ge "$POD_STOP_SECONDS" ] || POD_STOP_MAX_SECONDS=$POD_STOP_SECONDS
 if [ "$DRY_RUN" = true ]; then
     if [ "$NOW" = true ]; then
@@ -90,7 +94,12 @@ fi
 command -v bootc >/dev/null || die "bootc not found: this is not a k4all 2.x node"
 
 # --- 1. which release is this? -------------------------------------------
-STATUS=$(bootc status --json)
+rc=0
+STATUS=$(timeout "$BOOTC_STATUS_TIMEOUT" bootc status --json) || rc=$?
+[ "$rc" -ne 124 ] || die "bootc busy (download in progress): 'bootc status' did not" \
+    "answer within ${BOOTC_STATUS_TIMEOUT} s; wait until the other bootc command" \
+    "is done, then run this script again"
+[ "$rc" -eq 0 ] || die "bootc status --json failed (rc $rc)"
 BOOTED_REF=$(echo "$STATUS" | jq -r '.status.booted.image.image.image // ""')
 STAGED_REF=$(echo "$STATUS" | jq -r '.status.staged.image.image.image // ""')
 
