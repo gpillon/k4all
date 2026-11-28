@@ -374,14 +374,33 @@ def validate_graph(releases):
     return errors
 
 
+_FULL_VERSION_RE = re.compile(r"^v?\d+\.\d+\.\d+$")
+
+
+def _goes_backwards(prev, rel):
+    """Whether version ``rel`` is older than ``prev``: by the full version
+    when both have a patch (1.36.7 -> 1.36.6), else by the minor (a CRI-O
+    line such as "1.36", Fedora's cri-o1.36 package)."""
+    if _FULL_VERSION_RE.match(str(prev).strip()) \
+            and _FULL_VERSION_RE.match(str(rel).strip()):
+        return k8s_key(rel) < k8s_key(prev)
+    return k8s_minor(rel) < k8s_minor(prev)
+
+
 def _validate_step(prev, rel):
     errors = []
     prev_k8s, rel_k8s = k8s_minor(prev.kubernetes), k8s_minor(rel.kubernetes)
     if rel_k8s[1] - prev_k8s[1] > 1 or rel_k8s[0] != prev_k8s[0]:
         errors.append("%s: Kubernetes jumps from %s to %s"
                       % (rel.version, prev.kubernetes, rel.kubernetes))
-    if rel_k8s < prev_k8s:
-        errors.append("%s: Kubernetes goes backwards" % rel.version)
+    # The full version: kubeadm does not downgrade, and a kubelet older than
+    # the control plane it joins is outside the skew policy (#151).
+    if _goes_backwards(prev.kubernetes, rel.kubernetes):
+        errors.append("%s: Kubernetes goes backwards (%s -> %s)"
+                      % (rel.version, prev.kubernetes, rel.kubernetes))
+    if _goes_backwards(prev.crio, rel.crio):
+        errors.append("%s: CRI-O goes backwards (%s -> %s)"
+                      % (rel.version, prev.crio, rel.crio))
     k8s_changed = rel_k8s != prev_k8s
     fedora_changed = rel.fedora != prev.fedora
     crio_changed = k8s_minor(rel.crio) != k8s_minor(prev.crio)
