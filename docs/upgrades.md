@@ -132,6 +132,7 @@ window:
   start: "02:30"    # node local time
   durationMinutes: 120
 # podStopMaxSeconds: 300   # from v2.6.7, see below
+# maxThinPoolPercent: 90   # from v2.7.2, see below
 ```
 
 - `mode: auto`: `k4all-upgrade.timer` checks every 15 minutes, and inside the
@@ -170,6 +171,19 @@ pods that ask for more (`k4all-upgrade status`, `Warning:`, while the hop
 runs; from v2.7.2 the commit no longer keeps this advice, #119). A value that is
 not a whole number stops every command until it is fixed.
 
+`maxThinPoolPercent` (from v2.7.2, default 90) protects a node whose
+`/sysroot` or `/var` sits on a thin LV, as on nodes installed by 1.x. `df`
+sees only the filesystem: the thin pool under it can be almost full while
+`df` shows plenty, a hop downloads an image, and a full pool takes its
+filesystems down. The preflight reads the pool's data and metadata use
+(`lvs`) and stops in HOLD when either is above this percentage. The HOLD names
+the pool and both numbers. Free space in the pool (`fstrim --all`, which
+`fstrim.timer` runs weekly from v2.7.2) or extend it (`lvextend`), then
+`k4all-upgrade clear-hold && k4all-upgrade resume`. `100` turns the check off.
+A value that is not a number above 0 and at most 100 stops every command until
+it is fixed. Hops that start from v2.7.2 run the check; the hop into v2.7.2
+runs the preflight of the release it starts from.
+
 bootc ships its own `bootc-fetch-apply-updates.timer`, which runs
 `bootc upgrade --apply`. That command would reboot a node into a new
 Kubernetes minor without running kubeadm first, so k4all masks the timer.
@@ -178,7 +192,8 @@ Don't unmask it.
 ## What a hop does
 
 1. **Preflight.** The node runs the release the hop starts from, and no other
-   deployment is staged. There is enough space on `/sysroot` and `/var`.
+   deployment is staged. There is enough space on `/sysroot` and `/var`
+   and, from v2.7.2, in the thin pool under them (`maxThinPoolPercent`).
    The apiserver and all nodes are Ready. Right after a boot they may need a
    minute: on control planes the tool waits up to 5 minutes
    (`apiserverReadyTimeoutMinutes` in `/etc/k4all-upgrade.yaml`) before it

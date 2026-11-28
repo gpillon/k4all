@@ -182,6 +182,9 @@ DEFAULT_CONFIG = {
     "podStopMaxSeconds": 300,
     "minFreeSysrootGiB": 3,
     "minFreeVarGiB": 2,
+    # Preflight, when /sysroot or /var sits on a thin LV: the most its pool
+    # may be full, data or metadata, in percent (#131).
+    "maxThinPoolPercent": 90,
 }
 
 PHASES = ["PREFLIGHT", "BACKUP", "STAGE", "PRE_REBOOT", "DRAIN", "REBOOT",
@@ -493,7 +496,52 @@ def merge_config(user):
         raise UpgradeError("podStopMaxSeconds must be a whole number of "
                            "seconds, got %r" % (most,))
     cfg["podStopMaxSeconds"] = int(most)
+    pool = cfg["maxThinPoolPercent"]
+    if isinstance(pool, bool) or not isinstance(pool, (int, float)) \
+            or not 0 < pool <= 100:
+        raise UpgradeError("maxThinPoolPercent must be a percentage above 0 "
+                           "and at most 100, got %r" % (pool,))
     return cfg
+
+
+# The LVs lvs reports for the thin pool check (Upgrader._check_thin_pools).
+LVS_FIELDS = ("vg_name,lv_name,lv_attr,pool_lv,data_percent,metadata_percent,"
+              "lv_kernel_major,lv_kernel_minor")
+
+
+def _lvs_percent(value):
+    try:
+        return float(str(value).strip())
+    except ValueError:
+        return None
+
+
+def _pct(value):
+    return "unknown" if value is None else "%.1f%%" % value
+
+
+def thin_pool_of(lvs_report, majmin):
+    """(pool "vg/name", data %, metadata %) of the thin pool under the LV
+    whose kernel device is ``majmin`` ("253:3"), from `lvs --reportformat
+    json`; None when that device is no thin LV (a linear LV, a partition,
+    a device lvs does not list). A percent lvs leaves empty is None."""
+    lvs = []
+    for report in (lvs_report or {}).get("report") or []:
+        lvs.extend(report.get("lv") or [])
+    lv = next((lv for lv in lvs if "%s:%s" % (
+        str(lv.get("lv_kernel_major", "")).strip(),
+        str(lv.get("lv_kernel_minor", "")).strip()) == majmin), None)
+    # lv_attr: "V" is a thin volume, "t" its pool
+    if lv is None or not str(lv.get("lv_attr") or "").startswith("V") \
+            or not lv.get("pool_lv"):
+        return None
+    pool = next((p for p in lvs if p.get("vg_name") == lv.get("vg_name")
+                 and p.get("lv_name") == lv["pool_lv"]), None)
+    if pool is None:
+        return None
+    return ("%s/%s" % (pool["vg_name"], pool["lv_name"]),
+            _lvs_percent(pool.get("data_percent")),
+            _lvs_percent(pool.get("metadata_percent")))
 
 
 def pod_stop_max_seconds(cfg):
@@ -2659,6 +2707,7 @@ class Upgrader:
         if host.free_gib("/var") < float(self.cfg["minFreeVarGiB"]):
             raise UpgradeError("less than %s GiB free on /var"
                                % self.cfg["minFreeVarGiB"])
+        self._check_thin_pools()
         role = self._role()
         kc = self._kubeconfig()
         if not kc:
@@ -2726,6 +2775,51 @@ class Upgrader:
         # more, a VM above all, before anything changes.
         if kc == ADMIN_KUBECONFIG and self._single_node():
             self._warn_long_grace(kc, hop)
+
+    def _check_thin_pools(self):
+        """df sees the filesystem only. On a thin LV its pool can be almost
+        full while df shows room, the hop downloads an image, and a full
+        pool takes its filesystems down: HOLD when the pool under /sysroot
+        or /var is fuller than maxThinPoolPercent, data or metadata (#131).
+        A node without thin LVs, or whose LVs cannot be read, keeps df's
+        check alone."""
+        host = self.host
+        mounts = collections.OrderedDict()
+        for mount in ("/sysroot", "/var"):
+            got = host.run(["findmnt", "-n", "-o", "MAJ:MIN", "--target", mount],
+                           check=False, timeout=30)
+            lines = (got.stdout or "").split()
+            if got.returncode == 0 and lines:
+                mounts.setdefault(lines[0], []).append(mount)
+        if not mounts:
+            return
+        got = host.run(["lvs", "--reportformat", "json", "-o", LVS_FIELDS],
+                       check=False, timeout=60)
+        try:
+            if got.returncode != 0:
+                raise ValueError((got.stderr or got.stdout or "").strip()[-300:]
+                                 or "rc %d" % got.returncode)
+            report = json.loads(got.stdout)
+        except ValueError as exc:
+            host.log("cannot check the thin pools under %s (%s)"
+                     % (" and ".join(m for ms in mounts.values() for m in ms),
+                        exc))
+            return
+        pools = collections.OrderedDict()
+        for majmin, under in mounts.items():
+            found = thin_pool_of(report, majmin)
+            if found:
+                pools.setdefault(found, []).extend(under)
+        most = self.cfg["maxThinPoolPercent"]
+        for (name, data, meta), under in pools.items():
+            if any(p is not None and p > most for p in (data, meta)):
+                raise UpgradeError(
+                    "the thin pool %s under %s is too full for the hop: data "
+                    "%s, metadata %s, above maxThinPoolPercent %g (%s). A full "
+                    "pool takes its filesystems down: free space in it "
+                    "(`fstrim --all`) or extend it (`lvextend`), then resume"
+                    % (name, " and ".join(under), _pct(data), _pct(meta), most,
+                       CONFIG_FILE))
 
     def _node_pods(self, kc, what):
         """The pods on this node, or None when they cannot be read (logged:

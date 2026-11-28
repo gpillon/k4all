@@ -152,6 +152,10 @@ class FakeHost(ku.Host):
         self.pod_stop_rc = {}       # pod id -> rc of its stop (default 0)
         self.pod_stop_tries = {}    # pod id -> crictl stopp tries (default 1)
         self.sleeps = []            # seconds of every Host.sleep, in order
+        # `findmnt -n -o MAJ:MIN --target <mount>`: mount -> "253:3"; a
+        # mount not in it fails, as with no findmnt
+        self.mounts = {}
+        self.lvs = None             # what `lvs --reportformat json` prints; None: it fails
         # what `ld-linux-x86-64.so.2 --help` prints; None: it cannot run
         self.ld_so_help = None
         self.cluster_config = {
@@ -300,6 +304,14 @@ class FakeHost(ku.Host):
             return self._kubeadm(cmd, argv[1:])
         if cmd == "podman":
             return Proc()
+        if cmd == "findmnt":
+            if argv[-1] not in self.mounts:
+                return Proc(returncode=1)
+            return Proc(" %s\n" % self.mounts[argv[-1]])
+        if cmd == "lvs":
+            if self.lvs is None:
+                return Proc(returncode=5, stderr="  Volume group not found")
+            return Proc(self.lvs)
         if cmd == ku.LD_SO_X86_64 and argv[1:] == ["--help"]:
             if self.ld_so_help is None:
                 return Proc(returncode=127, stderr="No such file or directory")
