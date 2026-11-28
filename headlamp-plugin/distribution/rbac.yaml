@@ -9,7 +9,8 @@
 #                 for backend-protocol HTTPS).
 # k4all-upgrader: also starts, pauses, resumes, stops and retries cluster
 #                 upgrades (ClusterUpgrade, k4all v2.4.0+). An upgrade reboots
-#                 every node, so it is a role of its own.
+#                 every node, so it is a role of its own. It reads the
+#                 ClusterConfig, which the Upgrades page needs (k4all v2.7.2).
 # Bind them with a ClusterRoleBinding: the k4all resources are cluster-scoped.
 #
 # The k4all v2.7.0 settings pages also read, where present: the KubeVirt CR
@@ -29,6 +30,12 @@
 # no new rule: Check again, pre-approve, Apply fix, Accept and Put back now
 # patch the ClusterUpgrade k4all (k4all-upgrader); the remediation modes and
 # the node-settings rollout's answers patch the ClusterConfig (k4all-editor).
+#
+# The Storage page of k4all v2.7.2 reads the Prometheus Operator's API group
+# (discovery, open to every user) and the StorageClasses. Its crash collector
+# on/off patches the CephCluster itself, a day-2 edit of Ceph that none of
+# these roles grants: it needs patch on cephclusters.ceph.rook.io (Cairn's
+# cairn-editor, or cluster-admin); without it the page shows the value only.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -132,8 +139,10 @@ metadata:
   labels:
     app.kubernetes.io/part-of: k4all
 rules:
+  # The Upgrades page needs the ClusterConfig too: without read on it, every
+  # k4all page says "No ClusterConfig".
   - apiGroups: [k4all.magesgate.com]
-    resources: [clusterupgrades, releasemanifests, nodeconfigs]
+    resources: [clusterupgrades, releasemanifests, nodeconfigs, clusterconfigs]
     verbs: [get, list, watch]
   # targetRelease, paused, drain, graphUrl (JSON Patch on spec) and the
   # retry annotation (merge patch), on the one ClusterUpgrade.
