@@ -200,7 +200,8 @@ Don't unmask it.
    stops in HOLD with the failed `/readyz` checks. On multi-node clusters, the
    order is respected (see below). From v2.6.6, a node that drains itself
    stops in HOLD when a PodDisruptionBudget would keep its drain from ever
-   ending (see [Drains that never end](#drains-that-never-end)).
+   ending, and from v2.7.2 on the k4all-operator's verdict too (see
+   [Drains that never end](#drains-that-never-end)).
 2. **Backup.** The tool runs `k4all-backup.sh` (etcd snapshot, PKI, configs)
    and copies the kubelet config to
    `/var/lib/k4all/upgrade/backup/<from>-<to>/`.
@@ -401,12 +402,79 @@ primary with a ready replica on another node.
 - A [ClusterUpgrade](#operator-driven-upgrades-from-v240) does not cordon
   the node, and its status message names the budget until it allows a
   disruption.
-- A worker's `k4all-upgrade` cannot read the budgets; look for them before
-  its drain:
+- A worker's `k4all-upgrade` cannot read the budgets (from v2.7.2 it shows
+  the k4all-operator's verdict, below); look for them before its drain:
   `kubectl get pdb -A` (a `0` under ALLOWED DISRUPTIONS) and
   `kubectl get pods -A -o wide --field-selector spec.nodeName=<node>`.
 
 A single-node cluster is not drained, and is not checked.
+
+**The k4all-operator's verdict (from v2.7.2).** From k4all-operator v0.7.0
+the operator checks each node for more than budgets: VMs that cannot move,
+Ceph not healthy (which holds every node), budgets with too little room for
+the node's pods. It writes its verdict on each Node, in the annotation
+`k4all.magesgate.com/drain-readiness`, at each of its checks: at most 30
+minutes apart while a release is available or an upgrade runs. From v2.7.2
+`k4all-upgrade` reads it for a hop it drives itself on a cluster of more
+than one node. It runs no rules of its own, so its built-in check above
+stays, as the fallback.
+
+The tool uses the verdict when it is fresh: at most 35 minutes old (the
+operator's 30, plus 5 for that period and for clock skew), and for the hop's
+release or a later release of the plan. Otherwise the built-in check
+decides alone:
+
+- stale (older, or for another release): the log says
+  `the k4all-operator's readiness check of <node> is from <at> (for
+  <release>): too old, using the built-in check`, or `for another release
+  than this plan's`;
+- missing (an operator older than v0.7.0, or none): as in v2.7.1;
+- unreadable (not JSON, a format version other than 1, a field of the wrong
+  type): a WARNING in the log quotes its first 200 characters.
+
+What a fresh verdict changes:
+
+- On a node that drains itself, findings that block stop the hop in HOLD in
+  the preflight, before anything is downloaded:
+  `the k4all-operator holds the drain of <node>: 1 thing stops it (checked
+  <at>, for <release>): <finding>. Nothing was changed. Approve a fix in the
+  k4all addon (Upgrades) and run the upgrade as a ClusterUpgrade, or fix it
+  by hand ...`. With none, the built-in check runs too: it is live and
+  cheap.
+- A worker that waits for its drain says the verdict first in `Waiting:`:
+  `Node <node>: the k4all-operator found 1 thing that stops its drain
+  (checked <at>): <finding>. Fix it (the k4all addon, Upgrades), then drain
+  this node from a control plane.`
+- A hop of a ClusterUpgrade does not read it: the operator checked before
+  its cordon. A single node is not drained and never holds.
+
+A verdict is as old as the operator's last check. After a fix by hand, ask
+for a new check before `clear-hold` and `resume`, or the old verdict holds
+the hop again until the next one:
+
+```bash
+kubectl annotate clusterupgrade k4all k4all.magesgate.com/check-readiness=now
+```
+
+`k4all-upgrade status` and `k4all-upgrade plan` (after the hops) show the
+verdict on a node with a kubeconfig. On a single node it says what stops at
+the reboot:
+
+```text
+Readiness: 1 blocks, 12 disrupts (k4all-operator, checked 2026-11-24T01:12:25Z, for v2.8.0)
+           CNPGSingleInstance db/app-pg: single-instance CloudNativePG primary app-pg-1: PDB app-pg-primary allows no disruption
+```
+
+Up to 3 findings follow, the ones that block first. A stale verdict has
+`(stale)` after its time. Without one the line is `Readiness: not reported
+by the k4all-operator`; an unreadable one is `Readiness: unreadable
+annotation`, with why. `status --json` has it under `readiness`: the
+verdict's fields and `state` (`fresh`, `stale`, `missing`, `malformed`, or
+`unknown` when the Node cannot be read). What runs before a reboot is the
+tool of the release the node leaves
+([ADR-0004](adr/0004-one-upgrade-tool-in-every-release.md)): hops that start
+from v2.7.2 read the verdict, and the hop into v2.7.2 runs the built-in
+check of v2.7.1.
 
 k4all does not change a database's safety settings: whether it may be down
 while its node reboots is your call. For a single-instance CloudNativePG
@@ -683,6 +751,7 @@ v2.7.2 `x86-64-level` on x86_64 nodes). The agent reads the node's own Node obje
 | `upgrade-reason` | node | next to `HOLD`: `TargetRejected` (the target is not a legal hop) or `RollbackRebooted` (the node rolled back); absent for any other HOLD |
 | `upgrade-done` | node | the target, once its hop is committed; removed when the operator removes `upgrade-target` |
 | `upgrade-in-progress` | node | the pause gate, as before |
+| `drain-readiness` (from v2.7.2) | operator | the operator's readiness verdict for this node (JSON: counts and the first findings), at each of its checks; `k4all-upgrade` reads it (see [Drains that never end](#drains-that-never-end)) |
 | `x86-64-level` (from v2.7.2) | node | x86_64 nodes only: the CPU's x86-64 level, `v1` to `v4`: the highest one glibc's loader reports supported (`/lib64/ld-linux-x86-64.so.2 --help`), else what the flags of `/proc/cpuinfo` add up to; found once per boot (`/run/k4all/x86-64-level`). The operator picks the cephcsi build for CPUs below x86-64-v3 from it (#121). Absent on aarch64, on nodes that run an older release, and when the node cannot tell |
 
 When `upgrade-target` names a newer release, the agent runs that hop in any

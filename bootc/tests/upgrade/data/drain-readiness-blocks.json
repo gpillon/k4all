@@ -1,0 +1,1 @@
+{"v":1,"at":"2026-11-24T01:12:25Z","release":"v2.8.0","blocks":1,"disrupts":12,"first":["CNPGSingleInstance db/app-pg: single-instance CloudNativePG primary app-pg-1: PDB app-pg-primary allows no disruption"]}
