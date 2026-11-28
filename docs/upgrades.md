@@ -167,7 +167,8 @@ asks for.
 to stop right before a reboot. Each pod gets its own grace period, at least
 30 seconds and at most this. The pods on the pod network stop first and the
 host-network ones after them, so the reboot waits at most twice this. On a single node the preflight warns about the
-pods that ask for more (`k4all-upgrade status`, `Warning:`). A value that is
+pods that ask for more (`k4all-upgrade status`, `Warning:`, while the hop
+runs; from v2.7.2 the commit no longer keeps this advice, #119). A value that is
 not a whole number stops every command until it is fixed.
 
 `maxThinPoolPercent` (from v2.7.2, default 90) protects a node whose
@@ -664,7 +665,8 @@ their own.
 
 On each node `k4all-upgrade-agent.timer` runs `k4all-upgrade agent` every
 minute and after boot (from v2.2.4; until an operator writes
-`upgrade-target`, it only publishes `release` and `node-type`). The agent reads the node's own Node object, with
+`upgrade-target`, it only publishes `release` and `node-type`, and from
+v2.7.2 `x86-64-level` on x86_64 nodes). The agent reads the node's own Node object, with
 `/etc/kubernetes/admin.conf` on control planes and
 `/etc/kubernetes/kubelet.conf` on workers. The Node name is the kubelet's
 (the `system:node:<name>` client certificate).
@@ -681,6 +683,7 @@ minute and after boot (from v2.2.4; until an operator writes
 | `upgrade-reason` | node | next to `HOLD`: `TargetRejected` (the target is not a legal hop) or `RollbackRebooted` (the node rolled back); absent for any other HOLD |
 | `upgrade-done` | node | the target, once its hop is committed; removed when the operator removes `upgrade-target` |
 | `upgrade-in-progress` | node | the pause gate, as before |
+| `x86-64-level` (from v2.7.2) | node | x86_64 nodes only: the CPU's x86-64 level, `v1` to `v4`: the highest one glibc's loader reports supported (`/lib64/ld-linux-x86-64.so.2 --help`), else what the flags of `/proc/cpuinfo` add up to; found once per boot (`/run/k4all/x86-64-level`). The operator picks the cephcsi build for CPUs below x86-64-v3 from it (#121). Absent on aarch64, on nodes that run an older release, and when the node cannot tell |
 
 When `upgrade-target` names a newer release, the agent runs that hop in any
 mode, outside the window, and also when it is a minor. The node is not drained

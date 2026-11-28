@@ -67,6 +67,10 @@ ANNOTATION_PHASE = "k4all.magesgate.com/upgrade-phase"
 ANNOTATION_MESSAGE = "k4all.magesgate.com/upgrade-message"
 ANNOTATION_REASON = "k4all.magesgate.com/upgrade-reason"
 ANNOTATION_DONE = "k4all.magesgate.com/upgrade-done"
+# The CPU's x86-64 level (v1 … v4), written by the agent on x86_64 nodes
+# only, from v2.7.2: k4all-operator v0.7.0 picks the cephcsi build for CPUs
+# below x86-64-v3 from it (#121).
+ANNOTATION_X86_64_LEVEL = "k4all.magesgate.com/x86-64-level"
 # On a Node from its cordon to its uncordon, by whoever drains it (this tool,
 # the k4all-operator's ClusterUpgrade, or the admin): the operator's pod
 # tolerates the cordon, and prefers the nodes without this label.
@@ -89,6 +93,10 @@ KUBELET_STATE_FILES = ("/var/lib/kubelet/cpu_manager_state",
 PROC_CMDLINE = "/proc/cmdline"
 PROC_CPUINFO = "/proc/cpuinfo"
 BOOT_ID_FILE = "/proc/sys/kernel/random/boot_id"
+# glibc's dynamic loader on x86_64, and the level it found, once per boot
+# (/run is a tmpfs: a new boot, maybe with another CPU, finds it anew).
+LD_SO_X86_64 = "/lib64/ld-linux-x86-64.so.2"
+X86_64_LEVEL_CACHE = "/run/k4all/x86-64-level"
 PHASE_HOLD = "HOLD"
 PHASE_ABANDONED = "ABANDONED"
 # upgrade-reason next to HOLD; without it the operator sees a HostHold.
@@ -1348,6 +1356,42 @@ def long_grace_warning(most, pods):
             % (GRACE_WARNING_PREFIX, most, ", ".join(named), CONFIG_FILE))
 
 
+# Where a hop keeps what it warns about (#119). Each writer has its own
+# field, so the commit keeps what is still true after the hop and drops
+# the advice for before it:
+# - preflightWarning: PREFLIGHT's advice (the pods a single node's reboot
+#   cuts short), shown during the hop only;
+# - kubeVipWarning: a kube-vip.yaml POST_BOOT left as it is; still true
+#   after the hop, so kept in the history;
+# - syncWarnings: what the SYNC could not do (an uninstall the operator
+#   refuses), a list; kept in the history.
+# "warning" is where a release before v2.7.2 put all three; a hop that
+# started there carries its PREFLIGHT advice in it. It is shown during
+# the hop and never kept. The history entry keeps "warning" (one string)
+# for the readers of state.json.
+def hop_warnings(hop):
+    """What the hop warns about while it runs, in the order it was found."""
+    hop = hop or {}
+    out = []
+    for text in [hop.get("preflightWarning"), hop.get("warning"),
+                 hop.get("kubeVipWarning")] + list(hop.get("syncWarnings") or []):
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def history_warning(hop):
+    """The warning a committed hop keeps in the history: what the new
+    release found and is still true (kube-vip, the sync's refusals), never
+    the preflight's advice. None when there is none."""
+    hop = hop or {}
+    out = []
+    for text in [hop.get("kubeVipWarning")] + list(hop.get("syncWarnings") or []):
+        if text and text not in out:
+            out.append(text)
+    return "; ".join(out) or None
+
+
 def declares_no_controller(pod):
     """Whether ``pod`` makes `kubectl drain` without --force refuse the
     drain (kubectl's unreplicatedFilter): no ownerReference is its
@@ -1524,12 +1568,15 @@ def abandoned_message(abandoned):
     return short_message(text)
 
 
-def node_report(state, role=None, release=None, problem=None, target=None):
+def node_report(state, role=None, release=None, problem=None, target=None,
+                x86_64_level=None):
     """The annotations k4all-upgrade owns on its Node for ``state``.
 
     None removes an annotation. ``release`` defaults to the last committed
     release; ``problem`` is an upgrade-target the agent refused; ``target``
-    is the upgrade-target on the Node now (None when absent).
+    is the upgrade-target on the Node now (None when absent);
+    ``x86_64_level`` is node_x86_64_level's answer (the agent's only: None
+    leaves the annotation alone, "" removes it).
     """
     state = state or {}
     want = {ANNOTATION_PHASE: None, ANNOTATION_MESSAGE: None,
@@ -1539,6 +1586,8 @@ def node_report(state, role=None, release=None, problem=None, target=None):
         want[ANNOTATION_RELEASE] = release
     if role:
         want[ANNOTATION_NODE_TYPE] = role
+    if x86_64_level is not None:
+        want[ANNOTATION_X86_64_LEVEL] = x86_64_level or None
     if _active(state) and state.get("hold"):
         want[ANNOTATION_PHASE] = PHASE_HOLD
         want[ANNOTATION_MESSAGE] = short_message(state["hold"].get("reason"))
@@ -1550,10 +1599,11 @@ def node_report(state, role=None, release=None, problem=None, target=None):
             # (v0.5.0) reads upgrade-message only next to HOLD
             want[ANNOTATION_MESSAGE] = short_message("waiting: %s"
                                                      % state["waiting"])
-        elif state["hop"].get("warning"):
+        elif hop_warnings(state["hop"]):
             # something to fix that does not stop the hop (a kube-vip.yaml
             # that cannot be read); gone with the hop
-            want[ANNOTATION_MESSAGE] = short_message(state["hop"]["warning"])
+            want[ANNOTATION_MESSAGE] = short_message(
+                "; ".join(hop_warnings(state["hop"])))
     elif problem:
         want[ANNOTATION_PHASE] = PHASE_HOLD
         want[ANNOTATION_MESSAGE] = short_message(problem)
@@ -2020,6 +2070,84 @@ def cpu_vendor(host):
         if key.strip() == "vendor_id":
             return value.strip()
     return ""
+
+
+# --- the x86-64 level of the CPU (#121) --------------------------------------
+X86_64_LEVELS = ("v1", "v2", "v3", "v4")
+# The x86-64 psABI levels in the flag names of /proc/cpuinfo, each level on
+# top of the one before. OSXSAVE is not a cpuinfo flag: xsave next to avx
+# stands for it.
+X86_64_LEVEL_FLAGS = (
+    ("v2", ("cx16", "lahf_lm", "popcnt", "pni", "ssse3", "sse4_1", "sse4_2")),
+    ("v3", ("avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe",
+            "xsave")),
+    ("v4", ("avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl")),
+)
+# `ld.so --help` (glibc 2.33 on), under "Subdirectories of glibc-hwcaps
+# directories, in priority order:", one line per level glibc knows, with
+# "(supported, searched)" after those this CPU has. The manual does not
+# document the format (elf/dl-usage.c prints it): only "supported" counts.
+LD_SO_LEVEL_NAME = re.compile(r"^\s*x86-64-v[234]\b", re.M)
+LD_SO_LEVEL_LINE = re.compile(r"^\s*x86-64-(v[234])[ \t]*(?:\(([^)\n]*)\))?", re.M)
+
+
+def x86_64_level_from_ld_so(text):
+    """The highest x86-64 level glibc's loader reports supported: "v1"
+    when it lists the levels and supports none; None when it lists none
+    (a glibc before 2.33, or no output)."""
+    text = text or ""
+    if not LD_SO_LEVEL_NAME.search(text):
+        return None
+    best = "v1"
+    for level, notes in LD_SO_LEVEL_LINE.findall(text):
+        if "supported" in re.split(r"[\s,;]+", notes) and level > best:
+            best = level
+    return best
+
+
+def x86_64_level_from_cpuinfo(text):
+    """The x86-64 level the flags of /proc/cpuinfo add up to, None
+    without a flags line."""
+    flags = None
+    for line in (text or "").splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() == "flags":
+            flags = set(value.split())
+            break
+    if flags is None:
+        return None
+    level = "v1"
+    for name, needed in X86_64_LEVEL_FLAGS:
+        if not flags.issuperset(needed):
+            break
+        level = name
+    return level
+
+
+def node_x86_64_level(host):
+    """The value of this node's x86-64-level annotation: "v1" … "v4"; ""
+    when an x86_64 node cannot tell (the annotation is removed: the
+    operator takes the node as unknown); None on any other architecture,
+    where it is never written. Found once per boot: glibc's loader first,
+    else the flags of /proc/cpuinfo."""
+    if host.arch() != "amd64":
+        return None
+    if host.exists(X86_64_LEVEL_CACHE):
+        cached = host.read(X86_64_LEVEL_CACHE).strip()
+        if cached in X86_64_LEVELS:
+            return cached
+    got = host.run([LD_SO_X86_64, "--help"], check=False, timeout=30)
+    level = x86_64_level_from_ld_so(got.stdout)
+    if level is None and host.exists(PROC_CPUINFO):
+        level = x86_64_level_from_cpuinfo(host.read(PROC_CPUINFO))
+    if level is None:
+        return ""
+    try:
+        host.write(X86_64_LEVEL_CACHE, level + "\n")
+    except OSError as exc:
+        host.log("cannot keep the x86-64 level in %s: %s"
+                 % (X86_64_LEVEL_CACHE, exc))
+    return level
 
 
 def boot_id(host):
@@ -2711,17 +2839,13 @@ class Upgrader:
     def _warn_long_grace(self, kc, hop):
         most = pod_stop_max_seconds(self.cfg)
         pods = self._node_pods(kc, "the grace periods of the pods")
-        warnings = [w for w in (hop.get("warning") or "").split("; ")
-                    if w and not w.startswith(GRACE_WARNING_PREFIX)]
         long_ones = long_grace_pods(pods or [], most)
         if long_ones:
             warning = long_grace_warning(most, long_ones)
             self.host.log("WARNING: %s" % warning)
-            warnings.append(warning)
-        if warnings:
-            hop["warning"] = "; ".join(warnings)
+            hop["preflightWarning"] = warning
         else:
-            hop.pop("warning", None)
+            hop.pop("preflightWarning", None)
 
     def _cluster_not_ready(self, kc, check_nodes=True):
         """(problem, nodes): what keeps the control plane from being ready
@@ -3229,7 +3353,9 @@ class Upgrader:
             changed, warning = False, "kube-vip: %s" % exc
         if warning:
             self.host.log("WARNING: %s" % warning)
-            hop["warning"] = warning
+            hop["kubeVipWarning"] = warning
+        else:
+            hop.pop("kubeVipWarning", None)
         if changed and wait:
             # kubelet restarts kube-vip and the VIP may move: the next steps
             # need the API again. /readyz is enough here.
@@ -3610,11 +3736,12 @@ class Upgrader:
             refused = self.sync_manifest(state) or []
             self._cilium_after_sync(before, before_rm)
             # Shown in upgrade-message during the hop, kept in the history
-            # and by `status` after it: the hop must not hide them.
-            warnings = [w for w in (hop.get("warning") or "").split("; ") if w]
+            # and by `status` after it: the hop must not hide them. A sync
+            # that runs again (after a HOLD) does not repeat them.
+            warnings = list(hop.get("syncWarnings") or [])
             warnings += [w for w in refused if w not in warnings]
             if warnings:
-                hop["warning"] = "; ".join(warnings)
+                hop["syncWarnings"] = warnings
 
     # --- COMMIT ----------------------------------------------------------
     def commit(self, state):
@@ -3624,9 +3751,12 @@ class Upgrader:
         state["history"].append({"from": hop["from"], "to": hop["to"],
                                  "result": "ok",
                                  "at": host.now().isoformat(timespec="seconds")})
-        if hop.get("warning"):
-            state["history"][-1]["warning"] = hop["warning"]
-            host.log("WARNING: %s" % hop["warning"])
+        # Only what is still true after the hop: the preflight's advice
+        # ("Stop them before the hop") is over once the hop is (#119).
+        warning = history_warning(hop)
+        if warning:
+            state["history"][-1]["warning"] = warning
+            host.log("WARNING: %s" % warning)
         state["current"] = hop["to"]
         state["hop"] = None
         state["phase"] = "IDLE"
@@ -4448,8 +4578,9 @@ def cmd_status(host, cfg, args):
                                            state["hop"]["kind"]))
     if state.get("pending"):
         print("Then:      %s" % " -> ".join(r["version"] for r in state["pending"]))
-    if (state.get("hop") or {}).get("warning"):
-        print("Warning:   %s" % state["hop"]["warning"])
+    warnings = hop_warnings(state.get("hop"))
+    if warnings:
+        print("Warning:   %s" % "; ".join(warnings))
     if state.get("hold"):
         print("HOLD:      %s" % state["hold"]["reason"])
     elif state.get("waiting"):
@@ -4724,10 +4855,10 @@ def _close_stale_plan(host, state, why):
 def cmd_agent(host, cfg, args, upgrader):
     """One pass of k4all-upgrade-agent.timer.
 
-    Publishes release, node type and the hop phase on this Node, and runs
-    the hop named by upgrade-target when it is one legal hop from the
-    running release, in any mode and outside the window. Without a target
-    it never starts anything.
+    Publishes release, node type, the hop phase and, on x86_64, the CPU's
+    x86-64 level on this Node, and runs the hop named by upgrade-target
+    when it is one legal hop from the running release, in any mode and
+    outside the window. Without a target it never starts anything.
     """
     role = node_role(host)
     if not upgrader._kubeconfig():
@@ -4782,7 +4913,7 @@ def cmd_agent(host, cfg, args, upgrader):
             state.pop("abandoned")
             save_state(host, state)
     want = node_report(state, role, _release_now(host, state), problem=problem,
-                       target=raw)
+                       target=raw, x86_64_level=node_x86_64_level(host))
     changes = annotation_changes(observed, want)
     if changes:
         if problem and observed.get(ANNOTATION_MESSAGE) != want[ANNOTATION_MESSAGE]:
