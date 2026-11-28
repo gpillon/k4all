@@ -281,6 +281,58 @@ fi
 check_file_contains "/usr/local/bin/k4all-utils" "K4ALL_CONFIG_FILE" "k4all-utils defines K4ALL_CONFIG_FILE"
 
 # =============================================================================
+echo ""
+info "12. NFS - what k4all's NFS StorageClasses need from the host"
+# =============================================================================
+# Files on an NFS 4.1 share are nfs_t. Containers and KubeVirt's qemu
+# (container_t) may use them only with the boolean virt_use_nfs. Its policy
+# default is off; container-selinux's scriptlet turns it on in the policy
+# store (setsebool -P), so a package or policy change could turn it off
+# without a build error. The NFS client runs in the host's kernel, so the CSI
+# node plugin needs the host's modules and NFSv4's ID mapping the host's
+# nfsidmap.
+#
+# SELinux is off in this container, so getsebool cannot answer, and the image
+# has no semanage. The check reads the kernel policy the node loads at boot
+# (/etc/selinux/targeted/policy/policy.N), which libsemanage builds from the
+# store with its local changes. It holds each boolean as le32 value, le32
+# state, le32 name length, then the name: the state is the word just before
+# the length. The name must occur once, and the state be 1.
+policy_boolean_on() {
+    printf '%s' "python3 -c 'import glob, struct, sys
+name = sys.argv[1].encode()
+key = struct.pack(\"<I\", len(name)) + name
+policy = max(glob.glob(\"/etc/selinux/targeted/policy/policy.*\"),
+             key=lambda p: int(p.rsplit(\".\", 1)[1]))
+data = open(policy, \"rb\").read()
+at = data.find(key)
+on = at >= 8 and data.count(key) == 1 and struct.unpack_from(\"<I\", data, at - 4)[0] == 1
+sys.exit(0 if on else 1)' '$1'"
+}
+check "virt_use_nfs is on in the image's SELinux policy" "$(policy_boolean_on virt_use_nfs)"
+
+# From Fedora 45 nfs-utils requires the client tools, which come in their own
+# packages (nfs-common-utils, nfsv4-client-utils): the tools are checked by
+# path, and must belong to an installed package.
+check "nfs-utils is installed" "rpm -q nfs-utils"
+for cmd in mount.nfs nfsidmap; do
+    check "$cmd is installed, from a package (the NFS client)" \
+        "path=\$(command -v $cmd) && rpm -qf \"\$path\""
+done
+
+# The image's kernel: the one with a vmlinuz under /usr/lib/modules (bootc).
+mapfile -t KERNELS < <(run_in_container 'ls -1 /usr/lib/modules/*/vmlinuz 2>/dev/null' \
+    | sed -n 's|^/usr/lib/modules/\([^/]*\)/vmlinuz$|\1|p')
+if [ "${#KERNELS[@]}" -ne 1 ]; then
+    fail "the image has one kernel under /usr/lib/modules (found ${#KERNELS[@]})"
+else
+    for mod in nfs nfsv4; do
+        check "kernel module $mod is in the image (${KERNELS[0]})" \
+            "modinfo -k '${KERNELS[0]}' -F filename $mod"
+    done
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo ""
