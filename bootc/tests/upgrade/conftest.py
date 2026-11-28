@@ -178,6 +178,9 @@ class FakeHost(ku.Host):
         # first write: the CR was created by a client-side `kubectl apply`.
         self.rm_owners = None
         self.components_after_sync = "Installed"
+        # component -> {"state", "message"}: what the operator reports for
+        # it after a write, instead of components_after_sync
+        self.component_status = {}
         # component -> reason: k4all-operator (v0.5.7 on) refuses its
         # uninstall and keeps it Installed at an older version
         self.refused = {}
@@ -665,6 +668,9 @@ def _refresh_status(self):
                                           self.components_after_sync),
                "installedVersion": spec.get("version", "")}
         for name, spec in comps.items()}}
+    for name, status in self.component_status.items():
+        if name in comps:
+            self.release_manifest["status"]["components"][name].update(status)
     for name, reason in self.refused.items():
         if name in comps:
             self.release_manifest["status"]["components"][name] = {

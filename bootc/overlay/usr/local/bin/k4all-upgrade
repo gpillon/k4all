@@ -661,6 +661,13 @@ def uninstall_refusals(cr):
     return refused
 
 
+def failed_component_messages(cr, names):
+    """{component: the operator's message, one bounded line} for ``names``."""
+    observed = (((cr or {}).get("status") or {}).get("components")) or {}
+    return {name: short_message((observed.get(name) or {}).get("message"))
+            for name in names}
+
+
 def components_settled(cr):
     """(settled, failed, waiting) for a ReleaseManifest after a sync.
 
@@ -3962,8 +3969,10 @@ class Upgrader:
         pins, also when step 1 changed nothing: a SYNC resumed after a HOLD
         in step 1, or `k4all-upgrade sync-manifest`, finds the operator
         already changed in the cluster but maybe not running yet.
-        ``state`` is not used any more; it stays for the callers. Returns
-        the uninstalls the operator refuses (``_wait_components``).
+        ``state``: the hop's, where the components the operator reports
+        Failed are kept while the sync waits (`status` shows them); None
+        for `k4all-upgrade sync-manifest`. Returns the uninstalls the
+        operator refuses (``_wait_components``).
         """
         host = self.host
         kc = self._kubeconfig()
@@ -4012,7 +4021,7 @@ class Upgrader:
             self._wait_operator(kc, want)
         host.log("ReleaseManifest sync 2/2: components")
         self._apply(kc, merged)
-        return self._wait_components(kc)
+        return self._wait_components(kc, state)
 
     def _hand_over_kube_vip(self, kc, cluster):
         """kube-vip's static-pod manifest belongs to the host: set the
@@ -4120,14 +4129,29 @@ class Upgrader:
             return _plain(last.rsplit(":", 1)[1]) == _plain(want)
         return True
 
-    def _wait_components(self, kc):
+    def _wait_components(self, kc, state=None):
         """Wait until the components settle; the uninstalls the operator
-        refuses, as "<component>: uninstall refused: <reason>"."""
+        refuses, as "<component>: uninstall refused: <reason>".
+
+        A component the operator reports Failed is retried by it, so the
+        wait goes on until the deadline; each one is logged the first time
+        it turns Failed, with the operator's message, and kept in the
+        hop's "failedComponents" while it stays Failed (#131)."""
         host, deadline = self.host, self._deadline()
+        logged = set()
         while True:
             cr = kubectl_json(host, kc, ["get", "releasemanifest",
                                          RELEASE_MANIFEST_NAME])
             settled, failed, waiting = components_settled(cr)
+            messages = failed_component_messages(cr, failed)
+            for name in failed:
+                if name not in logged:
+                    logged.add(name)
+                    host.log("WARNING: ReleaseManifest sync: %s is Failed: %s "
+                             "(the operator retries it; the sync waits until "
+                             "%s)" % (name, messages[name] or "no message",
+                                      deadline.isoformat(timespec="minutes")))
+            self._keep_failed_components(state, messages)
             if settled:
                 host.log("components reconciled")
                 refused = ["%s: %s%s" % (name, UNINSTALL_REFUSED, reason)
@@ -4146,6 +4170,20 @@ class Upgrader:
                                    % (self.cfg["componentsTimeoutMinutes"],
                                       ", ".join(waiting)))
             host.sleep(30)
+
+    def _keep_failed_components(self, state, messages):
+        """Keep in the hop what is Failed now, for `status` (another
+        process): saved when it changes."""
+        hop = (state or {}).get("hop")
+        if hop is None:
+            return
+        if (hop.get("failedComponents") or {}) == messages:
+            return
+        if messages:
+            hop["failedComponents"] = messages
+        else:
+            hop.pop("failedComponents", None)
+        save_state(self.host, state)
 
     # --- driver ----------------------------------------------------------
     STEPS = {
@@ -4625,6 +4663,9 @@ def cmd_status(host, cfg, args):
     warnings = hop_warnings(state.get("hop"))
     if warnings:
         print("Warning:   %s" % "; ".join(warnings))
+    failed = (state.get("hop") or {}).get("failedComponents") or {}
+    for name in sorted(failed):
+        print("Failed:    %s: %s" % (name, failed[name] or "no message"))
     if state.get("hold"):
         print("HOLD:      %s" % state["hold"]["reason"])
     elif state.get("waiting"):
