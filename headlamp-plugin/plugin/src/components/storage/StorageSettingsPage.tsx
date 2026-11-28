@@ -3,24 +3,65 @@
  * CephCluster exists: the reason and the steps), the creation inputs
  * (deviceFilter, smallCluster) until the cluster exists, then "created,
  * manage it in Cairn", the RookReady condition, and the teardown note (D24:
- * k4all never wipes disks). Cairn links here for what k4all owns.
+ * k4all never wipes disks). From k4all v2.7.2 (operator v0.7.0): named OSD
+ * devices, the Ceph CSI image (#csi-image), the crash collector of the
+ * CephCluster itself (#crash-collector), monitoring (#monitoring) and
+ * CephFS (#cephfs). Cairn links here for what k4all owns.
  */
 
-import { Alert, AlertTitle, Box, Grid } from '@mui/material';
+import { Box, Grid, Typography } from '@mui/material';
 import React from 'react';
-import { useAgentInventories, useCephClusters } from '../../api/clusterObjects';
+import { useAgentInventories, useCephClusters, useStorageClasses } from '../../api/clusterObjects';
 import { K4allData, useK4allData } from '../../api/hooks';
+import {
+  setCrashCollector,
+  useCanPatchCephClusters,
+  usePrometheusOperatorApis,
+} from '../../api/rookObjects';
 import { findCondition } from '../../model/health';
+import { csiIssues, monitoringIssues } from '../../model/rookSettings';
 import { rookIssues, rookView, schedulableNodes } from '../../model/storage';
-import { CONDITION_ROOK_READY } from '../../model/types';
+import { CephClusterLike, CONDITION_ROOK_READY } from '../../model/types';
 import { hasErrors, Issue, validateSettings } from '../../model/validation';
+import { useHashScroll } from '../common/nav';
 import { K4allGate, ReadOnlyNotice } from '../common/states';
 import { Mono, PageHeader } from '../common/ui';
 import { ReviewDialog } from '../review/ReviewDialog';
 import { StaleDraftNotice, UnsavedBar, useSettingsEditor } from '../settings/editorShell';
 import { FeatureCard, ROOK_FEATURE } from '../settings/FeaturesSection';
 import { CapabilityNotice } from '../settings/settingsLinks';
+import {
+  CephFsPanel,
+  CrashCollectorPanel,
+  CsiImagePanel,
+  MonitoringPanel,
+  RookReadyAlert,
+} from './rookSections';
 import { CephSection, TeardownPanel } from './storageSections';
+
+const keyOf = (c: CephClusterLike) => `${c.metadata.namespace}/${c.metadata.name}`;
+
+/**
+ * The CephClusters as polled, with the object a crash collector patch
+ * returned shown until the next poll brings a newer one.
+ */
+function useCephClustersWithWrites() {
+  const ceph = useCephClusters();
+  const [written, setWritten] = React.useState<
+    Record<string, { readRV?: string; obj: CephClusterLike }>
+  >({});
+  const polled = ceph.value ?? [];
+  const clusters = polled.map(c => {
+    const w = written[keyOf(c)];
+    return w && w.readRV === c.metadata.resourceVersion ? w.obj : c;
+  });
+  const set = async (c: CephClusterLike, on: boolean) => {
+    const readRV = polled.find(p => keyOf(p) === keyOf(c))?.metadata.resourceVersion;
+    const obj = await setCrashCollector(c, on);
+    setWritten(prev => ({ ...prev, [keyOf(c)]: { readRV, obj } }));
+  };
+  return { ceph, clusters, set };
+}
 
 export function StorageSettingsPage() {
   const data = useK4allData();
@@ -33,12 +74,17 @@ export function StorageSettingsPage() {
 
 function StorageEditor({ data }: { data: K4allData }) {
   const editor = useSettingsEditor(data);
-  const ceph = useCephClusters();
-  const clusters = ceph.value ?? [];
+  const { ceph, clusters, set: setCrash } = useCephClustersWithWrites();
   const created = clusters.length > 0;
   const inventories = useAgentInventories(
     !!editor.state.base && editor.caps.rookStorage && !created && ceph.value !== null
   );
+  const rookOn = editor.draft.features?.rook?.enabled === true;
+  const showMore = !!editor.state.base && (rookOn || created);
+  const apis = usePrometheusOperatorApis(showMore && editor.caps.rookOptions);
+  const storageClasses = useStorageClasses();
+  const canPatch = useCanPatchCephClusters(clusters);
+  useHashScroll(!!editor.state.base);
   if (!editor.state.base) {
     return null;
   }
@@ -47,6 +93,8 @@ function StorageEditor({ data }: { data: K4allData }) {
   const issues: Issue[] = [
     ...validateSettings(draft),
     ...rookIssues(draft, { nodes: data.nodes, created }),
+    ...csiIssues(draft, data.nodes),
+    ...monitoringIssues(draft, apis.value),
   ];
   const blocking = hasErrors(issues);
   const sectionProps = {
@@ -76,19 +124,14 @@ function StorageEditor({ data }: { data: K4allData }) {
       <ReadOnlyNotice show={editor.readOnly} what="the cluster settings" />
       <StaleDraftNotice editor={editor} />
       <CapabilityNotice caps={caps} id="rookStorage" what="Rook/Ceph storage" />
-      {ready && ready.message && (
-        <Alert
-          severity={
-            ready.status === 'True' ? 'success' : ready.status === 'False' ? 'warning' : 'info'
-          }
-          sx={{ mb: 2 }}
-        >
-          <AlertTitle>RookReady{ready.reason ? `: ${ready.reason}` : ''}</AlertTitle>
-          <Box component="span" sx={{ whiteSpace: 'pre-line' }}>
-            {ready.message}
-          </Box>
-        </Alert>
+      {caps.rookStorage && (
+        <CapabilityNotice
+          caps={caps}
+          id="rookOptions"
+          what="Named devices, the Ceph CSI image, monitoring and CephFS"
+        />
       )}
+      <RookReadyAlert condition={ready} />
       <Grid container spacing={2}>
         <Grid item xs={12} md={6}>
           <FeatureCard
@@ -109,8 +152,36 @@ function StorageEditor({ data }: { data: K4allData }) {
             clusters={clusters}
             nodes={nodes}
             inventories={inventories.value}
+            nodeNames={data.nodes.map(n => n.metadata.name).sort()}
           />
         </Grid>
+        {showMore ? (
+          <>
+            <Grid item xs={12} md={6}>
+              <CsiImagePanel {...sectionProps} nodes={data.nodes} />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <CrashCollectorPanel clusters={clusters} canPatch={canPatch} onSet={setCrash} />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <MonitoringPanel
+                {...sectionProps}
+                apis={apis.value}
+                apisError={apis.error?.message ?? null}
+              />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <CephFsPanel {...sectionProps} storageClasses={storageClasses.value} />
+            </Grid>
+          </>
+        ) : (
+          <Grid item xs={12}>
+            <Typography variant="body2" color="text.secondary">
+              With Rook on, this page also sets the Ceph CSI image, monitoring and CephFS, and shows
+              the crash collector.
+            </Typography>
+          </Grid>
+        )}
       </Grid>
       <UnsavedBar editor={editor} blocking={blocking} />
       <ReviewDialog

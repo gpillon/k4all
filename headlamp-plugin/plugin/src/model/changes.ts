@@ -16,6 +16,7 @@ import {
 } from './nodeSettings';
 import { dottedPath, getIn, isPlainObject, jsonEqual, Path } from './objects';
 import { catalogEntry, DEFAULT_MODE } from './readiness';
+import { formatLabels, formatStorageNodes } from './rookSettings';
 import { activeIngress, effectiveIngress, INGRESS_LABEL } from './settings';
 import { ClusterConfigSpec, ComponentSpec } from './types';
 
@@ -309,6 +310,7 @@ export function describeChanges(
     }
     const isCilium = leaf.startsWith('networking.cni.cilium');
     const fieldKey = info ? dottedPath(info.path) : leaf;
+    const fmt = (v: unknown) => FIELD_FORMAT[fieldKey]?.(v) ?? formatValue(v, info?.fallback);
     let effect =
       path[0] === 'nodes' && path[1] !== 'rollout' && nodeAction
         ? NODE_ACTION_EFFECT[nodeAction]
@@ -325,8 +327,8 @@ export function describeChanges(
       add({
         key: fieldKey,
         label: info?.label ?? leaf,
-        from: formatValue(before, info?.fallback),
-        to: cleared ? cleared.label : formatValue(after, info?.fallback),
+        from: fmt(before),
+        to: cleared ? cleared.label : fmt(after),
         ...effect,
       });
       continue;
@@ -334,8 +336,8 @@ export function describeChanges(
     add({
       key: fieldKey,
       label: info?.label ?? leaf,
-      from: formatValue(before, info?.fallback),
-      to: formatValue(after, info?.fallback),
+      from: fmt(before),
+      to: fmt(after),
       severity:
         (info && info.mode !== 'live') || LIVE_DANGER[fieldKey]
           ? 'danger'
@@ -429,6 +431,15 @@ const CREATION_INPUT =
   'Read once, when k4all creates the Ceph cluster; once the cluster exists it does nothing ' +
   '(manage the cluster in Cairn).';
 
+/** How a field's value reads in the review, where formatValue would not do (lists of objects, maps). */
+const FIELD_FORMAT: Record<string, (value: unknown) => string> = {
+  'features.rook.storage.nodes': formatStorageNodes,
+  'features.rook.monitoring.labels': formatLabels,
+  'features.rook.csi.imageVariant': v => (v === undefined ? 'Auto' : String(v)),
+  'features.rook.filesystem.enabled': v =>
+    v === true ? 'on' : v === false ? 'off' : 'not set (with a new Ceph cluster)',
+};
+
 /** Effects of the k4all v2.7.0 fields, by their path; `after` is the new value. */
 const FIELD_EFFECT: Record<string, (after: unknown) => Effect> = {
   'features.virt.hangar.nodeAgent': after =>
@@ -489,7 +500,90 @@ const FIELD_EFFECT: Record<string, (after: unknown) => Effect> = {
     severity: 'info',
     consequence: NEXT_START,
   }),
+  'features.virt.hangar.guestBridge': after =>
+    after === false
+      ? {
+          severity: 'warning',
+          consequence:
+            "Uninstalls hangar-guest-bridge, its APIService first: Hangar's Guest and Files tabs " +
+            'stop working. The VMs and their guest agents are untouched.',
+        }
+      : {
+          severity: 'info',
+          consequence:
+            'Installs hangar-guest-bridge: the API subresources.hangar.magesgate.com and one pod per ' +
+            "node in hangar-system, for Hangar's Guest and Files tabs.",
+        },
   'features.rook.storage.deviceFilter': () => ({ severity: 'info', consequence: CREATION_INPUT }),
+  'features.rook.storage.nodes': () => ({
+    severity: 'info',
+    consequence: `${CREATION_INPUT} Only the named devices become OSDs, one each.`,
+  }),
+  'features.rook.csi.imageVariant': after =>
+    after === 'Standard'
+      ? {
+          severity: 'warning',
+          consequence:
+            'Forces the standard cephcsi build: on a node below x86-64-v3 the Ceph CSI plugins cannot ' +
+            'start, and the Ceph volumes of that node stop working. A different build restarts the ' +
+            'plugins one node at a time; mounted volumes stay mounted.',
+        }
+      : after === 'OlderCPUs'
+      ? {
+          severity: 'info',
+          consequence:
+            'Forces the cephcsi build for older CPUs (the same ceph-csi version on Rocky Linux 9, which ' +
+            'upstream tests less). A different build restarts the plugins one node at a time; mounted ' +
+            'volumes stay mounted.',
+        }
+      : {
+          severity: 'info',
+          consequence:
+            "k4all picks the cephcsi build from the nodes' CPUs (the RookCSIImage condition says which " +
+            'and why). A different build restarts the plugins one node at a time; mounted volumes stay ' +
+            'mounted.',
+        },
+  'features.rook.monitoring.enabled': after =>
+    after === true
+      ? {
+          severity: 'info',
+          consequence:
+            "Turns on Rook's ServiceMonitors (mgr, ceph-exporter) and the PrometheusRule " +
+            'rook-ceph/k4all-ceph-alerts. k4all then owns spec.monitoring and spec.labels.monitoring ' +
+            'of the CephCluster (Cairn shows them read-only). Without a Prometheus Operator nothing is ' +
+            'created.',
+        }
+      : {
+          severity: 'info',
+          consequence:
+            'k4all deletes its PrometheusRule, turns the ServiceMonitors off and gives back the two ' +
+            'CephCluster fields it owned.',
+        },
+  'features.rook.monitoring.labels': () => ({
+    severity: 'info',
+    consequence: 'The ServiceMonitors and the PrometheusRule get these labels.',
+  }),
+  'features.rook.filesystem.enabled': after =>
+    after === true
+      ? {
+          severity: 'warning',
+          consequence:
+            'Creates CephFS now if it is missing: two pools, two MDS daemons (up to 1 GiB of memory ' +
+            'each), the StorageClass ceph-cephfs and its snapshot class. Once created they are ' +
+            "Cairn's.",
+        }
+      : after === false
+      ? {
+          severity: 'info',
+          consequence:
+            'k4all never creates CephFS; a filesystem that exists stays (k4all deletes none).',
+        }
+      : {
+          severity: 'info',
+          consequence:
+            'Back to the default: CephFS comes with a Ceph cluster k4all creates; one that exists ' +
+            'stays.',
+        },
   'features.rook.smallCluster': after =>
     after === 'Allow'
       ? {

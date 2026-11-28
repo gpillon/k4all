@@ -124,6 +124,20 @@ new is shown or written (DESIGN.md 3.11).
 - The CNI switch and the OVS bridge toggle wait for k4all-operator v0.8.0
   (0.2.x gated them on v0.7.0, which does not have them).
 - Optional read: pods in `headlamp`, for the node this page runs on.
+- Storage (k4all#135): named OSD devices per node, logical volumes included
+  (`features.rook.storage.nodes`; the disks table shows a disk with LVM as
+  "can be named"), the Ceph CSI image (`features.rook.csi.imageVariant`)
+  with `RookCSIImage` in words, the crash collector as the CephCluster has
+  it with Turn on / off (a JSON Patch on the CephCluster, never the
+  ClusterConfig), monitoring (`features.rook.monitoring`, the Prometheus
+  Operator check, labels) with `RookMonitoring`, CephFS
+  (`features.rook.filesystem.enabled`) with the SELinux limit.
+- Virtualization: the Hangar guest bridge switch
+  (`features.virt.hangar.guestBridge`).
+- `k4all-upgrader` reads the ClusterConfig (the Upgrades page said "No
+  ClusterConfig" without it). The crash collector switch needs `patch` on
+  the CephCluster (Cairn's `cairn-editor`); without it the page shows the
+  value.
 
 ### 0.2.1
 

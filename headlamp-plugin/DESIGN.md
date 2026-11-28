@@ -1,10 +1,11 @@
 # k4all Headlamp plugin: design
 
-Status: built and unit-tested (531 tests), not yet run against a live
+Status: built and unit-tested (615 tests), not yet run against a live
 cluster. Ships from k4all v2.4.0 (k4all-operator v0.5.0, Traefik, Headlamp
 chart 0.46.0, Kubernetes 1.35 and later); plugin 0.2.0 adds the k4all v2.7.0
 pages (k4all-operator v0.6.0, section 3.8-3.10); plugin 0.3.0 adds upgrade
-readiness (k4all v2.7.2, k4all-operator v0.7.0, section 3.11). User guide:
+readiness (k4all v2.7.2, k4all-operator v0.7.0, section 3.11), the Rook
+settings of v0.7.0 and the guest bridge switch (3.10, 3.8). User guide:
 `docs/headlamp-plugin.md`. Packaging and release: `DISTRIBUTION.md`.
 
 ## 1. Summary
@@ -372,7 +373,13 @@ controls are read-only; the virt switch and emulation stay editable.
   on). Next to it, **Hangar**: the node agent switch
   (`features.virt.hangar.nodeAgent`: off is written `false`, on goes back to
   the release default unless it was `true`), its component state, a link to
-  Hangar.
+  Hangar. From 0.3.0 (operator v0.7.0, capability `guestBridge`), the
+  **guest bridge** switch below it (`features.virt.hangar.guestBridge`, the
+  same rule: absent is installed with virt, off is `false`), for Hangar's
+  Guest and Files tabs, with the `hangar-guest-bridge` component state; an
+  `installed but hook failed: APIService … unavailable …` message (the
+  bridge's APIService down for more than 10 minutes) shows as
+  "Unavailable" with the operator's text.
 - **KubeVirt feature gates** (`#feature-gates`): one row per gate of the
   running KubeVirt's minor (Hangar's `gateTables.ts`, copied verbatim as
   `src/model/gateTables.ts` with a header naming the Hangar commit), plus
@@ -485,6 +492,56 @@ uninstalls and waits), the `RookReady` condition, and:
   the uninstall follows); k4all never wipes disks: wipe `/var/lib/rook` and
   the OSD disks by hand before turning Rook on again (D24).
 
+From 0.3.0, with k4all-operator v0.7.0 (capability `rookOptions`; before,
+the controls are read-only with "coming with k4all-operator v0.7.0"), the
+page adds (k4all#135):
+
+- **Named devices** (`features.rook.storage.nodes`, a creation input like
+  `deviceFilter` and exclusive with it): per node, the device paths
+  (`/dev/<vg>/<lv>`, `/dev/disk/by-id/<id>`, `/dev/<name>`), checked as the
+  CRD and the operator check them (a node named twice, no device, a path
+  that is not one; a node not in the cluster or tainted against Rook's pods
+  is a warning: the operator waits). The plan counts the named nodes for
+  the pool size and the small-cluster rule, the mons every node. The disks
+  table shows a disk with LVM (an LVM signature, or device-mapper holders)
+  as "LVM: a logical volume can be named" instead of "in use: skipped"
+  (Hangar's inventory has no logical volumes, only their disks); with named
+  devices it shows "named: becomes an OSD", "named, but in use", "blank:
+  can be named". `RookReady` `StorageNodesUnusable` and
+  `NamedDevicesWithoutOSD` get what to do (the OSD prepare log, the
+  `lvcreate --wipesignatures y --zero y` recipe).
+- **Ceph CSI image** (`#csi-image`, `features.rook.csi.imageVariant`: Auto,
+  written as absent, Standard, OlderCPUs) and `RookCSIImage` in words, per
+  reason (StandardImage, OlderCPUNode, NodeLevelUnknown, NodeLevelPending,
+  Override, ComponentOverride, which says when the override can be dropped,
+  CheckFailed), with the operator's message as written and each node's
+  `k4all.magesgate.com/x86-64-level`. Forcing Standard while a node reports
+  v1 or v2 is a warning.
+- **Crash collector** (`#crash-collector`): the live
+  `spec.crashCollector` of each CephCluster (on, days kept, who last set
+  `disable`, from `managedFields`) and Turn on / Turn off, which patches the
+  CephCluster itself after a confirm: a JSON Patch testing the
+  `spec.crashCollector` read, then `add …/disable`, with
+  `fieldManager=k4all-headlamp`, like Cairn's edits. It is not a ClusterConfig
+  field (k4all seeds it once and never owns it), so the page never writes it
+  there and a change made in Cairn stays; a change made meanwhile fails the
+  test and is reported. The button needs `patch` on the CephCluster (a
+  SelfSubjectAccessReview); without it the value only.
+- **Monitoring** (`#monitoring`, `features.rook.monitoring.enabled` and up to
+  8 `labels`) and `RookMonitoring` in words (Enabled, Disabled,
+  PrometheusOperatorMissing, CheckFailed). The page reads the discovery of
+  `monitoring.coreos.com/v1` and says "install a Prometheus Operator (k4all
+  ships none)" before the switch is turned on when ServiceMonitor or
+  PrometheusRule is not served (a warning in the review once on); label keys
+  and values are checked as Kubernetes does.
+- **CephFS** (`#cephfs`, `features.rook.filesystem.enabled`): Not set (with a
+  Ceph cluster k4all creates from v2.7.2; an older one stays without it),
+  On (created now if missing), Off (never created, nothing deleted), whether
+  the StorageClass `ceph-cephfs` exists, and the SELinux limit: pods sharing
+  a CephFS volume need the same `seLinuxOptions.level`.
+
+These panels show once Rook is on in the draft or a CephCluster exists.
+
 ### 3.11 Upgrade readiness (k4all v2.7.2)
 
 From k4all-operator v0.7.0 (capability `upgradeReadiness`) the operator
@@ -592,6 +649,12 @@ on the field with k4all-operator v0.4.0.
 | Hangar node agent | `features.virt.hangar.nodeAgent` | edit (≥ v0.6.0) | `hangar-node-agent` component installed unless `false` |
 | Metadata service | `features.virt.metadata.{enabled,scope,tokens.audiences,tokens.expirationSeconds,vendorDataConfigMap}` | edit (≥ v0.6.0) | `k4all-metadata` component (MutatingAdmissionPolicy) |
 | Rook/Ceph | `features.rook.enabled`, `.storage.deviceFilter`, `.smallCluster` | edit (≥ v0.6.0); the inputs read-only once a CephCluster exists | rook gate: rook-ceph, ceph-csi-drivers, cairn; RookHook creates the cluster once |
+| Named devices | `features.rook.storage.nodes[].{name,devices[].name}` | edit (≥ v0.7.0); read-only once a CephCluster exists | RookHook: `storage.nodes` of the CephCluster it creates, `useAllDevices: false` |
+| Ceph CSI image | `features.rook.csi.imageVariant` (absent = Auto) | edit (≥ v0.7.0) | ceph-csi-drivers hook: the image set `rook-ceph/k4all-cephcsi-<tag>`, condition `RookCSIImage` |
+| Ceph metrics | `features.rook.monitoring.{enabled,labels}` | edit (≥ v0.7.0) | RookHook: Rook's monitoring values, the CephCluster's `spec.monitoring` and `spec.labels.monitoring` (owned), PrometheusRule `rook-ceph/k4all-ceph-alerts`; condition `RookMonitoring` |
+| CephFS | `features.rook.filesystem.enabled` | edit (≥ v0.7.0) | RookHook seeds `rook-ceph/cephfs`, StorageClass `ceph-cephfs` once |
+| Crash collector | CephCluster `spec.crashCollector.disable` | write at once (Turn on / off), JSON Patch on the CephCluster | Rook; k4all seeded it once and never owns it |
+| Hangar guest bridge | `features.virt.hangar.guestBridge` | edit (≥ v0.7.0) | `hangar-guest-bridge` component installed unless `false` |
 | Node settings | `nodes.kubelet.{maxPods,cpuManagerPolicy,reservedSystemCPUs,topologyManagerPolicy,topologyManagerScope}`, `nodes.hugepages.{1Gi,2Mi}`, `nodes.iommu` | edit (≥ v0.6.0) | node-settings controller: `kube-system/kubelet-config`, kernel arguments, one node at a time |
 | Rollout pause | `nodes.rollout.paused` | write at once (Pause / Resume) | stops before the next node |
 | (status) | ClusterConfig `status.{observedGeneration,lastReconcileTime,features}` | read | applied/stale indicators, feature readiness |
@@ -616,6 +679,8 @@ release's spec version) in one table, `src/model/capabilities.ts`:
 | `virtSettings` | v0.6.0 (k4all v2.7.0) | gates, VM state, node agent, metadata on the Virtualization page |
 | `nodeSettings` | v0.6.0 (k4all v2.7.0) | the Node settings page and its Pause / Resume |
 | `rookStorage` | v0.6.0 (k4all v2.7.0) | the Storage page; Rook in the Overview |
+| `rookOptions` | v0.7.0 (k4all v2.7.2) | named devices, the Ceph CSI image, monitoring and CephFS on the Storage page (3.10) |
+| `guestBridge` | v0.7.0 (k4all v2.7.2) | the guest bridge switch on the Virtualization page (3.8) |
 | `upgradeReadiness` | v0.7.0 (k4all v2.7.2) | the readiness report, live blockers, records, Check again, approvals, Put back now, `confirmDisruptions`, Settings → Upgrades, the rollout's blockers and approvals (3.11) |
 | `virtUninstallGuard` | v0.5.7 (k4all v2.6.6) | turning Virtualization off is reviewed as "uninstalls once nothing runs on them" (the operator keeps KubeVirt and kubevirt-manager while VMs exist, CDI while DataVolumes or PVCs made by CDI exist); older operators are reviewed as deleting KubeVirt and CDI from under running VMs |
 

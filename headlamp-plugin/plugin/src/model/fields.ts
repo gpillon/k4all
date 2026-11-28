@@ -83,6 +83,17 @@ export const FIELDS = {
       "Hangar's Hardware tab, and the vfio-pci binding of PCI devices given to VMs.",
     fallback: 'release default (installed)',
   },
+  hangarGuestBridge: {
+    path: ['features', 'virt', 'hangar', 'guestBridge'],
+    label: 'Hangar guest bridge',
+    group: 'virt',
+    mode: 'live',
+    help:
+      "Hangar's Guest and Files tabs: the guest's details and its files, read and written through " +
+      'the QEMU guest agent, behind the API subresources.hangar.magesgate.com (one pod per node, ' +
+      'namespace hangar-system).',
+    fallback: 'release default (installed)',
+  },
   metadataEnabled: {
     path: ['features', 'virt', 'metadata', 'enabled'],
     label: 'Metadata service',
@@ -143,6 +154,17 @@ export const FIELDS = {
       'every node; a disk with a partition table, a filesystem or LVM is never taken.',
     fallback: 'every blank disk',
   },
+  rookStorageNodes: {
+    path: ['features', 'rook', 'storage', 'nodes'],
+    label: 'Named devices',
+    group: 'storage',
+    mode: 'live',
+    help:
+      'The devices that become OSDs, node by node: /dev/<vg>/<lv> for a logical volume, ' +
+      '/dev/disk/by-id/<id> or /dev/<name> for a disk. Only these become OSDs, one each. The ' +
+      'only way to give Ceph a logical volume; not with Disks for Ceph.',
+    fallback: 'none',
+  },
   rookSmallCluster: {
     path: ['features', 'rook', 'smallCluster'],
     label: 'Below 3 nodes',
@@ -150,6 +172,45 @@ export const FIELDS = {
     mode: 'live',
     help: 'Refuse: create nothing until there are 3 nodes. Allow: one mon, pool size the node count, no redundancy.',
     fallback: 'Refuse',
+  },
+  rookCSIImageVariant: {
+    path: ['features', 'rook', 'csi', 'imageVariant'],
+    label: 'Ceph CSI image',
+    group: 'storage',
+    mode: 'live',
+    help:
+      'The cephcsi build of the Ceph CSI drivers. The standard build needs x86-64-v3 on amd64 ' +
+      '(Haswell or newer); the build for older CPUs is the same ceph-csi version. Auto picks it ' +
+      'from the nodes.',
+    fallback: 'Auto',
+  },
+  rookMonitoringEnabled: {
+    path: ['features', 'rook', 'monitoring', 'enabled'],
+    label: 'Ceph metrics for Prometheus',
+    group: 'storage',
+    mode: 'live',
+    help:
+      "Rook's ServiceMonitors (the mgr's prometheus module, ceph-exporter) and k4all's Ceph " +
+      'alert rules, for a Prometheus Operator the cluster runs: k4all ships none.',
+    fallback: 'off',
+  },
+  rookMonitoringLabels: {
+    path: ['features', 'rook', 'monitoring', 'labels'],
+    label: 'Monitoring labels',
+    group: 'storage',
+    mode: 'live',
+    help: 'Labels of the ServiceMonitors and the alert rules: what your Prometheus selects them by (at most 8).',
+    fallback: 'none',
+  },
+  rookFilesystemEnabled: {
+    path: ['features', 'rook', 'filesystem', 'enabled'],
+    label: 'CephFS',
+    group: 'storage',
+    mode: 'live',
+    help:
+      'A shared filesystem (ReadWriteMany Filesystem volumes) next to ceph-rbd: CephFilesystem ' +
+      'rook-ceph/cephfs and the StorageClass ceph-cephfs, created once, then managed in Cairn.',
+    fallback: 'with a new Ceph cluster',
   },
   nodesMaxPods: {
     path: ['nodes', 'kubelet', 'maxPods'],

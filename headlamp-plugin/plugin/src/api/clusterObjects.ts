@@ -233,6 +233,7 @@ async function readInventories(): Promise<AgentInventories> {
             signatures: arr(d.signatures),
             holders: arr(d.holders),
             mounts: arr(d.mounts),
+            byId: arr(d.byId),
           })),
         };
       } catch (err) {

@@ -71,6 +71,8 @@ const VIRT_METADATA_GATE = 'virtMetadata';
 
 /** Hangar's node agent: the operator leaves it out by name when nodeAgent is false (D6). */
 const HANGAR_NODE_AGENT = 'hangar-node-agent';
+/** Hangar's guest bridge (operator v0.7.0): left out by name when guestBridge is false. */
+export const HANGAR_GUEST_BRIDGE = 'hangar-guest-bridge';
 
 /** Why a component the release set to Removed is gone, and what its removal keeps. */
 export const REMOVED_REASON: Record<string, string> = {
@@ -103,6 +105,19 @@ export function uninstallRefusal(status: ComponentStatus | undefined): string | 
   return message?.startsWith(UNINSTALL_REFUSED)
     ? message.slice(UNINSTALL_REFUSED.length)
     : undefined;
+}
+
+/**
+ * The start of the message of an installed component whose hook failed
+ * (its PostInstall or Sync), e.g. the guest bridge's APIService unavailable
+ * for more than 10 minutes (operator v0.7.0).
+ */
+export const HOOK_FAILED = 'installed but hook failed: ';
+
+/** Why the component's hook failed, if it did. */
+export function hookFailure(status: ComponentStatus | undefined): string | undefined {
+  const message = status?.message;
+  return message?.startsWith(HOOK_FAILED) ? message.slice(HOOK_FAILED.length) : undefined;
 }
 
 /**
@@ -290,6 +305,13 @@ export function componentActivation(
       reason: "Hangar's node agent is turned off (features.virt.hangar.nodeAgent: false).",
     };
   }
+  if (name === HANGAR_GUEST_BRIDGE && config.features?.virt?.hangar?.guestBridge === false) {
+    return {
+      active: false,
+      ...(feature ? { feature } : {}),
+      reason: "Hangar's guest bridge is turned off (features.virt.hangar.guestBridge: false).",
+    };
+  }
   return feature ? { active: true, feature } : { active: true };
 }
 
@@ -325,6 +347,7 @@ export const CATEGORIES: Record<string, string> = {
   'kubevirt-manager': 'Virtualization',
   hangar: 'Virtualization',
   'hangar-node-agent': 'Virtualization',
+  'hangar-guest-bridge': 'Virtualization',
   'k4all-metadata': 'Virtualization',
   cairn: 'Storage',
   argocd: 'GitOps',

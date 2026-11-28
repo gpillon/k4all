@@ -41,7 +41,7 @@ export const SETTINGS_PAGES: {
     path: '/k4all/settings/virtualization',
     label: 'Virtualization',
     icon: 'mdi:monitor-multiple',
-    help: 'KubeVirt feature gates, VM state storage, Hangar node agent, metadata service.',
+    help: 'KubeVirt feature gates, VM state storage, Hangar node agent and guest bridge, metadata service.',
     capability: 'virtSettings',
   },
   {
@@ -57,7 +57,7 @@ export const SETTINGS_PAGES: {
     path: '/k4all/settings/storage',
     label: 'Storage',
     icon: 'mdi:database-outline',
-    help: 'Rook/Ceph with the Cairn console: disks, small clusters.',
+    help: 'Rook/Ceph with the Cairn console: disks, small clusters, CSI image, crash collector, monitoring, CephFS.',
     capability: 'rookStorage',
   },
 ];

@@ -3,11 +3,13 @@
  * the Rook operator and the RBD CSI driver, and creates once, with defaults,
  * the CephCluster rook-ceph, the pool vm-pool and the StorageClass ceph-rbd.
  * From then on they belong to the Cairn console: the ClusterConfig only holds
- * the creation inputs (storage.deviceFilter, smallCluster). Turning Rook off
+ * the creation inputs (storage.deviceFilter or, from operator v0.7.0,
+ * storage.nodes; smallCluster). Turning Rook off
  * is refused while a CephCluster exists, and k4all never wipes disks (D24).
  */
 
 import { ComponentNotice, componentNotice } from './components';
+import { namedDeviceIssues, osdHosts, storageNodes } from './rookSettings';
 import { CephClusterLike, ClusterConfigSpec, NodeLike, ReleaseManifestObject } from './types';
 import type { Issue } from './validation';
 
@@ -22,15 +24,16 @@ export interface RookDefaults {
   needsAllow: boolean;
 }
 
-/** What the RookHook creates for a node count (spec §9.2). */
-export function rookDefaults(nodes: number): RookDefaults {
-  if (nodes <= 1) {
-    return { mons: 1, mgrs: 1, poolSize: 1, needsAllow: true };
-  }
-  if (nodes === 2) {
-    return { mons: 1, mgrs: 2, poolSize: 2, needsAllow: true };
-  }
-  return { mons: nodes >= 5 ? 5 : 3, mgrs: 2, poolSize: 3, needsAllow: false };
+/**
+ * What the RookHook creates for a node count (spec §9.2, planRook): mons
+ * and mgrs from the nodes, the pool size from the OSD hosts (every node, or
+ * the nodes storage.nodes names: one replica per host, at most 3).
+ */
+export function rookDefaults(nodes: number, osdHosts: number = nodes): RookDefaults {
+  const mons = nodes >= 5 ? 5 : nodes >= 3 ? 3 : 1;
+  const mgrs = nodes >= 2 ? 2 : 1;
+  const hosts = Math.max(osdHosts, 1);
+  return { mons, mgrs, poolSize: Math.min(hosts, 3), needsAllow: hosts < 3 };
 }
 
 export interface RookView {
@@ -89,18 +92,26 @@ export function rookView(input: {
     );
   }
   const count = schedulableNodes(input.nodes);
+  const named = storageNodes(input.spec).length;
+  const hosts = osdHosts(input.spec, count);
   const policy = policyOf(input.spec);
   let small: RookView['small'];
-  if (count < 3) {
-    const d = rookDefaults(count);
-    const nodesText = `${count} node${count === 1 ? '' : 's'}`;
+  if (hosts < 3) {
+    const d = rookDefaults(count, hosts);
+    const nodesText = named
+      ? `${named} named node${named === 1 ? '' : 's'}`
+      : `${count} node${count === 1 ? '' : 's'}`;
     small = {
-      nodes: count,
+      nodes: hosts,
       policy,
       text:
         policy === 'Refuse'
-          ? `With ${nodesText} and smallCluster Refuse, k4all creates no Ceph cluster: Ceph needs 3 nodes for redundancy.`
-          : `No redundancy: ${d.mons} mon and a pool of size ${d.poolSize}. A failed disk or node loses the data on it.`,
+          ? named
+            ? `With ${nodesText} and smallCluster Refuse, k4all creates no Ceph cluster: every replica needs its own OSD host, and Ceph needs 3.`
+            : `With ${nodesText} and smallCluster Refuse, k4all creates no Ceph cluster: Ceph needs 3 nodes for redundancy.`
+          : `No redundancy: ${d.mons} mon${d.mons === 1 ? '' : 's'} and a pool of size ${
+              d.poolSize
+            }. A failed disk or node loses the data on it.`,
     };
   }
   return {
@@ -122,6 +133,8 @@ export interface DiskInfo {
   signatures: string[];
   holders: string[];
   mounts: string[];
+  /** Its /dev/disk/by-id names (without the directory); absent from older agents. */
+  byId?: string[];
 }
 
 export interface DiskCandidate extends DiskInfo {
@@ -131,6 +144,14 @@ export interface DiskCandidate extends DiskInfo {
   matches: boolean;
   /** Rook makes it an OSD. */
   osd: boolean;
+  /**
+   * It holds LVM (an LVM signature, or device-mapper volumes on it or its
+   * partitions): Rook never takes it whole, but a logical volume of its
+   * volume group can be named (features.rook.storage.nodes).
+   */
+  lvm: boolean;
+  /** With named devices: storage.nodes names this disk for its node. */
+  named: boolean;
 }
 
 function filterRegExp(filter: string | undefined): RegExp | null {
@@ -144,8 +165,21 @@ function filterRegExp(filter: string | undefined): RegExp | null {
   }
 }
 
-/** Which disks Rook would take: blank ones whose name matches the filter. */
-export function diskCandidates(disks: DiskInfo[], filter: string | undefined): DiskCandidate[] {
+/** The paths a disk is known by: /dev/<name> and /dev/disk/by-id/<id>. */
+export function diskPaths(d: DiskInfo): string[] {
+  return [`/dev/${d.name}`, ...(d.byId ?? []).map(id => `/dev/disk/by-id/${id}`)];
+}
+
+/**
+ * Which disks Rook would take: blank ones whose name matches the filter;
+ * with named devices (the node's paths in storage.nodes), the blank ones
+ * named.
+ */
+export function diskCandidates(
+  disks: DiskInfo[],
+  filter: string | undefined,
+  named?: string[]
+): DiskCandidate[] {
   const re = filterRegExp(filter);
   return disks.map(d => {
     const blank =
@@ -153,8 +187,16 @@ export function diskCandidates(disks: DiskInfo[], filter: string | undefined): D
       d.signatures.length === 0 &&
       d.holders.length === 0 &&
       d.mounts.length === 0;
+    const lvm =
+      d.signatures.includes('lvm') ||
+      (d.holders.some(h => h.startsWith('dm-')) &&
+        !d.signatures.some(s => s === 'luks' || s === 'ceph'));
+    if (named) {
+      const isNamed = diskPaths(d).some(p => named.includes(p));
+      return { ...d, blank, lvm, matches: isNamed, named: isNamed, osd: blank && isNamed };
+    }
     const matches = filter ? !!re && re.test(d.name) : true;
-    return { ...d, blank, matches, osd: blank && matches };
+    return { ...d, blank, lvm, matches, named: false, osd: blank && matches };
   });
 }
 
@@ -180,16 +222,22 @@ export function rookIssues(
   if (!rook || ctx.created) {
     return [];
   }
-  const issues = deviceFilterIssues(rook.storage?.deviceFilter);
+  const issues = [
+    ...deviceFilterIssues(rook.storage?.deviceFilter),
+    ...namedDeviceIssues(spec, ctx.nodes),
+  ];
   const count = schedulableNodes(ctx.nodes);
-  if (rook.enabled && policyOf(spec) === 'Allow' && count < 3) {
-    const d = rookDefaults(count);
+  const hosts = osdHosts(spec, count);
+  if (rook.enabled && policyOf(spec) === 'Allow' && hosts < 3) {
+    const d = rookDefaults(count, hosts);
+    const where =
+      storageNodes(spec).length > 0
+        ? `${hosts} named node${hosts === 1 ? '' : 's'}`
+        : `${count} node${count === 1 ? '' : 's'}`;
     issues.push({
       field: 'rookSmallCluster',
       severity: 'warning',
-      message: `Ceph on ${count} node${count === 1 ? '' : 's'} has no redundancy (pool size ${
-        d.poolSize
-      }): a failed disk or node loses data.`,
+      message: `Ceph on ${where} has no redundancy (pool size ${d.poolSize}): a failed disk or node loses data.`,
     });
   }
   return issues;

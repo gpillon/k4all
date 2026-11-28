@@ -5,7 +5,9 @@
  * .metadata, features.rook, nodes) and status.nodes; from v0.7.0 upgrade
  * readiness and remediations (ClusterConfig spec.upgrades, the rollout's
  * approvals, blockers and records; ClusterUpgrade spec.approvals,
- * status.readiness, status.nodes[].blockers, status.remediations).
+ * status.readiness, status.nodes[].blockers, status.remediations), and
+ * features.rook's storage.nodes, csi, monitoring and filesystem,
+ * features.virt.hangar.guestBridge.
  *
  * Every field is optional: the operator's Go types use omitempty, so a field
  * the user never set is simply missing from the object the API server returns.
@@ -86,6 +88,12 @@ export interface KubeVirtSettings {
 export interface HangarSettings {
   /** Hangar's privileged node agent; absent: the release default (installed with virt). */
   nodeAgent?: boolean;
+  /**
+   * Hangar's guest bridge, the aggregated API behind Hangar's Guest and
+   * Files tabs (operator v0.7.0); absent: the release default (installed
+   * with virt), false uninstalls it.
+   */
+  guestBridge?: boolean;
 }
 
 export type MetadataScope = 'Labelled' | 'All';
@@ -113,12 +121,36 @@ export interface VirtConfig {
 
 export type RookSmallCluster = 'Refuse' | 'Allow';
 
+/** A node of features.rook.storage.nodes and the devices that become its OSDs (operator v0.7.0). */
+export interface RookStorageNode {
+  name: string;
+  /** /dev/<vg>/<lv>, /dev/disk/by-id/<id> or /dev/<name>; 1 to 32. */
+  devices: { name: string }[];
+}
+
+/** The cephcsi build of the Ceph CSI drivers (operator v0.7.0); absent means Auto. */
+export type RookCSIImageVariant = 'Auto' | 'Standard' | 'OlderCPUs';
+
 export interface RookConfig {
   enabled?: boolean;
-  /** Creation input: read once, when k4all creates the CephCluster. */
-  storage?: { deviceFilter?: string };
+  /**
+   * Creation input: read once, when k4all creates the CephCluster.
+   * deviceFilter and nodes (operator v0.7.0) are exclusive.
+   */
+  storage?: { deviceFilter?: string; nodes?: RookStorageNode[] };
   /** "" means Refuse. */
   smallCluster?: RookSmallCluster | string;
+  /** The Ceph CSI drivers (operator v0.7.0). */
+  csi?: { imageVariant?: RookCSIImageVariant | string };
+  /** Ceph metrics for a Prometheus Operator the cluster runs (operator v0.7.0); absent: off. */
+  monitoring?: { enabled?: boolean; labels?: Record<string, string> };
+  /**
+   * CephFS rook-ceph/cephfs and its StorageClass ceph-cephfs (operator
+   * v0.7.0). Absent: created with a CephCluster k4all creates (v2.7.2 on),
+   * not on an older one; true: created now if missing; false: never created
+   * (nor deleted).
+   */
+  filesystem?: { enabled?: boolean };
 }
 
 export type CPUManagerPolicy = 'none' | 'static';
@@ -227,6 +259,16 @@ export const CONDITION_KUBEVIRT_SETTINGS = 'KubeVirtSettings';
 export const CONDITION_NODE_SETTINGS_ROLLOUT = 'NodeSettingsRollout';
 export const CONDITION_ROOK_READY = 'RookReady';
 export const CONDITION_METADATA_SERVICE = 'MetadataService';
+/** The cephcsi build the Ceph CSI drivers run, and why (operator v0.7.0, k4all#121). */
+export const CONDITION_ROOK_CSI_IMAGE = 'RookCSIImage';
+/** features.rook.monitoring and the Prometheus Operator check (operator v0.7.0, k4all#122). */
+export const CONDITION_ROOK_MONITORING = 'RookMonitoring';
+
+/**
+ * On a Node: the x86-64 level its CPU supports ("v1" to "v4"), which
+ * k4all-upgrade publishes on x86_64 nodes from k4all v2.7.2 (ADR-0006).
+ */
+export const NODE_X86_LEVEL_ANNOTATION = 'k4all.magesgate.com/x86-64-level';
 /**
  * True while an entry of spec.upgrades.remediations is ignored (operator
  * v0.7.0): reason UnknownId or AutoNotAllowed, the message names the entries.
@@ -367,7 +409,7 @@ export interface NodeConfigObject {
 /** The part of a core/v1 Node the plugin reads. */
 export interface NodeLike {
   metadata: ObjectMeta;
-  spec?: { unschedulable?: boolean };
+  spec?: { unschedulable?: boolean; taints?: { key: string; value?: string; effect?: string }[] };
   status?: {
     addresses?: { type: string; address: string }[];
     conditions?: Condition[];
@@ -713,8 +755,31 @@ export interface StorageProfileLike {
   };
 }
 
+/** One entry of metadata.managedFields: who owns which fields. */
+export interface ManagedFieldsEntry {
+  manager?: string;
+  operation?: string;
+  subresource?: string;
+  time?: string;
+  fieldsV1?: Record<string, unknown>;
+}
+
 /** The part of a CephCluster (ceph.rook.io/v1) the storage page reads. */
 export interface CephClusterLike {
-  metadata: ObjectMeta & { namespace?: string };
+  apiVersion?: string;
+  kind?: string;
+  metadata: ObjectMeta & { namespace?: string; managedFields?: ManagedFieldsEntry[] };
+  spec?: {
+    /** Day-2, the admins' (Cairn): k4all seeds it once and never owns it. */
+    crashCollector?: { disable?: boolean; daysToRetain?: number };
+    monitoring?: { enabled?: boolean };
+    labels?: Record<string, Record<string, string>>;
+    storage?: {
+      useAllNodes?: boolean;
+      useAllDevices?: boolean;
+      deviceFilter?: string;
+      nodes?: { name: string; devices?: { name: string }[] }[];
+    };
+  };
   status?: { phase?: string; message?: string; state?: string; ceph?: { health?: string } };
 }

@@ -1,7 +1,8 @@
 /*
  * The sections of /k4all/settings/virtualization (k4all v2.7.0): feature
- * gates (#feature-gates), VM state (#vm-state), Hangar's node agent, the
- * metadata service (#metadata). Each edits the settings draft only.
+ * gates (#feature-gates), VM state (#vm-state), Hangar's node agent and,
+ * from k4all v2.7.2, its guest bridge, the metadata service (#metadata).
+ * Each edits the settings draft only.
  */
 
 import { Icon } from '@iconify/react';
@@ -28,7 +29,12 @@ import {
   Typography,
 } from '@mui/material';
 import React from 'react';
-import { componentActivation, displayState } from '../../model/components';
+import {
+  componentActivation,
+  displayState,
+  HANGAR_GUEST_BRIDGE,
+  hookFailure,
+} from '../../model/components';
 import { FIELDS } from '../../model/fields';
 import {
   GateRow,
@@ -51,7 +57,7 @@ import {
 } from '../../model/types';
 import { vmStateInfo } from '../../model/virtSettings';
 import { clusterURL, HANGAR_SETTINGS_URL, HANGAR_URL } from '../common/nav';
-import { ApplyBadge, Mono, Panel, SettingRow, TonePill } from '../common/ui';
+import { ApplyBadge, CapabilityChip, Mono, Panel, SettingRow, TonePill } from '../common/ui';
 import { FieldMessages, isChanged, SectionProps } from '../settings/common';
 
 // ------------------------------------------------------------ Feature gates
@@ -420,21 +426,33 @@ export interface HangarSectionProps extends SectionProps {
   statuses?: Record<string, ComponentStatus>;
 }
 
+/** A Hangar component's state pill (hangar-node-agent, hangar-guest-bridge), when the release has it. */
+function useHangarComponentState(props: HangarSectionProps, name: string) {
+  const spec = props.components[name];
+  return spec
+    ? displayState(props.statuses?.[name], componentActivation(name, spec, props.draft))
+    : null;
+}
+
 export function HangarSection(props: HangarSectionProps) {
   const { draft, base, update, disabled } = props;
   const info = FIELDS.hangarNodeAgent;
   const on = draft.features?.virt?.hangar?.nodeAgent !== false;
   const baseValue = base.features?.virt?.hangar?.nodeAgent;
-  const agent = props.components['hangar-node-agent'];
-  const state = agent
-    ? displayState(
-        props.statuses?.['hangar-node-agent'],
-        componentActivation('hangar-node-agent', agent, draft)
-      )
-    : null;
+  const state = useHangarComponentState(props, 'hangar-node-agent');
+  const bridgeInfo = FIELDS.hangarGuestBridge;
+  const bridgeOn = draft.features?.virt?.hangar?.guestBridge !== false;
+  const bridgeBase = base.features?.virt?.hangar?.guestBridge;
+  const bridgeState = useHangarComponentState(props, HANGAR_GUEST_BRIDGE);
+  const bridgeFailure = hookFailure(props.statuses?.[HANGAR_GUEST_BRIDGE]);
+  const bridgeDisabled = disabled || !props.caps.guestBridge;
   // Off is explicit; on goes back to the release default unless it was set to true.
   const setOn = (checked: boolean) =>
     update(d => setPruned(d, info.path, checked ? (baseValue === true ? true : undefined) : false));
+  const setBridgeOn = (checked: boolean) =>
+    update(d =>
+      setPruned(d, bridgeInfo.path, checked ? (bridgeBase === true ? true : undefined) : false)
+    );
   return (
     <Panel
       title="Hangar"
@@ -464,7 +482,6 @@ export function HangarSection(props: HangarSectionProps) {
         }
         badge={<ApplyBadge mode="live" />}
         changed={isChanged(props, info.path)}
-        last
         control={
           <Stack direction="row" spacing={1} alignItems="center">
             {state && (
@@ -483,6 +500,55 @@ export function HangarSection(props: HangarSectionProps) {
               inputProps={{ 'aria-label': info.label }}
             />
           </Stack>
+        }
+      />
+      <SettingRow
+        label={bridgeInfo.label}
+        htmlFor="k4all-hangar-guest-bridge"
+        help={
+          <>
+            {bridgeInfo.help} It runs as root with a read-only view of kubelet&apos;s pod
+            directories (spc_t under SELinux) to reach each VM&apos;s guest agent. Who may read or
+            change a guest&apos;s files is RBAC on the subresources (Hangar&apos;s{' '}
+            <Mono>hangar-guest-admin</Mono> role).
+          </>
+        }
+        badge={
+          props.caps.guestBridge ? <ApplyBadge mode="live" /> : <CapabilityChip id="guestBridge" />
+        }
+        changed={isChanged(props, bridgeInfo.path)}
+        last
+        control={
+          <Stack direction="row" spacing={1} alignItems="center">
+            {bridgeState && (
+              <TonePill
+                tone={bridgeFailure ? 'warning' : bridgeState.tone}
+                busy={bridgeState.busy}
+                label={bridgeFailure ? 'Unavailable' : bridgeState.label}
+                title={props.statuses?.[HANGAR_GUEST_BRIDGE]?.message}
+              />
+            )}
+            <Switch
+              id="k4all-hangar-guest-bridge"
+              checked={bridgeOn}
+              disabled={bridgeDisabled}
+              onChange={(_, checked) => setBridgeOn(checked)}
+              inputProps={{ 'aria-label': bridgeInfo.label }}
+            />
+          </Stack>
+        }
+        messages={
+          bridgeFailure ? (
+            <Alert severity="warning" sx={{ py: 0 }}>
+              <Box component="span" sx={{ whiteSpace: 'pre-line' }}>
+                {bridgeFailure}
+              </Box>
+              <Typography variant="body2" sx={{ mt: 0.5 }}>
+                Meanwhile kubectl warns and namespace deletions may wait. Turning the bridge off
+                removes its APIService first.
+              </Typography>
+            </Alert>
+          ) : undefined
         }
       />
     </Panel>
