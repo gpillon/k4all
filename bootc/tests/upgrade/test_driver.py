@@ -1642,6 +1642,80 @@ def test_failed_component_after_sync_holds_without_rollback(make_host):
     assert host.clock - started >= datetime.timedelta(minutes=45)
 
 
+# #131 (#49 item 4): on real hardware a Failed component said nothing for
+# the whole wait; its reason was only in the operator's log.
+NODEPORT_TAKEN = ("helm upgrade failed: Service \"headlamp\" is invalid: "
+                  "spec.ports[0].nodePort: Invalid value: 32323: provided port "
+                  "is already allocated")
+
+
+def sync_hop_with(host, status):
+    write_graph(host, STREAM_23)
+    host.write(ku.IMAGE_RELEASE_MANIFEST, yaml.safe_dump(NEW_MANIFEST))
+    host.release_manifest = {"metadata": {"name": "k4all"}, "spec": {"components": {
+        "k4all-operator": dict(NEW_MANIFEST["spec"]["components"]["k4all-operator"])}}}
+    host.component_status = status
+    host._refresh_status()
+    run_cli(host, "run", "--to", "v2.4.0", "--yes")
+
+
+def failed_lines(host, name=None):
+    return [m for m in host.logs if m.startswith("WARNING: ReleaseManifest sync: ")
+            and (name is None or m.startswith(
+                "WARNING: ReleaseManifest sync: %s is Failed" % name))]
+
+
+def test_a_failed_component_is_logged_once_with_its_message(make_host, capsys):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    sync_hop_with(host, {"cert-manager": {"state": "Failed",
+                                          "message": NODEPORT_TAKEN}})
+    st = finish(host)
+    assert "components failed after the sync: cert-manager" in st["hold"]["reason"]
+    assert host.sleeps.count(30) > 10, "many polls"
+    line, = failed_lines(host)
+    assert line.startswith("WARNING: ReleaseManifest sync: cert-manager is "
+                           "Failed: " + NODEPORT_TAKEN + " (the operator retries it")
+    assert st["hop"]["failedComponents"] == {"cert-manager": NODEPORT_TAKEN}
+    capsys.readouterr()
+    assert run_cli(host, "status") == 0
+    assert "Failed:    cert-manager: " + NODEPORT_TAKEN in capsys.readouterr().out
+
+
+def test_a_failed_component_shows_in_status_while_the_sync_waits(make_host, capsys):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    sync_hop_with(host, {"calico": {"state": "Failed", "message": "image pull"}})
+    seen = []
+    real = host.sleep
+
+    def look(seconds):
+        # another process runs `status` while the sync waits
+        if seconds == 30 and not seen:
+            capsys.readouterr()
+            run_cli(host, "status")
+            seen.append(capsys.readouterr().out)
+            host.release_manifest["status"]["components"]["calico"] = {
+                "state": "Installed", "installedVersion": "v3.33.1"}
+        real(seconds)
+    host.sleep = look
+    st = finish(host)
+    assert "Failed:    calico: image pull" in seen[0]
+    assert st["phase"] == "DONE" and not st.get("hold"), "it recovered"
+    assert len(failed_lines(host, "calico")) == 1
+    assert "failedComponents" not in (st.get("hop") or {})
+    capsys.readouterr()
+    run_cli(host, "status")
+    assert "Failed:" not in capsys.readouterr().out
+
+
+def test_a_component_without_a_message_is_still_named(make_host):
+    host = make_host(version="v2.3.0", kubernetes="1.35.10")
+    sync_hop_with(host, {"calico": {"state": "Failed"}})
+    st = finish(host)
+    assert failed_lines(host, "calico")[0].startswith(
+        "WARNING: ReleaseManifest sync: calico is Failed: no message")
+    assert st["hop"]["failedComponents"] == {"calico": ""}
+
+
 def test_a_refused_uninstall_does_not_hold_the_sync(make_host, capsys):
     # k4all-operator v0.5.7 keeps a component Installed, at the version it
     # runs, while its uninstall would break what runs on it: KubeVirt with
