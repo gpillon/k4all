@@ -191,6 +191,147 @@ def test_the_handover_moves_the_pods_then_drops_the_bridge(bridge_pods):
     assert names(net) == [CALICO] and not marker.exists()
 
 
+# --- multus (features.ovsCni) and CRI-O's bridge (#117) ------------------
+MULTUS = "00-multus.conflist"
+
+
+def multus_config(delegate):
+    """multus's own config as its thin plugin writes it, with one delegate."""
+    return json.dumps({
+        "cniVersion": "1.0.0", "name": "multus-cni-network",
+        "plugins": [{"type": "multus",
+                     "kubeconfig": "/etc/cni/net.d/multus.d/multus.kubeconfig",
+                     "delegates": [{"cniVersion": "1.0.0", "name": delegate,
+                                    "plugins": [{"type": delegate}]}]}]})
+
+
+def test_multus_alone_is_not_the_cluster_cni(cni):
+    net, call = cni
+    (net / MULTUS).write_text(multus_config("crio"))
+    assert call("cluster_cni_present").returncode == 1, "multus's own file"
+    (net / "05-other.conf").write_text(json.dumps(
+        {"cniVersion": "0.3.1", "name": "multus-cni-network", "type": "multus"}))
+    (net / "06-other.conflist").write_text(json.dumps(
+        {"name": "x", "plugins": [{"type": "multus-shim"}]}))
+    assert call("cluster_cni_present").returncode == 1, "type multus or multus-shim"
+    (net / CALICO).write_text(json.dumps(
+        {"name": "k8s-pod-network", "plugins": [{"type": "calico"}]}))
+    assert call("cluster_cni_present").returncode == 0, "multus plus Calico"
+
+
+def test_the_first_boot_handover_waits_for_calico_not_multus(cni):
+    # v2.7.1 round: multus wrote its config minutes before Calico, the
+    # handover ran on it and the recreated pods got 10.85.x again.
+    net, call = cni
+    call("lend_crio_bridge_cni")
+    (net / MULTUS).write_text(multus_config("crio"))
+    proc = call("handover_crio_bridge 0")
+    assert proc.returncode == 0
+    assert "not installed yet" in proc.stdout
+    assert names(net) == sorted([MULTUS, BRIDGE])
+    assert (net.parent / "marker").exists(), "the handover is still to come"
+    call("drop_crio_cni")
+    assert names(net) == sorted([MULTUS, BRIDGE]), "the boot keeps it too"
+
+
+@pytest.fixture
+def multus(tmp_path):
+    """handover_crio_bridge on a bootstrap with multus, and a fake kubectl
+    whose delete of multus's pod makes multus write its config again."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    net = tmp_path / "net.d"
+    net.mkdir()
+    share = tmp_path / "share"
+    share.mkdir()
+    (share / BRIDGE).write_text(json.dumps(
+        {"cniVersion": "1.0.0", "name": "crio", "plugins": [{"type": "bridge"}]}))
+    (tmp_path / "multus-pods").write_text("pod/kube-multus-ds-abcde\n")
+    (tmp_path / "multus-new").write_text(multus_config("k8s-pod-network"))
+    (tmp_path / "pods.json").write_text(json.dumps({"items": [
+        {"metadata": {"namespace": "kube-system", "name": "coredns-a"},
+         "spec": {}, "status": {"podIP": "10.85.0.2"}}]}))
+    log = tmp_path / "kubectl.log"
+    kubectl = bin_dir / "kubectl"
+    kubectl.write_text(
+        '#!/bin/bash\nd=%s\necho "$*" >> "$d/kubectl.log"\n'
+        'case " $* " in\n'
+        '  *" -l name=multus "*) [ -e "$d/fail-get" ] && exit 1\n'
+        '      cat "$d/multus-pods" ;;\n'
+        '  *" get pods "*) cat "$d/pods.json" ;;\n'
+        '  *" delete pod/kube-multus-"*) [ -e "$d/fail-delete" ] && exit 1\n'
+        '      [ -e "$d/stays" ] || cp "$d/multus-new" "$d/net.d/%s" ;;\n'
+        'esac\nexit 0\n' % (tmp_path, MULTUS))
+    kubectl.chmod(kubectl.stat().st_mode | stat.S_IEXEC)
+    marker = tmp_path / "marker"
+    marker.write_text("")
+    (net / BRIDGE).write_text((share / BRIDGE).read_text())
+    (net / MULTUS).write_text(multus_config("crio"))
+    (net / CALICO).write_text("{}")
+
+    def call(function):
+        env = dict(os.environ, PATH="%s:%s" % (bin_dir, os.environ["PATH"]),
+                   CNI_NET_DIR=str(net), K4ALL_CNI_SHARE=str(share),
+                   K4ALL_CNI_MARKER=str(marker), K4ALL_MULTUS_WAIT="0",
+                   KUBELET_CLIENT_CERT=str(tmp_path / "no-cert.pem"))
+        proc = subprocess.run(["bash", "-c", 'source "$1"; %s' % function,
+                               "bash", UTILS], env=env, capture_output=True,
+                              text=True, check=False)
+        calls = log.read_text().splitlines() if log.exists() else []
+        return proc, calls
+
+    return call, net, marker
+
+
+def test_multus_on_the_bridge_restarts_before_the_pods_move(multus):
+    # multus copies its delegate into its config when its pod starts and
+    # does not look again: the pods it recreated would get 10.85.x again.
+    call, net, marker = multus
+    proc, calls = call("handover_crio_bridge 0")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    node = subprocess.run(["hostname"], capture_output=True, text=True,
+                          check=True).stdout.strip().lower()
+    assert calls[0] == (
+        "--kubeconfig /etc/kubernetes/admin.conf -n kube-system get pods "
+        "-l name=multus --field-selector spec.nodeName=%s -o name" % node)
+    assert calls[1] == (
+        "--kubeconfig /etc/kubernetes/admin.conf -n kube-system delete "
+        "pod/kube-multus-ds-abcde --wait=false"), "this node's multus only"
+    assert calls[2:] == [
+        "--kubeconfig /etc/kubernetes/admin.conf get pods -A -o json",
+        "--kubeconfig /etc/kubernetes/admin.conf delete pod -n kube-system "
+        "coredns-a --wait=false"], "then the pods, once"
+    assert names(net) == sorted([MULTUS, CALICO]) and not marker.exists()
+
+
+@pytest.mark.parametrize("failure", ["fail-get", "no-pod", "fail-delete", "stays"])
+def test_a_multus_still_on_the_bridge_keeps_it_for_a_retry(multus, failure):
+    call, net, marker = multus
+    if failure == "no-pod":
+        (marker.parent / "multus-pods").write_text("")
+    else:
+        (marker.parent / failure).write_text("")
+    proc, calls = call("handover_crio_bridge 0")
+    assert proc.returncode == 1, "the unit tries again"
+    assert not [c for c in calls if " get pods -A " in c], "no pod is moved"
+    assert names(net) == sorted([MULTUS, BRIDGE, CALICO]) and marker.exists()
+    if failure != "no-pod":
+        (marker.parent / failure).unlink()
+    (marker.parent / "multus-pods").write_text("pod/kube-multus-ds-fghij\n")
+    proc, _ = call("handover_crio_bridge 0")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert names(net) == sorted([MULTUS, CALICO]) and not marker.exists()
+
+
+def test_multus_on_the_cluster_cni_is_left_alone(multus):
+    call, net, marker = multus
+    (net / MULTUS).write_text(multus_config("k8s-pod-network"))
+    proc, calls = call("handover_crio_bridge 0")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not [c for c in calls if "multus" in c]
+    assert names(net) == sorted([MULTUS, CALICO]) and not marker.exists()
+
+
 def test_migrate_config_drops_the_borrowed_bridge_at_boot(tmp_path):
     root = tmp_path / "root"
     (root / "usr/local/bin").mkdir(parents=True)
