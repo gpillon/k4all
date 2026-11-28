@@ -166,7 +166,8 @@ asks for.
 to stop right before a reboot. Each pod gets its own grace period, at least
 30 seconds and at most this. The pods on the pod network stop first and the
 host-network ones after them, so the reboot waits at most twice this. On a single node the preflight warns about the
-pods that ask for more (`k4all-upgrade status`, `Warning:`). A value that is
+pods that ask for more (`k4all-upgrade status`, `Warning:`, while the hop
+runs; from v2.7.2 the commit no longer keeps this advice, #119). A value that is
 not a whole number stops every command until it is fixed.
 
 bootc ships its own `bootc-fetch-apply-updates.timer`, which runs

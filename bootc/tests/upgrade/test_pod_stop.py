@@ -412,7 +412,7 @@ def test_a_single_node_warns_about_pods_that_ask_for_more_than_the_most(make_hos
                  api_pod("old-job", 9999, phase="Succeeded"),
                  api_pod("elsewhere", 9999, node="k4all-node-2")]
     hop(host)
-    warning = ku.load_state(host)["hop"]["warning"]
+    warning = ku.load_state(host)["hop"]["preflightWarning"]
     assert warning.startswith(
         "a single node is not drained, and the reboot gives each pod at most "
         "300 s to stop (podStopMaxSeconds): vms/virt-launcher-win11-k8d2c asks "
@@ -439,7 +439,7 @@ def test_a_single_node_without_long_pods_has_no_warning(make_host):
     host = single_node(make_host, LAUNCHER)
     host.pods = [api_pod("virt-launcher-slow-shutdown-7xq2m", 210)]
     hop(host)
-    assert not ku.load_state(host)["hop"].get("warning")
+    assert not ku.hop_warnings(ku.load_state(host)["hop"])
 
 
 def test_a_node_that_is_drained_has_no_warning(make_host):
@@ -449,7 +449,7 @@ def test_a_node_that_is_drained_has_no_warning(make_host):
     write_graph(host, STREAM_23)
     host.pods = [api_pod("virt-launcher-win11-k8d2c", 3630)]
     hop(host)
-    assert not ku.load_state(host)["hop"].get("warning")
+    assert not ku.hop_warnings(ku.load_state(host)["hop"])
 
 
 def test_pods_that_cannot_be_read_only_skip_the_warning(make_host):
@@ -462,6 +462,51 @@ def test_pods_that_cannot_be_read_only_skip_the_warning(make_host):
         return real(args, input_text, kubeconfig)
     host._kubectl = failing
     hop(host)
-    assert not ku.load_state(host)["hop"].get("warning")
+    assert not ku.hop_warnings(ku.load_state(host)["hop"])
     assert any(m.startswith("cannot check the grace periods of the pods")
                for m in host.logs)
+
+
+# --- the advice is over with the hop (#119) ----------------------------------
+# Up to v2.7.1 the commit kept it in the history, and `status` repeated
+# "Stop them before the hop" after the hop was over.
+STOP_THEM = "Stop them before the hop"
+
+
+def test_the_advice_is_not_kept_after_the_hop(make_host, capsys):
+    host = single_node(make_host, WINDOWS)
+    host.pods = [api_pod("virt-launcher-win11-k8d2c", 3630)]
+    hop(host)
+    host.logs.clear()
+    assert run_cli(host, "resume") == 0
+    st = ku.load_state(host)
+    assert st["phase"] == "DONE" and st["current"] == "v2.3.1"
+    assert "warning" not in st["history"][-1]
+    assert not any(STOP_THEM in m for m in host.logs), "not logged again"
+    capsys.readouterr()
+    assert run_cli(host, "status") == 0
+    out = capsys.readouterr().out
+    assert STOP_THEM not in out and "Warning:" not in out
+
+
+def test_the_advice_an_older_release_wrote_is_shown_but_not_kept(make_host, capsys):
+    # A hop into v2.7.2 starts on v2.7.1, whose PREFLIGHT put the advice in
+    # the hop's "warning"; the new release's tool runs the commit.
+    host = single_node(make_host, WINDOWS)
+    host.pods = [api_pod("virt-launcher-win11-k8d2c", 3630)]
+    hop(host)
+    st = ku.load_state(host)
+    st["hop"]["warning"] = st["hop"].pop("preflightWarning")
+    ku.save_state(host, st)
+    assert ku.node_report(st)[ku.ANNOTATION_MESSAGE].startswith(
+        "a single node is not drained"), "upgrade-message during the hop"
+    capsys.readouterr()
+    assert run_cli(host, "status") == 0
+    assert "Warning:   a single node is not drained" in capsys.readouterr().out, \
+        "during the hop, as before"
+    assert run_cli(host, "resume") == 0
+    st = ku.load_state(host)
+    assert st["phase"] == "DONE" and "warning" not in st["history"][-1]
+    capsys.readouterr()
+    assert run_cli(host, "status") == 0
+    assert STOP_THEM not in capsys.readouterr().out
