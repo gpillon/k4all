@@ -1300,6 +1300,42 @@ def long_grace_warning(most, pods):
             % (GRACE_WARNING_PREFIX, most, ", ".join(named), CONFIG_FILE))
 
 
+# Where a hop keeps what it warns about (#119). Each writer has its own
+# field, so the commit keeps what is still true after the hop and drops
+# the advice for before it:
+# - preflightWarning: PREFLIGHT's advice (the pods a single node's reboot
+#   cuts short), shown during the hop only;
+# - kubeVipWarning: a kube-vip.yaml POST_BOOT left as it is; still true
+#   after the hop, so kept in the history;
+# - syncWarnings: what the SYNC could not do (an uninstall the operator
+#   refuses), a list; kept in the history.
+# "warning" is where a release before v2.7.2 put all three; a hop that
+# started there carries its PREFLIGHT advice in it. It is shown during
+# the hop and never kept. The history entry keeps "warning" (one string)
+# for the readers of state.json.
+def hop_warnings(hop):
+    """What the hop warns about while it runs, in the order it was found."""
+    hop = hop or {}
+    out = []
+    for text in [hop.get("preflightWarning"), hop.get("warning"),
+                 hop.get("kubeVipWarning")] + list(hop.get("syncWarnings") or []):
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def history_warning(hop):
+    """The warning a committed hop keeps in the history: what the new
+    release found and is still true (kube-vip, the sync's refusals), never
+    the preflight's advice. None when there is none."""
+    hop = hop or {}
+    out = []
+    for text in [hop.get("kubeVipWarning")] + list(hop.get("syncWarnings") or []):
+        if text and text not in out:
+            out.append(text)
+    return "; ".join(out) or None
+
+
 def declares_no_controller(pod):
     """Whether ``pod`` makes `kubectl drain` without --force refuse the
     drain (kubectl's unreplicatedFilter): no ownerReference is its
@@ -1502,10 +1538,11 @@ def node_report(state, role=None, release=None, problem=None, target=None):
             # (v0.5.0) reads upgrade-message only next to HOLD
             want[ANNOTATION_MESSAGE] = short_message("waiting: %s"
                                                      % state["waiting"])
-        elif state["hop"].get("warning"):
+        elif hop_warnings(state["hop"]):
             # something to fix that does not stop the hop (a kube-vip.yaml
             # that cannot be read); gone with the hop
-            want[ANNOTATION_MESSAGE] = short_message(state["hop"]["warning"])
+            want[ANNOTATION_MESSAGE] = short_message(
+                "; ".join(hop_warnings(state["hop"])))
     elif problem:
         want[ANNOTATION_PHASE] = PHASE_HOLD
         want[ANNOTATION_MESSAGE] = short_message(problem)
@@ -2617,17 +2654,13 @@ class Upgrader:
     def _warn_long_grace(self, kc, hop):
         most = pod_stop_max_seconds(self.cfg)
         pods = self._node_pods(kc, "the grace periods of the pods")
-        warnings = [w for w in (hop.get("warning") or "").split("; ")
-                    if w and not w.startswith(GRACE_WARNING_PREFIX)]
         long_ones = long_grace_pods(pods or [], most)
         if long_ones:
             warning = long_grace_warning(most, long_ones)
             self.host.log("WARNING: %s" % warning)
-            warnings.append(warning)
-        if warnings:
-            hop["warning"] = "; ".join(warnings)
+            hop["preflightWarning"] = warning
         else:
-            hop.pop("warning", None)
+            hop.pop("preflightWarning", None)
 
     def _cluster_not_ready(self, kc, check_nodes=True):
         """(problem, nodes): what keeps the control plane from being ready
@@ -3135,7 +3168,9 @@ class Upgrader:
             changed, warning = False, "kube-vip: %s" % exc
         if warning:
             self.host.log("WARNING: %s" % warning)
-            hop["warning"] = warning
+            hop["kubeVipWarning"] = warning
+        else:
+            hop.pop("kubeVipWarning", None)
         if changed and wait:
             # kubelet restarts kube-vip and the VIP may move: the next steps
             # need the API again. /readyz is enough here.
@@ -3516,11 +3551,12 @@ class Upgrader:
             refused = self.sync_manifest(state) or []
             self._cilium_after_sync(before, before_rm)
             # Shown in upgrade-message during the hop, kept in the history
-            # and by `status` after it: the hop must not hide them.
-            warnings = [w for w in (hop.get("warning") or "").split("; ") if w]
+            # and by `status` after it: the hop must not hide them. A sync
+            # that runs again (after a HOLD) does not repeat them.
+            warnings = list(hop.get("syncWarnings") or [])
             warnings += [w for w in refused if w not in warnings]
             if warnings:
-                hop["warning"] = "; ".join(warnings)
+                hop["syncWarnings"] = warnings
 
     # --- COMMIT ----------------------------------------------------------
     def commit(self, state):
@@ -3530,9 +3566,12 @@ class Upgrader:
         state["history"].append({"from": hop["from"], "to": hop["to"],
                                  "result": "ok",
                                  "at": host.now().isoformat(timespec="seconds")})
-        if hop.get("warning"):
-            state["history"][-1]["warning"] = hop["warning"]
-            host.log("WARNING: %s" % hop["warning"])
+        # Only what is still true after the hop: the preflight's advice
+        # ("Stop them before the hop") is over once the hop is (#119).
+        warning = history_warning(hop)
+        if warning:
+            state["history"][-1]["warning"] = warning
+            host.log("WARNING: %s" % warning)
         state["current"] = hop["to"]
         state["hop"] = None
         state["phase"] = "IDLE"
@@ -4354,8 +4393,9 @@ def cmd_status(host, cfg, args):
                                            state["hop"]["kind"]))
     if state.get("pending"):
         print("Then:      %s" % " -> ".join(r["version"] for r in state["pending"]))
-    if (state.get("hop") or {}).get("warning"):
-        print("Warning:   %s" % state["hop"]["warning"])
+    warnings = hop_warnings(state.get("hop"))
+    if warnings:
+        print("Warning:   %s" % "; ".join(warnings))
     if state.get("hold"):
         print("HOLD:      %s" % state["hold"]["reason"])
     elif state.get("waiting"):
