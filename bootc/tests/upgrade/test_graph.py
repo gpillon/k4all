@@ -11,7 +11,7 @@ import sys
 import pytest
 import yaml
 
-from conftest import LADDER, REPO, ku, release
+from conftest import LADDER, REPO, ku, release, run_cli, write_graph
 
 RELEASES_YAML = os.path.join(REPO, "bootc", "upgrade", "releases.yaml")
 
@@ -55,6 +55,64 @@ def test_repo_graph_follows_the_versioning_rules():
         releases = ku.load_graph(yaml.safe_load(fh))
     assert releases, "releases.yaml lists no release"
     assert ku.validate_graph(releases) == []
+
+
+# #151: the step compared the Kubernetes minor only, so a release with a
+# lower Kubernetes patch than the one before passed; kubeadm does not
+# downgrade, and its kubelet would be older than the control plane.
+STEP_BASE = ("v2.7.1", "patch", "v2.7.0")
+
+
+@pytest.mark.parametrize("prev_k8s, rel_k8s, prev_crio, rel_crio, error", [
+    ("1.36.7", "1.36.6", "1.36", "1.36",
+     "v2.7.2: Kubernetes goes backwards (1.36.7 -> 1.36.6)"),
+    ("1.36.6", "1.36.6", "1.36", "1.36", None),
+    ("1.36.6", "1.36.7", "1.36", "1.36", None),
+    ("v1.36.7", "1.36.6", "1.36", "1.36",
+     "v2.7.2: Kubernetes goes backwards (1.36.7 -> 1.36.6)"),
+    # a CRI-O pinned to its patch
+    ("1.36.6", "1.36.6", "1.36.3", "1.36.2",
+     "v2.7.2: CRI-O goes backwards (1.36.3 -> 1.36.2)"),
+    ("1.36.6", "1.36.6", "1.36.2", "1.36.3", None),
+    # the CRI-O line (Fedora's cri-o1.36): only its minor counts
+    ("1.36.6", "1.36.6", "1.36", "1.36.1", None),
+    ("1.36.6", "1.36.6", "1.36.4", "1.36", None),
+])
+def test_a_step_never_lowers_the_kubernetes_or_cri_o_version(
+        prev_k8s, rel_k8s, prev_crio, rel_crio, error):
+    prev = ku.Release(release(*STEP_BASE, prev_k8s, prev_crio, 45))
+    rel = ku.Release(release("v2.7.2", "patch", "v2.7.0", rel_k8s, rel_crio, 45))
+    errors = [e for e in ku._validate_step(prev, rel) if "backwards" in e]
+    assert errors == ([error] if error else [])
+
+
+def test_a_lower_kubernetes_minor_is_still_refused():
+    releases = graph([release("v2.8.0", "minor", "v2.7.0", "1.37.0", "1.37", 45),
+                      release("v2.9.0", "minor", "v2.8.0", "1.36.9", "1.36", 45)])
+    errors = ku.validate_graph(releases)
+    assert "v2.9.0: Kubernetes goes backwards (1.37.0 -> 1.36.9)" in errors
+    assert "v2.9.0: CRI-O goes backwards (1.37 -> 1.36)" in errors
+
+
+def test_a_graph_that_lowers_the_kubernetes_patch_is_not_planned(make_host, capsys):
+    host = make_host(version="v2.7.0", kubernetes="1.36.6")
+    write_graph(host, [release("v2.7.0", "minor", "v2.6.0", "1.36.6", "1.36", 45),
+                       release("v2.7.1", "patch", "v2.7.0", "1.36.7", "1.36", 45),
+                       release("v2.7.2", "patch", "v2.7.0", "1.36.6", "1.36", 45)])
+    assert run_cli(host, "plan") != 0
+    assert any("the upgrade graph is invalid" in m and
+               "v2.7.2: Kubernetes goes backwards (1.36.7 -> 1.36.6)" in m
+               for m in host.logs + [capsys.readouterr().err]), host.logs
+    assert ku.load_state(host) is None
+
+
+def test_every_step_of_the_repo_graph_keeps_or_raises_kubernetes_and_cri_o():
+    with open(RELEASES_YAML, encoding="utf-8") as fh:
+        releases = ku.load_graph(yaml.safe_load(fh))
+    for prev, rel in zip(releases, releases[1:]):
+        assert ku.k8s_key(rel.kubernetes) >= ku.k8s_key(prev.kubernetes), rel.version
+        assert ku.k8s_minor(rel.crio) >= ku.k8s_minor(prev.crio), rel.version
+        assert not [e for e in ku._validate_step(prev, rel) if "backwards" in e]
 
 
 def test_repo_graph_starts_with_the_bridge():
