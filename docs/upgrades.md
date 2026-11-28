@@ -38,8 +38,8 @@ It also turns off bootc's own auto-update timer (see below).
 
 | | Changes | How it is reached |
 |---|---|---|
-| **minor** (`v2.Y.0`) | the Kubernetes minor, the Fedora major or the CRI-O minor; replaces a platform component (e.g. the ingress controller); or carries a migration `bootc rollback` cannot undo (CRDs, the first component sync) | every minor is a mandatory stop |
-| **patch** (`v2.Y.z`) | fixes, tooling, Kubernetes patches, component patches inside the same lines | patches inside a stream can be skipped |
+| **minor** (`v2.Y.0`) | the Kubernetes minor, the Fedora major or the CRI-O minor; replaces a platform component (e.g. the ingress controller); or carries a migration `bootc rollback` cannot undo (a CRD change that is not additive, the first component sync) | every minor is a mandatory stop |
+| **patch** (`v2.Y.z`) | fixes, tooling, Kubernetes patches, component patches inside the same lines, additive CRD changes (new optional fields) | patches inside a stream can be skipped |
 
 Kubernetes never moves more than one minor per release, and never in the
 same release as a Fedora major. Before it leaves a stream, a node always takes

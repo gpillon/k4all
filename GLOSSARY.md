@@ -192,3 +192,29 @@ _Avoid_: node update, rolling restart, upgrade
 **Rollout step**:
 One node's turn in the node-settings rollout, from its cordon to its uncordon (or, for a restart, from the request to the answer).
 _Avoid_: hop (a hop moves a node to another release)
+
+## Upgrade readiness
+
+**Readiness report**:
+What each node's drain and reboot would do now, per node in upgrade order, as findings.
+_Avoid_: preflight (k4all-upgrade's PREFLIGHT is a hop phase), health check
+
+**Finding**:
+One thing the report found, with a severity: **Blocks** (the drain cannot end without a change), **Disrupts** (a workload is down for the whole reboot, shuts down, or loses data), **Info** (it moves with at most a restart, or is worth knowing).
+_Avoid_: issue, warning, problem
+
+**Drain blocker** (blocker):
+A finding that holds a node of a ClusterUpgrade before its cordon, now.
+_Avoid_: stuck pod
+
+**Remediation**:
+A catalog entry that removes or softens a finding for one drain: a detector, an action, and an undo. **Mode** (per remediation): auto, ask, off.
+_Avoid_: fix (in the API; "fix" is fine in the UI), workaround, hook (a component hook is something else)
+
+**Approval**:
+A person's answer to one remediation of one object for one upgrade: apply it, or accept going on without it.
+_Avoid_: consent, override
+
+**Remediation record**:
+What k4all changed on an object for a drain and must put back, kept on that object and shown in the ClusterUpgrade status. **Restore**: putting it back.
+_Avoid_: rollback (a node's rollback is something else), revert
