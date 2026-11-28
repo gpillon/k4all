@@ -1,5 +1,7 @@
 /*
- * Review of an upgrade before it starts: the planned path hop by hop, what
+ * Review of an upgrade before it starts: with k4all-operator v0.7.0 first
+ * "Before you upgrade" (the readiness report, with the fixes to pre-approve
+ * for the release being started), then the planned path hop by hop, what
  * each hop changes, the node order, the drain behaviour (editable), the
  * reboots and downtime to expect, then the server dry run of the patch.
  * Also reviews a change of the upgrade settings.
@@ -27,7 +29,23 @@ import {
   Typography,
 } from '@mui/material';
 import React from 'react';
-import { NodeConfigObject, NodeLike } from '../../model/types';
+import {
+  approvalKey,
+  Choice,
+  initialSelection,
+  mergePreApproval,
+  readinessView,
+  safeSelection,
+  Selection,
+  selectionAnswers,
+  shownOptions,
+} from '../../model/readiness';
+import {
+  NodeConfigObject,
+  NodeLike,
+  ReadinessReport,
+  RemediationApproval,
+} from '../../model/types';
 import {
   changesKubernetesMinor,
   DEFAULT_DRAIN_TIMEOUT_MINUTES,
@@ -43,6 +61,7 @@ import { Mono } from '../common/ui';
 import { ChangeList } from '../review/ReviewDialog';
 import { YamlDiff } from '../review/YamlDiff';
 import { NodeOrder, PlanTimeline } from './parts';
+import { ReadinessBody, ReadinessHeader, selectControls } from './readiness';
 import { UpgradeFlow, UpgradeReviewData } from './useUpgradeFlow';
 
 function Section(props: { icon: string; title: string; children: React.ReactNode }) {
@@ -78,6 +97,8 @@ function StartPlan(props: {
   setTimeout: (v: string) => void;
   cont: boolean;
   setCont: (v: boolean) => void;
+  /** Operator v0.7.0: spec.drain.confirmDisruptions, shown when set. */
+  confirm?: { value: boolean; set: (v: boolean) => void };
   timeoutError?: string;
   plan: Plan;
 }) {
@@ -165,6 +186,17 @@ function StartPlan(props: {
               }
               label="Continue when the drain times out"
             />
+            {props.confirm && (
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={props.confirm.value}
+                    onChange={(_, checked) => props.confirm?.set(checked)}
+                  />
+                }
+                label="Ask also for disruptions"
+              />
+            )}
           </Stack>
         )}
       </Section>
@@ -200,13 +232,86 @@ function StartPlan(props: {
   );
 }
 
+/** "Before you upgrade", the review's first step: the report, and the fixes to pre-approve. */
+function PreApproveSection(props: {
+  report: ReadinessReport;
+  release: string;
+  selection: Selection;
+  setSelection: (s: Selection) => void;
+  headlampNode?: string;
+  headlampUnknown?: boolean;
+  now: number;
+  onCheck: () => void;
+  checking: boolean;
+}) {
+  const view = readinessView(props.report, {
+    release: props.release,
+    headlampNode: props.headlampNode,
+  });
+  const setChoice = (key: string, choice: Choice) =>
+    props.setSelection({ ...props.selection, [key]: choice });
+  const hasSafe =
+    JSON.stringify(safeSelection(props.report, props.selection)) !==
+    JSON.stringify(props.selection);
+  return (
+    <Section icon="mdi:clipboard-list-outline" title="Before you upgrade">
+      <Stack spacing={1.5}>
+        <ReadinessHeader
+          view={view}
+          now={props.now}
+          onCheck={props.onCheck}
+          checking={props.checking}
+        />
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+          <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
+            Choose a fix for what stops a drain, or fix it yourself before its node; pick fixes for
+            what would disrupt. They are written as approvals for {props.release}, with the upgrade.
+            A fix in mode auto needs no answer; the modes are in Settings → Upgrades.
+          </Typography>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!hasSafe}
+            onClick={() => props.setSelection(safeSelection(props.report, props.selection))}
+          >
+            Approve all safe fixes
+          </Button>
+        </Stack>
+        <ReadinessBody
+          view={view}
+          controls={selectControls(props.selection, setChoice)}
+          headlampUnknown={props.headlampUnknown}
+          release={props.release}
+          onCheck={props.onCheck}
+        />
+      </Stack>
+    </Section>
+  );
+}
+
 export interface UpgradeReviewDialogProps {
   flow: UpgradeFlow;
   nodes: NodeLike[];
   nodeConfigs: NodeConfigObject[];
+  /** The operator has upgrade readiness (v0.7.0): the first step and confirmDisruptions. */
+  readiness?: boolean;
+  /** The live report (the review's base is the object of its dry run). */
+  report?: ReadinessReport | null;
+  headlampNode?: string;
+  headlampUnknown?: boolean;
+  now?: number;
 }
 
-export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewDialogProps) {
+export function UpgradeReviewDialog({
+  flow,
+  nodes,
+  nodeConfigs,
+  readiness,
+  report: liveReport,
+  headlampNode,
+  headlampUnknown,
+  now = Date.now(),
+}: UpgradeReviewDialogProps) {
   const { phase } = flow;
   const open = phase.kind !== 'idle';
   const data = phase.kind === 'review' || phase.kind === 'applying' ? phase.data : null;
@@ -215,11 +320,28 @@ export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewD
   const [ack, setAck] = React.useState(false);
   const [timeout, setTimeoutText] = React.useState('');
   const [cont, setCont] = React.useState(false);
+  const [confirmD, setConfirmD] = React.useState(false);
+  const [selection, setSelection] = React.useState<Selection>({});
+  const release = data?.desired.targetRelease ?? '';
+  const report =
+    readiness && data?.intent.kind === 'start'
+      ? liveReport ?? data.base.status?.readiness ?? null
+      : null;
 
   React.useEffect(() => {
     if (data) {
       setTimeoutText(String(data.desired.drain?.timeoutMinutes || DEFAULT_DRAIN_TIMEOUT_MINUTES));
       setCont(data.desired.drain?.continueOnTimeout === true);
+      setConfirmD(data.desired.drain?.confirmDisruptions === true);
+      // The answers of the release as the review would write them: the
+      // approvals there already, and what was chosen before a new dry run.
+      setSelection(
+        initialSelection(
+          liveReport ?? data.base.status?.readiness ?? undefined,
+          data.desired.approvals,
+          { release: data.desired.targetRelease ?? '' }
+        )
+      );
     }
     if (phase.kind === 'dryRun') {
       setAck(false);
@@ -228,6 +350,19 @@ export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewD
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase.kind, data?.ops]);
 
+  // A newer report (Check again) can bring findings the selection has not
+  // seen: they start from the approvals there, the choices made stay.
+  React.useEffect(() => {
+    if (data && report) {
+      setSelection(prev => ({
+        ...initialSelection(report, data.desired.approvals, { release }),
+        ...prev,
+      }));
+    }
+    // Only when the report changes, not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report?.checkedAt]);
+
   const timeoutNumber = Number(timeout);
   const timeoutError =
     timeout.trim() === '' || !Number.isInteger(timeoutNumber) || timeoutNumber < 1
@@ -235,18 +370,39 @@ export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewD
       : undefined;
   const plan =
     data?.intent.kind === 'start' ? releasePlan(data.base, data.desired.targetRelease ?? '') : null;
+  const preApproval = report
+    ? { answers: selectionAnswers(report, selection), shown: shownOptions(report) }
+    : undefined;
+  const approvalsChanged =
+    !!data &&
+    !!preApproval &&
+    (() => {
+      const keys = (l: RemediationApproval[] | undefined) =>
+        JSON.stringify((l ?? []).map(approvalKey).sort());
+      return (
+        keys(mergePreApproval(data.desired.approvals, { ...preApproval, release })) !==
+        keys(data.desired.approvals)
+      );
+    })();
   const optionsChanged =
     !!data &&
     data.intent.kind === 'start' &&
     (timeoutNumber !== (data.desired.drain?.timeoutMinutes || DEFAULT_DRAIN_TIMEOUT_MINUTES) ||
-      cont !== (data.desired.drain?.continueOnTimeout === true));
+      cont !== (data.desired.drain?.continueOnTimeout === true) ||
+      (!!readiness && confirmD !== (data.desired.drain?.confirmDisruptions === true)) ||
+      approvalsChanged);
 
   const checkAgain = () => {
     if (data?.intent.kind === 'start') {
       flow.review({
         kind: 'start',
         target: data.intent.target,
-        drain: { timeoutMinutes: timeoutNumber, continueOnTimeout: cont },
+        drain: {
+          timeoutMinutes: timeoutNumber,
+          continueOnTimeout: cont,
+          ...(readiness ? { confirmDisruptions: confirmD } : {}),
+        },
+        ...(preApproval ? { approvals: preApproval } : {}),
       });
     }
   };
@@ -307,6 +463,19 @@ export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewD
                   replaces its target; a node in the middle of a hop finishes it first.
                 </Alert>
               )}
+            {data.intent.kind === 'start' && report && (
+              <PreApproveSection
+                report={report}
+                release={release}
+                selection={selection}
+                setSelection={setSelection}
+                headlampNode={headlampNode}
+                headlampUnknown={headlampUnknown}
+                now={now}
+                onCheck={() => flow.checkReadiness()}
+                checking={flow.checking}
+              />
+            )}
             {data.intent.kind === 'start' && (
               <StartPlan
                 data={data}
@@ -316,6 +485,7 @@ export function UpgradeReviewDialog({ flow, nodes, nodeConfigs }: UpgradeReviewD
                 setTimeout={setTimeoutText}
                 cont={cont}
                 setCont={setCont}
+                confirm={readiness ? { value: confirmD, set: setConfirmD } : undefined}
                 timeoutError={timeoutError}
                 plan={plan ?? { hops: [] }}
               />

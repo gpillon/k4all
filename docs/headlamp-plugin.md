@@ -121,6 +121,49 @@ do and the commands:
 The upgrade, or the node-settings rollout, goes on by itself once they are
 gone.
 
+### Before you upgrade (from v2.7.2)
+
+From k4all v2.7.2 (k4all-operator v0.7.0) the operator checks what each
+node's drain and reboot would do: every 30 minutes while a release is
+available or an upgrade runs, before each node's drain, and when you click
+**Check again** (with dry-run evictions). The **Before you upgrade** panel
+shows its verdict ("1 thing will stop the upgrade, 10 VMs will shut down, 7
+until their node is back", per hop when the path has several), then a card
+per node in upgrade order:
+
+- what **stops the drain** (a single-instance database, a VM that cannot
+  move live, a pod that declares no controller, Ceph not healthy), each with
+  its fixes;
+- what **disrupts** (a VM that shuts down, a pod that waits for its node);
+- what is good to know, folded.
+
+Each fix says what it does, its risk (no downtime, or downtime), and its
+mode: *auto* fixes k4all applies by itself, *ask* fixes wait for your
+approval, *off* fixes are only reported (Settings → Upgrades sets the modes).
+
+When you start an upgrade, the review begins with the same cards: choose a
+fix (or "fix it myself", or go on anyway) for what stops a drain, and tick
+the fixes you want for what disrupts. **Approve all safe fixes** picks every
+fix without downtime. The choices are written with the upgrade, for that
+release only: they never carry over to the next upgrade.
+
+While the upgrade runs, a node that waits shows **what holds it now**, with
+**Apply fix** and **Accept** (go on without a fix: for something that stops
+the drain, the node is drained anyway, up to the drain timeout; a pod that
+declares no controller is deleted by the drain). **What k4all changed**
+lists every fix k4all applied and puts back once the node is done; **Put
+back now** restores one at once, for a node that is not coming back.
+
+Headlamp runs one replica: when the node that runs it drains, this page is
+gone for a while (for the whole hop if Headlamp is pinned to that node), and
+its card says so. Answer for that node before it starts, and follow the
+upgrade from kubectl meanwhile: `kubectl get clusterupgrade k4all -w`,
+`kubectl get events --field-selector involvedObject.name=k4all`.
+
+"Ask also for disruptions" in the upgrade settings makes a node wait for an
+answer to what would only disrupt too; off (the default), an unattended
+upgrade goes through them as reported.
+
 ### When a node gets stuck
 
 The page explains what happened and what to run. Commands to run on a node
@@ -244,6 +287,16 @@ reason and the steps (move or delete what lives on Ceph in Cairn, then
 delete the CephCluster). k4all never wipes disks: before turning Rook on
 again, wipe `/var/lib/rook` on every node and the disks the OSDs used.
 
+## Fixes for drains: Settings → Upgrades (v2.7.2)
+
+**Settings → Upgrades** sets the mode of each fix the operator can apply
+before a drain, for upgrades and the node-settings rollout alike: *auto*,
+*ask* (the default) or *off*. *auto* is offered only for the fixes the
+catalog allows it (a fix that creates a volume, changes a workload's size or
+turns a budget's guarantee off always asks). Waiting for Ceph to be healthy
+is built in. An entry the page does not know is shown read-only. The Node
+settings page lists what holds the rollout's drain with the same fixes.
+
 ## Settings that need a newer operator
 
 The Virtualization, Node settings and Storage pages need k4all-operator
@@ -261,9 +314,11 @@ ClusterRoles in `headlamp-plugin/distribution/rbac.yaml`:
 |---|---|
 | `k4all-viewer` | see every page (with read access to the KubeVirt CR, StorageClasses, StorageProfiles and CephClusters for the v2.7.0 pages) |
 | `k4all-editor` | also change settings, overrides, management, re-apply, and switch Ingresses to traefik |
-| `k4all-upgrader` | also start, pause, resume, stop and retry upgrades |
+| `k4all-upgrader` | also start, pause, resume, stop and retry upgrades; from v2.7.2 check again, approve fixes, accept, put back now |
 
-Controls a user may not use are disabled, with the reason.
+Controls a user may not use are disabled, with the reason; the v2.7.2 fix
+buttons are not shown at all. Settings → Upgrades and the rollout's fixes
+need `k4all-editor`.
 
 ## Updates of the plugin itself
 

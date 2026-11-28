@@ -3,7 +3,10 @@
  * the ClusterUpgrade "k4all" (k4all-operator v0.4.0+). The operator plans the
  * hops on the upgrade graph, cordons and drains one node at a time and asks
  * k4all-upgrade on it for the hop; this page chooses the target, follows the
- * progress and helps when a node gets stuck.
+ * progress and helps when a node gets stuck. With k4all-operator v0.7.0
+ * (capability upgradeReadiness): "Before you upgrade" (the readiness
+ * report, Check again, the fixes), the live blockers with Apply fix and
+ * Accept, and "What k4all changed" with Put back now.
  */
 
 import { Icon } from '@iconify/react';
@@ -20,6 +23,7 @@ import {
   Typography,
 } from '@mui/material';
 import React from 'react';
+import { useHeadlampNode } from '../../api/clusterObjects';
 import {
   K4allData,
   useCanPatchClusterUpgrade,
@@ -30,12 +34,20 @@ import {
 } from '../../api/hooks';
 import { capabilities, CAPABILITY_RELEASE, CAPABILITY_SINCE } from '../../model/capabilities';
 import { kubeletVersions } from '../../model/health';
-import { ClusterUpgradeObject, DEFAULT_UPGRADE_GRAPH_URL, NodeLike } from '../../model/types';
+import { readinessView } from '../../model/readiness';
+import {
+  ClusterUpgradeObject,
+  CONDITION_BLOCKED,
+  CONDITION_RULES_INVALID,
+  DEFAULT_UPGRADE_GRAPH_URL,
+  NodeLike,
+} from '../../model/types';
 import {
   canRetry,
   DEFAULT_DRAIN_TIMEOUT_MINUTES,
   drainBehaviour,
   estimate,
+  findUpgradeCondition,
   PLAN_FAILURE,
   upgradeOrder,
   UpgradeView,
@@ -45,6 +57,7 @@ import { LiveStatusBar } from '../common/live';
 import { Centered, K4allGate } from '../common/states';
 import { Mono, PageHeader, Panel, TonePill } from '../common/ui';
 import { CommandLine, NodeOrder } from './parts';
+import { ReadinessPanel, RemediationsPanel } from './readiness';
 import { ReleaseList } from './ReleaseList';
 import { UpgradeNodesTable, UpgradeProgressPanel } from './UpgradeProgress';
 import { UpgradeReviewDialog } from './UpgradeReviewDialog';
@@ -171,6 +184,16 @@ function UpgradesLive({ data }: { data: K4allData }) {
   );
 }
 
+/** The Blocked condition's reasons (operator v0.7.0), as a title. */
+export const BLOCKED_TITLE: Record<string, string> = {
+  DrainBlocked: 'Something stops the next drain',
+  WaitingForApproval: 'The next node waits for your answer',
+  Remediating: 'Applying fixes before the next drain',
+  Restoring: 'Putting back what k4all changed',
+  RestoreFailed: 'Putting back a fix failed',
+  CephNotHealthy: 'Ceph is not healthy: no node is drained',
+};
+
 function StageBanner(props: {
   cu: ClusterUpgradeObject;
   view: UpgradeView;
@@ -178,8 +201,27 @@ function StageBanner(props: {
   canPatch: boolean;
 }) {
   const { cu, view, flow, canPatch } = props;
+  const blocked = findUpgradeCondition(cu, CONDITION_BLOCKED);
+  const rules = findUpgradeCondition(cu, CONDITION_RULES_INVALID);
   return (
     <Stack spacing={1.5} sx={{ mb: 2 }}>
+      {blocked?.status === 'True' && (
+        <Alert
+          severity={blocked.reason === 'RestoreFailed' ? 'error' : 'warning'}
+          icon={<Icon icon="mdi:hand-back-left-outline" />}
+        >
+          <AlertTitle>
+            {BLOCKED_TITLE[blocked.reason ?? ''] ?? `Blocked: ${blocked.reason ?? 'waiting'}`}
+          </AlertTitle>
+          {blocked.message}
+        </Alert>
+      )}
+      {rules?.status === 'True' && (
+        <Alert severity="warning">
+          <AlertTitle>A readiness rule of k4all-operator does not work</AlertTitle>
+          {rules.message || rules.reason} The report may miss what that rule finds.
+        </Alert>
+      )}
       {view.stage === 'waiting' && (
         <Alert severity="info" icon={<CircularProgress size={18} />}>
           <AlertTitle>Waiting for k4all-operator</AlertTitle>
@@ -274,6 +316,7 @@ function HowPanel(props: {
   nodes: NodeLike[];
   data: K4allData;
   canPatch: boolean;
+  readiness: boolean;
   onEdit: () => void;
 }) {
   const { cu } = props;
@@ -318,6 +361,17 @@ function HowPanel(props: {
                 variant="outlined"
                 label={spec.drain?.continueOnTimeout ? 'then continue' : 'then fail and wait'}
               />
+              {props.readiness && (
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={
+                    spec.drain?.confirmDisruptions
+                      ? 'asks also for disruptions'
+                      : 'asks only for what blocks'
+                  }
+                />
+              )}
             </Stack>
           )}
         </Box>
@@ -353,6 +407,17 @@ function UpgradesContent(props: {
   const kubelets = kubeletVersions(data.nodes);
   const order = upgradeOrder(cu.status?.nodes, data.nodes, data.nodeConfigs);
   const singleNode = order.length <= 1;
+  // Operator v0.7.0: the readiness report, blockers, records and their writes.
+  const readiness = capabilities(data.rm).upgradeReadiness;
+  const headlamp = useHeadlampNode(readiness);
+  const report = readiness ? cu.status?.readiness : undefined;
+  const target = cu.spec?.targetRelease || undefined;
+  const rView = report
+    ? readinessView(report, { release: target, headlampNode: headlamp.node })
+    : null;
+  const records = readiness ? cu.status?.remediations ?? [] : [];
+  // Answers are written at once while an upgrade runs; before, in the start review.
+  const answerNow = canPatch && view.active && !!target;
 
   return (
     <>
@@ -394,6 +459,46 @@ function UpgradesContent(props: {
               flow={flow}
               canPatch={canPatch}
               now={props.now}
+              readiness={readiness}
+            />
+          </Grid>
+        )}
+        {readiness && records.length > 0 && (
+          <Grid item xs={12}>
+            <RemediationsPanel
+              records={records}
+              now={props.now}
+              what="this upgrade"
+              onRestore={canPatch ? r => flow.restore(r.id) : undefined}
+              busy={flow.busy !== null}
+            />
+          </Grid>
+        )}
+        {readiness && (
+          <Grid item xs={12}>
+            <ReadinessPanel
+              view={rView}
+              now={props.now}
+              onCheck={canPatch ? () => flow.checkReadiness() : undefined}
+              checking={flow.checking}
+              busy={flow.busy !== null}
+              approvals={cu.spec?.approvals}
+              binding={target ? { release: target } : undefined}
+              headlampUnknown={headlamp.denied}
+              controls={
+                answerNow
+                  ? () => () => ({
+                      kind: 'act',
+                      onAnswer: answer => flow.approve(answer),
+                      busy: flow.busy !== null,
+                    })
+                  : undefined
+              }
+              hint={
+                !view.active && rView && canPatch
+                  ? 'You choose the fixes in the first step of the review, when you start the upgrade.'
+                  : undefined
+              }
             />
           </Grid>
         )}
@@ -411,6 +516,7 @@ function UpgradesContent(props: {
             nodes={data.nodes}
             data={data}
             canPatch={canPatch}
+            readiness={readiness}
             onEdit={() => setSettingsOpen(true)}
           />
         </Grid>
@@ -427,13 +533,23 @@ function UpgradesContent(props: {
         open={settingsOpen}
         spec={cu.spec ?? {}}
         singleNode={singleNode}
+        readiness={readiness}
         onClose={() => setSettingsOpen(false)}
         onReview={intent => {
           setSettingsOpen(false);
           flow.review(intent);
         }}
       />
-      <UpgradeReviewDialog flow={flow} nodes={data.nodes} nodeConfigs={data.nodeConfigs} />
+      <UpgradeReviewDialog
+        flow={flow}
+        nodes={data.nodes}
+        nodeConfigs={data.nodeConfigs}
+        readiness={readiness}
+        report={report ?? null}
+        headlampNode={headlamp.node}
+        headlampUnknown={headlamp.denied}
+        now={props.now}
+      />
     </>
   );
 }

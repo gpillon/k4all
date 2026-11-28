@@ -5,18 +5,23 @@
  * with Pause / Resume (spec.nodes.rollout.paused, applied at once). With
  * Virtualization on it reads the KubeVirt CR, as the Virtualization page
  * does, to say when the static CPU manager lacks KubeVirt's CPUManager gate
- * (0.2.1, k4all#111).
+ * (0.2.1, k4all#111). With k4all-operator v0.7.0 (0.3.0) the rollout lists
+ * what holds each node's drain with its fixes (Apply fix and Accept write
+ * spec.nodes.rollout.approvals at once, for status.nodes.settingsHash),
+ * and what it changed.
  */
 
 import { Box, Grid, Stack } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import React from 'react';
 import { useKubeletPrior, useKubeVirt, useOperatorNode } from '../../api/clusterObjects';
-import { K4allData, useK4allData } from '../../api/hooks';
-import { setNodeRolloutPaused } from '../../api/k4allApi';
+import { K4allData, useK4allData, useNow } from '../../api/hooks';
+import { addNodeRolloutApproval, setNodeRolloutPaused } from '../../api/k4allApi';
 import { classifyError } from '../../model/errors';
 import { cpuManagerGateMissing } from '../../model/gates';
 import { nodeSettingsIssues, rolloutPlan, rolloutView } from '../../model/nodeSettings';
+import { Answer, refText, remediationTitle, toApproval } from '../../model/readiness';
+import { NodeRolloutApproval } from '../../model/types';
 import { hasErrors, Issue, validateSettings } from '../../model/validation';
 import { K4allGate, ReadOnlyNotice } from '../common/states';
 import { Mono, PageHeader } from '../common/ui';
@@ -42,6 +47,7 @@ function NodeSettingsEditor({ data }: { data: K4allData }) {
   const kv = useKubeVirt(data.cc?.spec?.features?.virt?.enabled === true);
   const { enqueueSnackbar } = useSnackbar();
   const [pausing, setPausing] = React.useState(false);
+  const now = useNow(30000);
   if (!editor.state.base) {
     return null;
   }
@@ -92,6 +98,31 @@ function NodeSettingsEditor({ data }: { data: K4allData }) {
     }
   };
 
+  const answer = async (a: Answer) => {
+    const hash = view.settingsHash;
+    if (!hash) {
+      return;
+    }
+    setPausing(true);
+    try {
+      const approval = toApproval(a, { settingsHash: hash }) as NodeRolloutApproval;
+      await addNodeRolloutApproval(latest.metadata.name, approval);
+      const what = `${remediationTitle(a.remediation)} for ${refText(a.target)}`;
+      enqueueSnackbar(
+        a.decision === 'Accept'
+          ? `Accepted: the drain of ${a.node ?? 'the node'} goes on without a fix (${what}).`
+          : `Approved: ${what}. k4all-operator applies it before the drain.`,
+        { variant: 'success' }
+      );
+    } catch (err) {
+      const e = classifyError(err);
+      enqueueSnackbar(`${e.hint} ${e.message}`, { variant: 'error' });
+    } finally {
+      setPausing(false);
+    }
+  };
+  const canAnswer = !editor.disabled && caps.upgradeReadiness;
+
   return (
     <>
       <PageHeader
@@ -114,6 +145,10 @@ function NodeSettingsEditor({ data }: { data: K4allData }) {
             canPause={!editor.disabled && caps.nodeSettings}
             busy={pausing}
             onPause={pause}
+            readiness={caps.upgradeReadiness}
+            approvals={latest.spec?.nodes?.rollout?.approvals}
+            onAnswer={canAnswer ? answer : undefined}
+            now={now}
           />
         )}
         {editor.dirty && <PlanView plan={plan} />}

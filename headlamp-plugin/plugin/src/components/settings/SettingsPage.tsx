@@ -16,11 +16,13 @@ import { InstallTimeSection } from './InstallTimeSection';
 import { NetworkingSection } from './NetworkingSection';
 import { NginxIngressesPanel } from './NginxIngresses';
 import { PodNetworkOverlapBanner, SettingsPagesLinks } from './settingsLinks';
+import { UpgradesSection } from './UpgradesSection';
 
 const TABS = [
   { id: 'features', label: 'Features', icon: 'mdi:puzzle-outline', prefixes: ['features.'] },
   { id: 'ingress', label: 'Ingress', icon: 'mdi:routes', prefixes: ['ingress.'] },
   { id: 'networking', label: 'Networking', icon: 'mdi:lan-connect', prefixes: ['networking.'] },
+  { id: 'upgrades', label: 'Upgrades', icon: 'mdi:update', prefixes: ['upgrades.'] },
   { id: 'install', label: 'Install-time', icon: 'mdi:lock-outline', prefixes: [] as string[] },
 ] as const;
 
@@ -152,6 +154,7 @@ function SettingsEditor({ data }: { data: K4allData }) {
       {tab === 'networking' && (
         <NetworkingSection {...sectionProps} nodeConfigs={data.nodeConfigs} />
       )}
+      {tab === 'upgrades' && <UpgradesSection {...sectionProps} />}
       {tab === 'install' && <InstallTimeSection spec={base} caps={caps} />}
 
       <UnsavedBar editor={editor} blocking={blocking} />
