@@ -5,7 +5,15 @@
 
 import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 import { vi } from 'vitest';
-import { patchClusterUpgrade, retryClusterUpgrade, setNodeRolloutPaused } from './k4allApi';
+import {
+  addClusterUpgradeApproval,
+  addNodeRolloutApproval,
+  checkClusterUpgradeReadiness,
+  patchClusterUpgrade,
+  restoreRemediation,
+  retryClusterUpgrade,
+  setNodeRolloutPaused,
+} from './k4allApi';
 
 vi.mock('@kinvolk/headlamp-plugin/lib', () => ({ ApiProxy: { request: vi.fn(async () => ({})) } }));
 vi.mock('./resources', () => ({
@@ -98,5 +106,98 @@ describe('node-settings rollout pause', () => {
     request.mockResolvedValueOnce(cc(4, { rollout: { paused: true } }));
     await setNodeRolloutPaused('k4all-cluster-config', true);
     expect(request).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('upgrade readiness writes (operator v0.7.0)', () => {
+  beforeEach(() => request.mockReset());
+
+  const body = (i: number) => JSON.parse((request.mock.calls[i][1] as RequestInit).body as string);
+  const contentType = (i: number) =>
+    ((request.mock.calls[i][1] as RequestInit).headers as Record<string, string>)['Content-Type'];
+
+  it('asks for a new check with a merge patch on the check-readiness annotation only', async () => {
+    request.mockResolvedValueOnce({});
+    await checkClusterUpgradeReadiness(new Date('2026-11-17T12:00:00Z'));
+    expect(request.mock.calls[0][0]).toMatch(
+      /clusterupgrades\/k4all\?fieldManager=k4all-headlamp&fieldValidation=Strict$/
+    );
+    expect(contentType(0)).toBe('application/merge-patch+json');
+    expect(body(0)).toEqual({
+      metadata: {
+        annotations: { 'k4all.magesgate.com/check-readiness': '2026-11-17T12:00:00.000Z' },
+      },
+    });
+  });
+
+  it('puts one record back with the restore annotation set to its id', async () => {
+    request.mockResolvedValueOnce({});
+    await restoreRemediation('rm-4c1f9a');
+    expect(contentType(0)).toBe('application/merge-patch+json');
+    expect(body(0)).toEqual({
+      metadata: { annotations: { 'k4all.magesgate.com/restore': 'rm-4c1f9a' } },
+    });
+  });
+
+  const approval = {
+    remediation: 'cnpg-disable-pdb',
+    target: { group: 'postgresql.cnpg.io', kind: 'Cluster', namespace: 'db', name: 'app-pg' },
+    decision: 'Apply',
+    release: 'v2.6.0',
+  };
+
+  it('adds one approval: an append on the latest ClusterUpgrade', async () => {
+    request
+      .mockResolvedValueOnce({
+        metadata: { name: 'k4all', generation: 3 },
+        spec: { targetRelease: 'v2.6.0', approvals: [{ ...approval, remediation: 'x' }] },
+      })
+      .mockResolvedValueOnce({});
+    await addClusterUpgradeApproval(approval);
+    expect(request.mock.calls[0][0]).toBe(
+      '/apis/k4all.magesgate.com/v1alpha1/clusterupgrades/k4all'
+    );
+    expect(contentType(1)).toBe('application/json-patch+json');
+    expect(request.mock.calls[1][0]).toMatch(/fieldManager=k4all-headlamp&fieldValidation=Strict$/);
+    expect(body(1)).toEqual([{ op: 'add', path: '/spec/approvals/-', value: approval }]);
+  });
+
+  it('creates the list under a generation test, and rebuilds once on a conflict', async () => {
+    const conflict = Object.assign(new Error('testing value /metadata/generation failed'), {
+      status: 422,
+    });
+    request
+      .mockResolvedValueOnce({
+        metadata: { name: 'k4all', generation: 3 },
+        spec: { targetRelease: 'v2.6.0' },
+      })
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({
+        metadata: { name: 'k4all', generation: 4 },
+        spec: { targetRelease: 'v2.6.0', approvals: [] },
+      })
+      .mockResolvedValueOnce({});
+    await addClusterUpgradeApproval(approval);
+    expect(body(1)).toEqual([
+      { op: 'test', path: '/metadata/generation', value: 3 },
+      { op: 'add', path: '/spec/approvals', value: [approval] },
+    ]);
+    expect(body(3)).toEqual([{ op: 'add', path: '/spec/approvals/-', value: approval }]);
+  });
+
+  it("adds a rollout approval to the ClusterConfig's spec.nodes.rollout.approvals", async () => {
+    const a = { ...approval, release: undefined, settingsHash: '0123456789abcdef' };
+    request
+      .mockResolvedValueOnce({
+        metadata: { name: 'k4all-cluster-config', generation: 9 },
+        spec: { nodes: { iommu: true, rollout: { paused: true } } },
+      })
+      .mockResolvedValueOnce({});
+    await addNodeRolloutApproval('k4all-cluster-config', a);
+    expect(request.mock.calls[1][0]).toMatch(/clusterconfigs\/k4all-cluster-config\?fieldManager=/);
+    expect(body(1)).toEqual([
+      { op: 'test', path: '/metadata/generation', value: 9 },
+      { op: 'add', path: '/spec/nodes/rollout/approvals', value: [a] },
+    ]);
   });
 });

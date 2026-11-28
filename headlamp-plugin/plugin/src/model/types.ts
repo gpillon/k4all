@@ -1,8 +1,11 @@
 /*
  * TypeScript mirror of the k4all-operator API (group k4all.magesgate.com,
- * version v1alpha1), as of k4all-operator v0.6.0 (api/v1alpha1/*.go, branch
- * release-v0.6.0): the v2.7.0 settings (features.virt.kubevirt, .hangar,
- * .metadata, features.rook, nodes) and status.nodes.
+ * version v1alpha1), as of k4all-operator v0.7.0 (api/v1alpha1/*.go, branch
+ * release-v0.7.0): the v2.7.0 settings (features.virt.kubevirt, .hangar,
+ * .metadata, features.rook, nodes) and status.nodes; from v0.7.0 upgrade
+ * readiness and remediations (ClusterConfig spec.upgrades, the rollout's
+ * approvals, blockers and records; ClusterUpgrade spec.approvals,
+ * status.readiness, status.nodes[].blockers, status.remediations).
  *
  * Every field is optional: the operator's Go types use omitempty, so a field
  * the user never set is simply missing from the object the API server returns.
@@ -141,7 +144,24 @@ export interface NodesConfig {
   /** Page size ("1Gi", "2Mi") to pages per node; a size left out is not owned. */
   hugepages?: Partial<Record<HugepageSize | string, number>>;
   iommu?: boolean;
-  rollout?: { paused?: boolean };
+  rollout?: {
+    paused?: boolean;
+    /**
+     * Answers to the remediations the rollout's drains wait for (operator
+     * v0.7.0). One for another settingsHash than status.nodes.settingsHash
+     * is ignored.
+     */
+    approvals?: NodeRolloutApproval[];
+  };
+}
+
+/**
+ * How the operator's drains (ClusterUpgrade, node-settings rollout) treat
+ * what the readiness check finds (operator v0.7.0).
+ */
+export interface UpgradesConfig {
+  /** Mode of each remediation of the catalog, by id; left out: the catalog default (ask). */
+  remediations?: Record<string, RemediationMode | string>;
 }
 
 export interface ClusterConfigSpec {
@@ -178,6 +198,8 @@ export interface ClusterConfigSpec {
   componentOverrides?: Record<string, ComponentOverride>;
   /** Node settings k4all owns, the same on every node (operator v0.6.0). */
   nodes?: NodesConfig;
+  /** Remediation modes of the drains (operator v0.7.0). */
+  upgrades?: UpgradesConfig;
 }
 
 /** status.nodes.rollout.phase values. */
@@ -187,7 +209,16 @@ export interface NodesStatus {
   /** Hash of the node settings the nodes must have (spec.nodes and its action class). */
   settingsHash?: string;
   rollout?: { phase?: NodeRolloutPhase | string; currentNode?: string; message?: string };
-  perNode?: { name: string; appliedHash?: string; phase?: string; message?: string }[];
+  perNode?: {
+    name: string;
+    appliedHash?: string;
+    phase?: string;
+    message?: string;
+    /** What holds this node's drain now (operator v0.7.0). */
+    blockers?: Finding[];
+  }[];
+  /** What the rollout changed on other objects for a drain and must put back (operator v0.7.0). */
+  remediations?: RemediationRecordStatus[];
 }
 
 /** ClusterConfig condition types besides Reconciled and Degraded (operator v0.6.0). */
@@ -196,6 +227,13 @@ export const CONDITION_KUBEVIRT_SETTINGS = 'KubeVirtSettings';
 export const CONDITION_NODE_SETTINGS_ROLLOUT = 'NodeSettingsRollout';
 export const CONDITION_ROOK_READY = 'RookReady';
 export const CONDITION_METADATA_SERVICE = 'MetadataService';
+/**
+ * True while an entry of spec.upgrades.remediations is ignored (operator
+ * v0.7.0): reason UnknownId or AutoNotAllowed, the message names the entries.
+ */
+export const CONDITION_UNKNOWN_REMEDIATION = 'UnknownRemediation';
+export const REASON_UNKNOWN_REMEDIATION_ID = 'UnknownId';
+export const REASON_AUTO_NOT_ALLOWED = 'AutoNotAllowed';
 
 /** On the KubeVirt CR: the gates k4all added last time (comma-separated), R6 of the v2.7.0 spec. */
 export const KUBEVIRT_GATES_ANNOTATION = 'k4all.magesgate.com/feature-gates';
@@ -352,6 +390,18 @@ export interface NodeLike {
 export const CLUSTER_UPGRADE_NAME = 'k4all';
 /** On the ClusterUpgrade: retry the nodes whose hop failed. The operator removes it. */
 export const RETRY_ANNOTATION = 'k4all.magesgate.com/retry';
+/**
+ * On the ClusterUpgrade, any value: check the readiness again now, with
+ * dry-run evictions (operator v0.7.0). The operator removes it after the check.
+ */
+export const CHECK_READINESS_ANNOTATION = 'k4all.magesgate.com/check-readiness';
+/**
+ * On the ClusterUpgrade, a remediation record id or "all": restore those
+ * records now, for a node that will not come back (operator v0.7.0). The
+ * operator removes it.
+ */
+export const RESTORE_ANNOTATION = 'k4all.magesgate.com/restore';
+export const RESTORE_ALL = 'all';
 /** The graph k4all-upgrade reads on the nodes, used when spec.graphUrl is empty. */
 export const DEFAULT_UPGRADE_GRAPH_URL =
   'https://github.com/gpillon/k4all/releases/latest/download/upgrade-graph.json';
@@ -379,19 +429,35 @@ export type NodeUpgradeReason =
   | 'Abandoned'
   | 'TargetRejected'
   | 'RollbackRebooted'
-  | 'NodeNotReady';
+  | 'NodeNotReady'
+  // operator v0.7.0
+  | 'DrainBlocked'
+  | 'WaitingForApproval'
+  | 'Remediating'
+  | 'Restoring'
+  | 'RestoreFailed';
 
 /** ClusterUpgrade condition types (k4all-operator v0.4.0). */
 export const CONDITION_GRAPH_AVAILABLE = 'GraphAvailable';
 export const CONDITION_PROGRESSING = 'Progressing';
 export const CONDITION_SUCCEEDED = 'Succeeded';
 export const CONDITION_FAILED = 'Failed';
+/**
+ * True while the next node waits on a blocker or an answer (operator
+ * v0.7.0); reason DrainBlocked, WaitingForApproval, Remediating, Restoring,
+ * RestoreFailed or CephNotHealthy.
+ */
+export const CONDITION_BLOCKED = 'Blocked';
+/** True while an embedded readiness rule does not compile or fails (operator v0.7.0). */
+export const CONDITION_RULES_INVALID = 'RulesInvalid';
 
 export interface DrainSpec {
   /** Minutes to wait for the evictions (default 30). */
   timeoutMinutes?: number;
   /** Run the hop anyway when the drain times out. */
   continueOnTimeout?: boolean;
+  /** Wait for an answer (an approval) also for findings that only disrupt (operator v0.7.0). */
+  confirmDisruptions?: boolean;
 }
 
 export interface ClusterUpgradeSpec {
@@ -402,6 +468,133 @@ export interface ClusterUpgradeSpec {
   /** Stops the upgrade before the next node. */
   paused?: boolean;
   drain?: DrainSpec;
+  /**
+   * Answers to the remediations of the readiness report (operator v0.7.0).
+   * One for another release than targetRelease is ignored.
+   */
+  approvals?: RemediationApproval[];
+}
+
+// ------------------------------------------- Readiness and remediations (v0.7.0)
+
+/** Names an object of any kind; group "" is the core group, namespace "" a cluster-scoped object. */
+export interface ObjectRef {
+  group?: string;
+  kind: string;
+  namespace?: string;
+  name: string;
+}
+
+/** auto: applied without asking (autoAllowed entries only); ask: once approved; off: report only. */
+export type RemediationMode = 'auto' | 'ask' | 'off';
+export type FindingSeverity = 'Blocks' | 'Disrupts' | 'Info';
+export type RemediationRisk = 'None' | 'Downtime';
+/** Apply runs the remediation; Accept goes on without it. Left out: Apply. */
+export type ApprovalDecision = 'Apply' | 'Accept';
+export type RemediationTrigger = 'approval' | 'auto';
+export type RemediationPhase =
+  | 'Applying'
+  | 'Applied'
+  | 'Restoring'
+  | 'Restored'
+  | 'Superseded'
+  | 'Failed';
+
+/** A remediation a finding offers, for one object. */
+export interface RemediationOption {
+  remediation: string;
+  target: ObjectRef;
+  /** The mode in effect: ClusterConfig spec.upgrades.remediations, else the catalog default. */
+  mode: RemediationMode | string;
+  risk: RemediationRisk | string;
+  summary?: string;
+}
+
+/** One thing the readiness check found. */
+export interface Finding {
+  severity: FindingSeverity | string;
+  /** PDBNeverAllows, CNPGSingleInstance, VMShutdown, ...: no enum, kinds come with rules. */
+  kind: string;
+  object: ObjectRef;
+  message?: string;
+  remediations?: RemediationOption[];
+  /** Objects folded into an aggregated finding (Info). */
+  count?: number;
+}
+
+export interface ReadinessSummary {
+  blocks?: number;
+  disrupts?: number;
+  info?: number;
+  /** VMs that shut down at least once in a hop. */
+  vmShutdowns?: number;
+  /** Of those, the VMs that start again only when their node is back. */
+  vmsDownUntilNodeBack?: number;
+}
+
+export interface NodeReadiness {
+  name: string;
+  summary?: ReadinessSummary;
+  /** What this node's drain and reboot would do, Blocks first. */
+  findings?: Finding[];
+  /** Findings left out over the cap (Info first). */
+  truncated?: number;
+}
+
+/** What each node's drain and reboot would do now. */
+export interface ReadinessReport {
+  checkedAt?: string;
+  /** targetRelease, else the newest of availableReleases. */
+  release?: string;
+  /** Hops of the path to release: every hop drains and reboots every node. */
+  hops?: number;
+  /** This check sent dry-run evictions. */
+  dryRun?: boolean;
+  summary?: ReadinessSummary;
+  /** The report in one sentence. */
+  message?: string;
+  /** Findings about the whole cluster (Ceph health, nodes not Ready). */
+  cluster?: Finding[];
+  /** One entry per node, in upgrade order. */
+  nodes?: NodeReadiness[];
+}
+
+/** A person's answer to one remediation of one object, for one upgrade. */
+export interface RemediationApproval {
+  remediation: string;
+  target: ObjectRef;
+  /** Only for this node's drain; empty: every node of the upgrade. */
+  node?: string;
+  decision?: ApprovalDecision | string;
+  /** The targetRelease it was given for. */
+  release: string;
+}
+
+/** The same answer for the node-settings rollout, bound to status.nodes.settingsHash. */
+export interface NodeRolloutApproval {
+  remediation: string;
+  target: ObjectRef;
+  node?: string;
+  decision?: ApprovalDecision | string;
+  /** 16 hex digits: the status.nodes.settingsHash it was given for. */
+  settingsHash: string;
+}
+
+/** What k4all changed on an object for a drain and must put back (a view of the target's annotation). */
+export interface RemediationRecordStatus {
+  /** rm- and a short hash of remediation, target, node and hop. */
+  id: string;
+  remediation: string;
+  target: ObjectRef;
+  /** The node whose drain it was applied for. */
+  node: string;
+  /** The hop's release, or the node-settings rollout's change. */
+  hop: string;
+  by: RemediationTrigger | string;
+  phase: RemediationPhase | string;
+  appliedAt?: string;
+  /** What k4all changed, or why it failed. */
+  message?: string;
 }
 
 export interface Hop {
@@ -449,6 +642,8 @@ export interface NodeUpgradeStatus {
   startedAt?: string;
   /** When the node finished its latest hop. */
   completedAt?: string;
+  /** What holds this node now: findings that block, or that wait for an answer (operator v0.7.0). */
+  blockers?: Finding[];
 }
 
 export interface ClusterUpgradeStatus {
@@ -467,6 +662,10 @@ export interface ClusterUpgradeStatus {
   graphUrl?: string;
   observedGeneration?: number;
   conditions?: Condition[];
+  /** What each node's drain and reboot would do now (operator v0.7.0). */
+  readiness?: ReadinessReport;
+  /** What k4all changed on other objects for a drain and must put back (operator v0.7.0). */
+  remediations?: RemediationRecordStatus[];
 }
 
 export interface ClusterUpgradeObject {

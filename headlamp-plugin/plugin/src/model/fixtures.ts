@@ -9,8 +9,10 @@
 import {
   ClusterConfigObject,
   ClusterUpgradeObject,
+  Finding,
   KubeVirtLike,
   NodeLike,
+  ObjectRef,
   ReleaseInfo,
   ReleaseManifestObject,
 } from './types';
@@ -511,3 +513,273 @@ export function failWith(
   );
   return cu;
 }
+
+// ------------------------------------------ Upgrade readiness (operator v0.7.0)
+
+/** The ReleaseManifest of k4all v2.7.2: k4all-operator v0.7.0 (upgrade readiness). */
+export function releaseManifestV272(): ReleaseManifestObject {
+  const rm = releaseManifestV270();
+  rm.spec!.osImage!.imageTag = 'v2.7.2-amd64';
+  rm.spec!.components!['k4all-operator'] = { type: 'manifest', version: 'v0.7.0' };
+  rm.status!.components!['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.7.0' };
+  return rm;
+}
+
+const CNPG = (name: string): ObjectRef => ({
+  group: 'postgresql.cnpg.io',
+  kind: 'Cluster',
+  namespace: 'db',
+  name,
+});
+const VM = (name: string): ObjectRef => ({
+  group: 'kubevirt.io',
+  kind: 'VirtualMachine',
+  namespace: 'lab',
+  name,
+});
+
+/** A single-instance CloudNativePG cluster: it blocks, with its three fixes. */
+export function cnpgFinding(name = 'app-pg'): Finding {
+  return {
+    severity: 'Blocks',
+    kind: 'CNPGSingleInstance',
+    object: CNPG(name),
+    message: `single-instance CloudNativePG primary ${name}-1: PDB ${name}-primary allows no disruption; its volume is on TopoLVM on this node`,
+    remediations: [
+      {
+        remediation: 'cnpg-disable-pdb',
+        target: CNPG(name),
+        mode: 'ask',
+        risk: 'Downtime',
+        summary:
+          'enablePDB false for the hop; the database is down until the node is back (its volume is on this node)',
+      },
+      {
+        remediation: 'cnpg-maintenance-window',
+        target: CNPG(name),
+        mode: 'ask',
+        risk: 'Downtime',
+        summary: 'maintenance window for the hop, the pod waits for its node and volume',
+      },
+      {
+        remediation: 'cnpg-add-replica',
+        target: CNPG(name),
+        mode: 'ask',
+        risk: 'None',
+        summary:
+          'instances 1 -> 2 before the hop, back to 1 after: no downtime, needs room for a second volume',
+      },
+    ],
+  };
+}
+
+/** A VM with evictionStrategy None: it shuts down with the drain. */
+export function vmShutdownFinding(name = 'gpu-01', canMove = false): Finding {
+  return {
+    severity: 'Disrupts',
+    kind: 'VMShutdown',
+    object: VM(name),
+    message: canMove
+      ? 'evictionStrategy None: shuts down; it can move live to w-1'
+      : `evictionStrategy None: shuts down; starts again only when this node is back (disk ${name}-rootdisk on TopoLVM here)`,
+    remediations: [
+      ...(canMove
+        ? [
+            {
+              remediation: 'vm-migrate-first',
+              target: VM(name),
+              mode: 'ask',
+              risk: 'None',
+              summary: `move ${name} live to w-1 before the drain`,
+            },
+          ]
+        : []),
+      {
+        remediation: 'vm-stop-start',
+        target: VM(name),
+        mode: 'ask',
+        risk: 'Downtime',
+        summary: 'clean stop before the drain, start after the hop',
+      },
+    ],
+  };
+}
+
+/** A pod that declares no controller: it blocks, Accept (acknowledge) deletes it with the drain. */
+export function barePodFinding(): Finding {
+  const pod: ObjectRef = { kind: 'Pod', namespace: 'default', name: 'debug' };
+  return {
+    severity: 'Blocks',
+    kind: 'BarePod',
+    object: pod,
+    message: 'pod default/debug declares no controller: the drain would delete it for good',
+    remediations: [{ remediation: 'acknowledge', target: pod, mode: 'ask', risk: 'Downtime' }],
+  };
+}
+
+/**
+ * A ClusterUpgrade idle on v2.4.0 with the readiness report for its newest
+ * release, v2.7.0, four hops away (operator v0.7.0).
+ */
+export function clusterUpgradeWithReadiness(): ClusterUpgradeObject {
+  const cu = clusterUpgrade();
+  cu.status!.readiness = {
+    checkedAt: '2026-11-17T09:00:00Z',
+    release: 'v2.7.0',
+    hops: 4,
+    dryRun: true,
+    summary: { blocks: 1, disrupts: 3, info: 3, vmShutdowns: 2, vmsDownUntilNodeBack: 1 },
+    message:
+      '1 thing will stop the upgrade; 2 VMs will shut down, 1 of them until its node is back',
+    cluster: [
+      {
+        severity: 'Info',
+        kind: 'CephHealthy',
+        object: {
+          group: 'ceph.rook.io',
+          kind: 'CephCluster',
+          namespace: 'rook-ceph',
+          name: 'rook-ceph',
+        },
+        message: 'HEALTH_OK',
+      },
+    ],
+    nodes: [
+      {
+        name: 'cp-1',
+        summary: { blocks: 1, disrupts: 2, info: 2, vmShutdowns: 1, vmsDownUntilNodeBack: 1 },
+        findings: [
+          vmShutdownFinding('gpu-01'),
+          cnpgFinding(),
+          {
+            severity: 'Disrupts',
+            kind: 'PinnedToNode',
+            object: { kind: 'Pod', namespace: 'shop', name: 'cache-0' },
+            message: 'nodeSelector admits only cp-1',
+            remediations: [
+              {
+                remediation: 'acknowledge',
+                target: { kind: 'Pod', namespace: 'shop', name: 'cache-0' },
+                mode: 'ask',
+                risk: 'Downtime',
+              },
+            ],
+          },
+          {
+            severity: 'Info',
+            kind: 'EmptyDir',
+            object: { kind: 'Pod', namespace: 'shop', name: 'web-1' },
+            message: '3 pods lose emptyDir volumes',
+            count: 3,
+          },
+          {
+            severity: 'Info',
+            kind: 'CephDaemonsHere',
+            object: { kind: 'Node', name: 'cp-1' },
+            message: 'mon-a, osd-0 stop until cp-1 is back',
+          },
+        ],
+        truncated: 0,
+      },
+      {
+        name: 'cp-2',
+        summary: { disrupts: 1, vmShutdowns: 1 },
+        findings: [vmShutdownFinding('web-01', true)],
+      },
+      {
+        name: 'w-1',
+        summary: { info: 1 },
+        findings: [
+          {
+            severity: 'Info',
+            kind: 'OperatorHere',
+            object: {
+              kind: 'Pod',
+              namespace: 'k4all-operator-system',
+              name: 'k4all-operator-controller-manager-0',
+            },
+            message: 'k4all-operator runs here: it moves itself off last',
+          },
+        ],
+        truncated: 2,
+      },
+    ],
+  };
+  return cu;
+}
+
+/** The in-progress upgrade with cp-2 held before its cordon, and a record of cp-1's hop (operator v0.7.0). */
+export function clusterUpgradeBlocked(): ClusterUpgradeObject {
+  const cu = clusterUpgradeInProgress();
+  const cp2 = cu.status!.nodes!.find(n => n.name === 'cp-2')!;
+  cp2.phase = 'Pending';
+  cp2.reason = 'WaitingForApproval';
+  cp2.message = 'waiting for an answer to cnpg-disable-pdb for db/app-pg';
+  delete cp2.drainStartedAt;
+  cp2.blockers = [cnpgFinding(), barePodFinding()];
+  cu.status!.message = 'v2.5.0: cp-2 waits for an answer';
+  cu.status!.conditions = [
+    ...(cu.status!.conditions ?? []),
+    {
+      type: 'Blocked',
+      status: 'True',
+      reason: 'WaitingForApproval',
+      message: 'cp-2 waits for an answer to cnpg-disable-pdb for db/app-pg',
+    },
+  ];
+  cu.status!.remediations = [
+    {
+      id: 'rm-4c1f9a',
+      remediation: 'vm-stop-start',
+      target: VM('gpu-01'),
+      node: 'cp-1',
+      hop: 'v2.5.0',
+      by: 'approval',
+      phase: 'Applied',
+      appliedAt: '2026-11-17T09:31:00Z',
+      message: 'set spec.runStrategy Halted (was Always)',
+    },
+    {
+      id: 'rm-77d0e2',
+      remediation: 'vm-migrate-first',
+      target: VM('web-01'),
+      node: 'cp-1',
+      hop: 'v2.5.0',
+      by: 'auto',
+      phase: 'Restored',
+      appliedAt: '2026-11-17T09:30:30Z',
+      message: 'migrated web-01 to w-1',
+    },
+  ];
+  return cu;
+}
+
+/** The finding kinds of the seed set (gpillon/k4all-operator#58). */
+export const SEED_FINDING_KINDS = [
+  'PDBNeverAllows',
+  'CNPGSingleInstance',
+  'PDBExhausted',
+  'PDBSequential',
+  'VMNotMigratable',
+  'VMShutdown',
+  'VMLiveMigrates',
+  'NodeBoundVolume',
+  'PinnedToNode',
+  'NoRoomElsewhere',
+  'BarePod',
+  'Capacity',
+  'AllReplicasHere',
+  'EmptyDir',
+  'StopsAtReboot',
+  'SingleNodeShortStop',
+  'OperatorHere',
+  'CephNotHealthy',
+  'CephHealthy',
+  'CephDaemonsHere',
+  'CephBelowMinSize',
+  'CephNoRedundancy',
+  'NodeNotReady',
+  'PDBShort',
+  'EvictionRefused',
+  'RemediationFailed',
+];

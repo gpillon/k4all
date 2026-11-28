@@ -3,7 +3,8 @@
  * KubeVirt CR (gates, version), StorageClasses and CDI StorageProfiles (the
  * VM state picker), CephClusters (Rook), the node k4all-operator runs on (the
  * rollout order), Hangar's node agent inventories (the disks Ceph would take),
- * and what the kubevirt-manager removal kept.
+ * and what the kubevirt-manager removal kept; for the Upgrades page (k4all
+ * v2.7.2), the node Headlamp's own pod runs on.
  *
  * Plain list requests, polled every 30 s while a page shows them: none of
  * them changes often, and an API that is not served (no KubeVirt, no Rook)
@@ -13,6 +14,7 @@
 import { ApiProxy, Utils } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
 import { KubeletPrior, kubeletPriorFrom } from '../model/nodeSettings';
+import { HEADLAMP_NAMESPACE, HEADLAMP_POD_SELECTOR } from '../model/readiness';
 import { DiskInfo } from '../model/storage';
 import {
   CephClusterLike,
@@ -35,6 +37,9 @@ export const OBJECT_PATHS = {
   )}`,
   agentPods: `/api/v1/namespaces/${HANGAR_AGENT_NAMESPACE}/pods?labelSelector=${encodeURIComponent(
     'app.kubernetes.io/name=hangar-node-agent'
+  )}`,
+  headlampPods: `/api/v1/namespaces/${HEADLAMP_NAMESPACE}/pods?labelSelector=${encodeURIComponent(
+    HEADLAMP_POD_SELECTOR
   )}`,
 };
 
@@ -140,6 +145,30 @@ interface PodLike {
 export function useOperatorNode(): string | undefined {
   const pods = useObjectList<PodLike>(OBJECT_PATHS.operatorPods);
   return (pods.value ?? []).find(p => p.status?.phase === 'Running')?.spec?.nodeName;
+}
+
+export interface HeadlampPlacement {
+  /** The node Headlamp's running pod is on. */
+  node?: string;
+  /** The user may not list pods in Headlamp's namespace. */
+  denied: boolean;
+  /** Not answered yet. */
+  loading: boolean;
+}
+
+/**
+ * The node Headlamp's own pod runs on (one replica: this page goes away
+ * while it moves), when the user may list pods in its namespace.
+ */
+export function useHeadlampNode(enabled: boolean): HeadlampPlacement {
+  const pods = useObjectList<PodLike>(OBJECT_PATHS.headlampPods, enabled);
+  return {
+    node: (pods.value ?? []).find(
+      p => p.status?.phase === 'Running' && !p.metadata.deletionTimestamp
+    )?.spec?.nodeName,
+    denied: pods.error?.status === 403,
+    loading: enabled && pods.value === null && !pods.error,
+  };
 }
 
 /**

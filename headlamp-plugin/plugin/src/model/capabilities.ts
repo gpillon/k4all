@@ -45,6 +45,15 @@ export const CAPABILITY_SINCE = {
   nodeSettings: 'v0.6.0',
   /** features.rook: Rook/Ceph with the Cairn console. */
   rookStorage: 'v0.6.0',
+  /**
+   * Upgrade readiness and remediations (k4all v2.7.2): ClusterUpgrade
+   * status.readiness, nodes[].blockers, remediations and spec.approvals,
+   * drain.confirmDisruptions, the check-readiness and restore annotations;
+   * ClusterConfig spec.upgrades.remediations, the rollout's approvals,
+   * blockers and records. Older CRDs do not have the fields, and a strict
+   * write with them would be refused.
+   */
+  upgradeReadiness: 'v0.7.0',
 } as const;
 
 export type CapabilityId = keyof typeof CAPABILITY_SINCE;
@@ -56,6 +65,7 @@ export const CAPABILITY_RELEASE: Partial<Record<CapabilityId, string>> = {
   virtSettings: 'v2.7.0',
   nodeSettings: 'v2.7.0',
   rookStorage: 'v2.7.0',
+  upgradeReadiness: 'v2.7.2',
 };
 
 export type Capabilities = Record<CapabilityId, boolean> & {

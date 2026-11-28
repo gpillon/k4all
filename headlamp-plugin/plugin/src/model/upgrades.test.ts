@@ -1,14 +1,20 @@
 import {
   availableReleases,
+  barePodFinding,
   clusterUpgrade,
   clusterUpgradeInProgress,
+  clusterUpgradeWithReadiness,
+  cnpgFinding,
   failWith,
   node,
+  vmShutdownFinding,
 } from './fixtures';
 import { applyOps } from './patch';
+import { shownOptions } from './readiness';
 import { NodeLike } from './types';
 import {
   canRetry,
+  describeApprovalChanges,
   describeUpgradeChanges,
   desiredSpec,
   drainBehaviour,
@@ -324,6 +330,82 @@ describe("nodeGuidance (by the operator's reason, never by message text)", () =>
     expect(canRetry(cu)).toBe(true);
     cu.status!.nodes![1] = { name: 'cp-2', phase: 'Failed', reason: 'HostHold', hostPhase: 'HOLD' };
     expect(canRetry(cu)).toBe(false); // a hold resumes on the node
+    // operator v0.7.0: the retry tries a failed restore again, whatever phase the node shows
+    cu.status!.nodes![1] = { name: 'cp-2', phase: 'Done', reason: 'RestoreFailed' };
+    expect(canRetry(cu)).toBe(true);
+    cu.status!.nodes![1] = { name: 'cp-2', phase: 'Pending', reason: 'WaitingForApproval' };
+    expect(canRetry(cu)).toBe(false);
+  });
+});
+
+describe('nodeGuidance for the reasons of operator v0.7.0', () => {
+  const spec = { drain: { timeoutMinutes: 20 } };
+
+  it('points at the structured blockers of a node held before its cordon', () => {
+    const g = nodeGuidance(
+      { name: 'cp-2', phase: 'Pending', reason: 'DrainBlocked', blockers: [cnpgFinding()] },
+      spec
+    )!;
+    expect(g).toMatchObject({ title: 'cp-2 cannot be drained', severity: 'error', retry: false });
+    expect(g.text).toMatch(/approve a fix, accept, or fix it yourself/);
+    const draining = nodeGuidance(
+      {
+        name: 'cp-2',
+        phase: 'Draining',
+        reason: 'DrainBlocked',
+        blockers: [
+          { severity: 'Blocks', kind: 'EvictionRefused', object: { kind: 'Pod', name: 'x' } },
+        ],
+      },
+      spec
+    )!;
+    expect(draining).toMatchObject({ title: 'The drain of cp-2 is held', severity: 'warning' });
+  });
+
+  it("falls back on the drain's text without structured blockers", () => {
+    const g = nodeGuidance(
+      {
+        name: 'w-1',
+        phase: 'Pending',
+        reason: 'DrainBlocked',
+        message:
+          'runs pods that declare no controller: default/debug (a drain would delete them, and nothing ' +
+          'recreates them: delete them, or recreate them under a controller; see docs/upgrades.md, Pods ' +
+          'that declare no controller); the node is not cordoned',
+      },
+      spec
+    )!;
+    expect(g.title).toBe('w-1 runs pods that declare no controller');
+    expect(g.commands.map(c => c.command)).toContain('kubectl delete pod -n default debug');
+  });
+
+  it('asks for an answer, says what is being applied and put back, and retries a failed restore', () => {
+    expect(
+      nodeGuidance({ name: 'cp-2', phase: 'Pending', reason: 'WaitingForApproval' }, spec)
+    ).toMatchObject({ title: 'cp-2 waits for your answer', severity: 'warning', retry: false });
+    expect(
+      nodeGuidance({ name: 'cp-2', phase: 'Pending', reason: 'Remediating' }, spec)
+    ).toMatchObject({ title: 'Applying fixes before the drain of cp-2', severity: 'info' });
+    expect(nodeGuidance({ name: 'cp-1', phase: 'Done', reason: 'Restoring' }, spec)).toMatchObject({
+      title: 'Putting back what k4all changed for cp-1',
+      severity: 'info',
+    });
+    const failed = nodeGuidance(
+      {
+        name: 'cp-1',
+        phase: 'Done',
+        reason: 'RestoreFailed',
+        message: 'VM lab/gpu-01 did not start',
+      },
+      spec
+    )!;
+    expect(failed).toMatchObject({
+      title: 'Putting back a fix failed for cp-1',
+      severity: 'error',
+      retry: true,
+    });
+    expect(failed.text).toMatch(/VM lab\/gpu-01 did not start/);
+    expect(failed.text).toMatch(/Put back now forces it/);
   });
 });
 
@@ -425,6 +507,101 @@ describe('spec writes', () => {
       graphUrl: 'https://github.com/gpillon/k4all/releases/latest/download/upgrade-graph.json',
     });
     expect(spec).toEqual({ drain: { timeoutMinutes: 45 } });
+  });
+
+  it('pre-approves for the release being started, guarded by the generation', () => {
+    const cu = clusterUpgradeWithReadiness();
+    cu.spec = {
+      drain: { timeoutMinutes: 30 },
+      approvals: [
+        // an answer for an earlier upgrade: kept, the operator ignores it
+        { remediation: 'vm-stop-start', target: vmShutdownFinding().object, release: 'v2.4.1' },
+      ],
+    };
+    const report = cu.status!.readiness!;
+    const ops = intentOps(cu, {
+      kind: 'start',
+      target: '2.6.0',
+      drain: { confirmDisruptions: true },
+      approvals: {
+        shown: shownOptions(report),
+        answers: [
+          { remediation: 'cnpg-add-replica', target: cnpgFinding().object, decision: 'Apply' },
+          {
+            remediation: 'acknowledge',
+            target: barePodFinding().object,
+            decision: 'Accept',
+            node: 'cp-1',
+          },
+        ],
+      },
+    });
+    expect(ops[0]).toEqual({ op: 'test', path: '/metadata/generation', value: 1 });
+    const spec = applyOps(cu, ops).spec!;
+    expect(spec.targetRelease).toBe('v2.6.0');
+    expect(spec.drain).toEqual({ timeoutMinutes: 30, confirmDisruptions: true });
+    expect(spec.approvals).toEqual([
+      { remediation: 'vm-stop-start', target: vmShutdownFinding().object, release: 'v2.4.1' },
+      {
+        remediation: 'cnpg-add-replica',
+        target: cnpgFinding().object,
+        decision: 'Apply',
+        release: 'v2.6.0',
+      },
+      {
+        remediation: 'acknowledge',
+        target: barePodFinding().object,
+        decision: 'Accept',
+        node: 'cp-1',
+        release: 'v2.6.0',
+      },
+    ]);
+    // every approval of the patch names the release being started, not the report's (v2.7.0)
+    const added = ops.find(o => o.path === '/spec/approvals') as { value: { release: string }[] };
+    expect(added.value.slice(1).map(a => a.release)).toEqual(['v2.6.0', 'v2.6.0']);
+  });
+
+  it('removes the approvals when every shown answer is taken back', () => {
+    const cu = clusterUpgradeWithReadiness();
+    cu.spec = {
+      approvals: [
+        { remediation: 'cnpg-add-replica', target: cnpgFinding().object, release: 'v2.6.0' },
+      ],
+    };
+    const spec = desiredSpec(cu, {
+      kind: 'start',
+      target: 'v2.6.0',
+      approvals: { shown: shownOptions(cu.status!.readiness), answers: [] },
+    });
+    expect(spec.approvals).toBeUndefined();
+  });
+
+  it('describes approvals and confirmDisruptions for the review', () => {
+    const items = describeApprovalChanges(undefined, [
+      { remediation: 'vm-stop-start', target: vmShutdownFinding().object, release: 'v2.6.0' },
+      {
+        remediation: 'acknowledge',
+        target: barePodFinding().object,
+        decision: 'Accept',
+        node: 'cp-1',
+        release: 'v2.6.0',
+      },
+    ]);
+    expect(items.map(i => [i.label, i.to, i.severity])).toEqual([
+      [
+        'Approve Stop the VM cleanly, start it after for VirtualMachine lab/gpu-01 (v2.6.0)',
+        'Apply',
+        'warning',
+      ],
+      [
+        'Go on without a fix: Go on for Pod default/debug, on cp-1 only (v2.6.0)',
+        'Accept',
+        'warning',
+      ],
+    ]);
+    expect(
+      describeUpgradeChanges({ drain: {} }, { drain: { confirmDisruptions: true } }).map(i => i.key)
+    ).toEqual(['spec.drain.confirmDisruptions']);
   });
 
   it('describes the changes for the review', () => {
