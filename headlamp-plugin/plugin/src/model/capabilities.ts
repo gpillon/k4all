@@ -54,6 +54,14 @@ export const CAPABILITY_SINCE = {
    * write with them would be refused.
    */
   upgradeReadiness: 'v0.7.0',
+  /**
+   * features.rook.storage.nodes (named OSD devices, logical volumes
+   * included), .csi.imageVariant, .monitoring and .filesystem, with the
+   * RookCSIImage and RookMonitoring conditions (k4all v2.7.2).
+   */
+  rookOptions: 'v0.7.0',
+  /** features.virt.hangar.guestBridge: Hangar's guest bridge (k4all v2.7.2). */
+  guestBridge: 'v0.7.0',
 } as const;
 
 export type CapabilityId = keyof typeof CAPABILITY_SINCE;
@@ -66,6 +74,8 @@ export const CAPABILITY_RELEASE: Partial<Record<CapabilityId, string>> = {
   nodeSettings: 'v2.7.0',
   rookStorage: 'v2.7.0',
   upgradeReadiness: 'v2.7.2',
+  rookOptions: 'v2.7.2',
+  guestBridge: 'v2.7.2',
 };
 
 export type Capabilities = Record<CapabilityId, boolean> & {

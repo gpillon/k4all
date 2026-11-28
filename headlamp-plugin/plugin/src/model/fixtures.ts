@@ -7,6 +7,7 @@
  */
 
 import {
+  CephClusterLike,
   ClusterConfigObject,
   ClusterUpgradeObject,
   Finding,
@@ -520,6 +521,12 @@ export function failWith(
 export function releaseManifestV272(): ReleaseManifestObject {
   const rm = releaseManifestV270();
   rm.spec!.osImage!.imageTag = 'v2.7.2-amd64';
+  rm.spec!.components!['hangar-guest-bridge'] = {
+    type: 'manifest',
+    version: 'v0.2.0',
+    featureGate: 'virt',
+    dependsOn: ['kubevirt'],
+  };
   rm.spec!.components!['k4all-operator'] = { type: 'manifest', version: 'v0.7.0' };
   rm.status!.components!['k4all-operator'] = { state: 'Installed', installedVersion: 'v0.7.0' };
   return rm;
@@ -785,3 +792,58 @@ export const SEED_FINDING_KINDS = [
   'EvictionRefused',
   'RemediationFailed',
 ];
+
+// ------------------------------------------- Rook settings of k4all v2.7.2
+
+/** A Node of arch, with the x86-64 level k4all-upgrade publishes (none: a release before v2.7.2). */
+export function nodeWithLevel(name: string, level?: string, arch = 'amd64'): NodeLike {
+  const n = node(name, {
+    annotations: level ? { 'k4all.magesgate.com/x86-64-level': level } : undefined,
+  });
+  n.status!.nodeInfo!.architecture = arch;
+  return n;
+}
+
+/**
+ * The CephCluster k4all created (rook-ceph/rook-ceph), with its crash
+ * collector as crash (null: not in the spec) and the field manager that
+ * last wrote spec.crashCollector.disable.
+ */
+export function cephClusterK4all(
+  crash: { disable?: boolean; daysToRetain?: number } | null = {
+    disable: false,
+    daysToRetain: 30,
+  },
+  manager = 'k4all-operator-seed'
+): CephClusterLike {
+  return {
+    apiVersion: 'ceph.rook.io/v1',
+    kind: 'CephCluster',
+    metadata: {
+      name: 'rook-ceph',
+      namespace: 'rook-ceph',
+      generation: 4,
+      resourceVersion: '81234',
+      managedFields: crash
+        ? [
+            {
+              manager,
+              operation: manager === 'k4all-operator-seed' ? 'Apply' : 'Update',
+              fieldsV1: { 'f:spec': { 'f:crashCollector': { 'f:disable': {} } } },
+            },
+            {
+              manager: 'rook',
+              operation: 'Update',
+              subresource: 'status',
+              fieldsV1: { 'f:status': {} },
+            },
+          ]
+        : [],
+    },
+    spec: {
+      ...(crash ? { crashCollector: crash } : {}),
+      storage: { useAllNodes: true, useAllDevices: true },
+    },
+    status: { phase: 'Ready', ceph: { health: 'HEALTH_OK' } },
+  };
+}

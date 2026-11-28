@@ -15,6 +15,7 @@ import mdiArrowRightBoldOutline from '@iconify/icons-mdi/arrow-right-bold-outlin
 import mdiArrowUpBoldCircleOutline from '@iconify/icons-mdi/arrow-up-bold-circle-outline';
 import mdiBackupRestore from '@iconify/icons-mdi/backup-restore';
 import mdiBridge from '@iconify/icons-mdi/bridge';
+import mdiChartLine from '@iconify/icons-mdi/chart-line';
 import mdiCheck from '@iconify/icons-mdi/check';
 import mdiCheckCircleOutline from '@iconify/icons-mdi/check-circle-outline';
 import mdiChevronDown from '@iconify/icons-mdi/chevron-down';
@@ -36,6 +37,7 @@ import mdiEyeOutline from '@iconify/icons-mdi/eye-outline';
 import mdiFedora from '@iconify/icons-mdi/fedora';
 import mdiFileLockOutline from '@iconify/icons-mdi/file-lock-outline';
 import mdiFileQuestionOutline from '@iconify/icons-mdi/file-question-outline';
+import mdiFolderNetworkOutline from '@iconify/icons-mdi/folder-network-outline';
 import mdiFormatListNumbered from '@iconify/icons-mdi/format-list-numbered';
 import mdiHandBackLeftOutline from '@iconify/icons-mdi/hand-back-left-outline';
 import mdiHelpCircleOutline from '@iconify/icons-mdi/help-circle-outline';
@@ -104,6 +106,7 @@ export const ICONS: Record<string, IconifyIcon> = {
   'check-circle-outline': mdiCheckCircleOutline,
   'chevron-down': mdiChevronDown,
   'chevron-right': mdiChevronRight,
+  'chart-line': mdiChartLine,
   chip: mdiChip,
   'clipboard-check-outline': mdiClipboardCheckOutline,
   'clipboard-list-outline': mdiClipboardListOutline,
@@ -121,6 +124,7 @@ export const ICONS: Record<string, IconifyIcon> = {
   fedora: mdiFedora,
   'file-lock-outline': mdiFileLockOutline,
   'file-question-outline': mdiFileQuestionOutline,
+  'folder-network-outline': mdiFolderNetworkOutline,
   'format-list-numbered': mdiFormatListNumbered,
   'hand-back-left-outline': mdiHandBackLeftOutline,
   'help-circle-outline': mdiHelpCircleOutline,

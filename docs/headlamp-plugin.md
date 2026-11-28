@@ -21,9 +21,9 @@ On a cluster restored from 1.x the Secret is `admin-user`. From v2.7.2,
 | **Overview** | The k4all release, whether an upgrade is available or running, health, components, features, ingress, and each node with its release and upgrade phase. |
 | **Upgrades** | Move every node to a newer k4all release and follow it. |
 | **Settings** | Features (Virtualization, Argo CD, OVS secondary networks), ingress (dedicated IP, default IngressClass, Ingresses still on the nginx class), Cilium options. Install-time settings are shown read-only, with the reason. From v2.7.0 it links the three pages below and warns when Cilium's pod addresses overlap another network (`PodNetworkOverlap`). |
-| **Virtualization** (v2.7.0) | The Virtualization switch and emulation, the KubeVirt feature gates k4all turns on or off, where the VMs' persistent EFI/TPM state lives, Hangar's node agent, the metadata service. |
+| **Virtualization** (v2.7.0) | The Virtualization switch and emulation, the KubeVirt feature gates k4all turns on or off, where the VMs' persistent EFI/TPM state lives, Hangar's node agent (and from v2.7.2 its guest bridge), the metadata service. |
 | **Node settings** (v2.7.0) | Max pods, CPU manager, reserved CPUs, topology manager, hugepages, IOMMU, for every node; the plan before saving and the rollout after. |
-| **Storage** (v2.7.0) | Rook/Ceph: turn it on, which disks it takes, what to do below 3 nodes; once created, Cairn manages it. |
+| **Storage** (v2.7.0) | Rook/Ceph: turn it on, which disks it takes, what to do below 3 nodes; once created, Cairn manages it. From v2.7.2 also named devices, the Ceph CSI image, the crash collector, monitoring and CephFS. |
 | **Components** | Every component of the release: state, versions, Helm value overrides that survive upgrades, management (Managed, Unmanaged, Removed), re-apply. Components the release removed (such as ingress-nginx from v2.4.0, kubevirt-manager from v2.7.0) are hidden unless you turn on "Show removed"; kubevirt-manager's page lists what its removal kept because it is still in use. |
 
 The Node page of Headlamp also gets a k4all section: role, release, upgrade
@@ -220,6 +220,10 @@ to it):
   the state at each live migration.
 - **Hangar node agent**: the privileged agent behind Hangar's Hardware tab
   and PCI passthrough; on by default with Virtualization.
+- **Hangar guest bridge** (from v2.7.2): the API behind Hangar's Guest and
+  Files tabs, one pod per node; on by default with Virtualization. When its
+  APIService has been unavailable for more than 10 minutes the row says
+  so, as k4all-operator reports it.
 - **Metadata service** (`#metadata`): VMs reach `169.254.169.254` (OpenStack
   and EC2 formats) for their instance metadata, the SSH keys of their
   `accessCredentials` and ServiceAccount tokens; the user-data served is the
@@ -282,6 +286,33 @@ Once the cluster exists the page says **Created: manage it in Cairn**:
 disks, pools and daemon counts are Cairn's from then on, and the creation
 inputs here do nothing.
 
+From v2.7.2:
+
+- **Named devices**: instead of **Disks for Ceph**, name the devices of each
+  node that become OSDs, one OSD each: `/dev/<vg>/<lv>` for a logical
+  volume, `/dev/disk/by-id/<id>` or `/dev/sdX` for a disk. It is the only
+  way to give Ceph a logical volume, which must be thick (outside TopoLVM's
+  thin pool) and carry no signature:
+  `lvcreate -L <size> -n <lv> --wipesignatures y --zero y <vg>`. The disks
+  table shows a disk with LVM as "LVM: a logical volume can be named". The
+  pool gets one replica per named node; below 3 named nodes the
+  **Below 3 nodes** rule applies to them.
+- **Ceph CSI image** (`#csi-image`): Auto picks the cephcsi build from the
+  nodes' CPUs (the standard build needs x86-64-v3 on amd64; the other is the
+  same version for older CPUs). The page says which build runs and why, and
+  the CPU level each node reports.
+- **Crash collector** (`#crash-collector`): on or off as the CephCluster has
+  it now. **Turn on** / **Turn off** changes the CephCluster itself, like
+  Cairn does; k4all set it once (on) and never changes it again.
+- **Monitoring** (`#monitoring`): Ceph's metrics and alert rules for a
+  Prometheus Operator your cluster runs (k4all ships none), with the labels
+  your Prometheus selects by. Without one the page says so before you turn
+  it on.
+- **CephFS** (`#cephfs`): a shared-files (ReadWriteMany) StorageClass
+  `ceph-cephfs`. Not set, it comes with a Ceph cluster created from v2.7.2;
+  **On** creates it on an older one. Pods that share a CephFS volume need the
+  same `securityContext.seLinuxOptions.level`.
+
 Turning Rook off is refused while a Ceph cluster exists; the page shows the
 reason and the steps (move or delete what lives on Ceph in Cairn, then
 delete the CephCluster). k4all never wipes disks: before turning Rook on
@@ -314,11 +345,12 @@ ClusterRoles in `headlamp-plugin/distribution/rbac.yaml`:
 |---|---|
 | `k4all-viewer` | see every page (with read access to the KubeVirt CR, StorageClasses, StorageProfiles and CephClusters for the v2.7.0 pages) |
 | `k4all-editor` | also change settings, overrides, management, re-apply, and switch Ingresses to traefik |
-| `k4all-upgrader` | also start, pause, resume, stop and retry upgrades; from v2.7.2 check again, approve fixes, accept, put back now |
+| `k4all-upgrader` | also start, pause, resume, stop and retry upgrades; from v2.7.2 check again, approve fixes, accept, put back now (and read the ClusterConfig) |
 
 Controls a user may not use are disabled, with the reason; the v2.7.2 fix
 buttons are not shown at all. Settings → Upgrades and the rollout's fixes
-need `k4all-editor`.
+need `k4all-editor`. The crash collector's Turn on / Turn off needs `patch`
+on the CephCluster (Cairn's `cairn-editor`, or the admin token).
 
 ## Updates of the plugin itself
 

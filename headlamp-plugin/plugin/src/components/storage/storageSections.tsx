@@ -2,6 +2,8 @@
  * The sections of /k4all/settings/storage (k4all v2.7.0): the Ceph cluster
  * (creation inputs, or the cluster k4all created and the way to Cairn), the
  * disks Ceph would take, and turning Rook off (D24: k4all never wipes disks).
+ * The v2.7.2 parts (named devices, CSI image, crash collector, monitoring,
+ * CephFS) are in rookSections.tsx.
  */
 
 import { Icon } from '@iconify/react';
@@ -25,11 +27,13 @@ import React from 'react';
 import type { AgentInventories } from '../../api/clusterObjects';
 import { FIELDS } from '../../model/fields';
 import { setPruned } from '../../model/objects';
-import { diskCandidates, rookDefaults, RookView } from '../../model/storage';
-import { CephClusterLike } from '../../model/types';
+import { formatStorageNodes, osdHosts, storageNodes } from '../../model/rookSettings';
+import { DiskCandidate, diskCandidates, rookDefaults, RookView } from '../../model/storage';
+import { CephClusterLike, RookStorageNode } from '../../model/types';
 import { CAIRN_OSDS_URL, CAIRN_POOLS_URL, CAIRN_URL, clusterURL } from '../common/nav';
 import { ApplyBadge, Mono, Panel, SettingRow, TonePill } from '../common/ui';
 import { FieldMessages, isChanged, SectionProps } from '../settings/common';
+import { NamedDevicesRow } from './rookSections';
 
 const GiB = 2 ** 30;
 function fmtSize(bytes: number | null): string {
@@ -41,9 +45,52 @@ function fmtSize(bytes: number | null): string {
     : `${Math.round(bytes / GiB)} GiB`;
 }
 
-/** The disks Rook would take per node, from Hangar's node agent; unknown without it. */
-export function DiskPreview(props: { inventories: AgentInventories | null; filter?: string }) {
+/** How a disk reads in the "For Ceph" column. */
+function DiskVerdict(props: { d: DiskCandidate; namedMode: boolean }) {
+  const { d } = props;
+  const inUse = [...d.partitions, ...d.signatures, ...d.holders, ...d.mounts].join(', ');
+  if (props.namedMode) {
+    if (d.named) {
+      return d.blank ? (
+        <TonePill tone="success" label="named: becomes an OSD" />
+      ) : (
+        <TonePill tone="warning" label="named, but in use: Rook refuses it" title={inUse} />
+      );
+    }
+    if (d.blank) {
+      return <TonePill tone="neutral" label="blank: can be named" />;
+    }
+  } else if (d.osd) {
+    return <TonePill tone="success" label="becomes an OSD" />;
+  } else if (!d.matches) {
+    return <TonePill tone="neutral" label="not matched by the filter" />;
+  }
+  if (d.lvm) {
+    return (
+      <TonePill
+        tone="info"
+        label="LVM: a logical volume can be named"
+        title={`${inUse}. Rook never takes the disk or a logical volume by itself: name a thick logical volume of its volume group (/dev/<vg>/<lv>) under Named devices.`}
+      />
+    );
+  }
+  return <TonePill tone="neutral" label="in use: skipped" title={inUse} />;
+}
+
+/**
+ * The disks Rook would take per node, from Hangar's node agent; unknown
+ * without it. With named devices (storage.nodes) the named ones, by
+ * /dev/<name> or /dev/disk/by-id/<id>; a disk with LVM can give a logical
+ * volume to name.
+ */
+export function DiskPreview(props: {
+  inventories: AgentInventories | null;
+  filter?: string;
+  /** storage.nodes, when set: the named mode. */
+  named?: RookStorageNode[];
+}) {
   const inv = props.inventories;
+  const namedMode = (props.named?.length ?? 0) > 0;
   if (!inv) {
     return (
       <Typography variant="body2" color="text.secondary">
@@ -84,25 +131,19 @@ export function DiskPreview(props: { inventories: AgentInventories | null; filte
                   </TableCell>
                 </TableRow>,
               ]
-            : diskCandidates(n.disks, props.filter).map(d => (
+            : diskCandidates(
+                n.disks,
+                props.filter,
+                namedMode
+                  ? (props.named!.find(e => e.name === n.node)?.devices ?? []).map(d => d.name)
+                  : undefined
+              ).map(d => (
                 <TableRow key={`${n.node}/${d.name}`}>
                   <TableCell>{n.node}</TableCell>
                   <TableCell sx={{ fontFamily: 'monospace' }}>{d.name}</TableCell>
                   <TableCell>{fmtSize(d.sizeBytes)}</TableCell>
                   <TableCell>
-                    {d.osd ? (
-                      <TonePill tone="success" label="becomes an OSD" />
-                    ) : !d.matches ? (
-                      <TonePill tone="neutral" label="not matched by the filter" />
-                    ) : (
-                      <TonePill
-                        tone="neutral"
-                        label="in use: skipped"
-                        title={[...d.partitions, ...d.signatures, ...d.holders, ...d.mounts].join(
-                          ', '
-                        )}
-                      />
-                    )}
+                    <DiskVerdict d={d} namedMode={namedMode} />
                   </TableCell>
                 </TableRow>
               ))
@@ -149,14 +190,18 @@ export interface CephSectionProps extends SectionProps {
   clusters: CephClusterLike[];
   nodes: number;
   inventories: AgentInventories | null;
+  /** The cluster's node names, for named devices. */
+  nodeNames?: string[];
 }
 
 /** The creation inputs, or the cluster k4all created, with the way to Cairn. */
 export function CephSection(props: CephSectionProps) {
   const { draft, update, disabled, view } = props;
   const filter = draft.features?.rook?.storage?.deviceFilter ?? '';
+  const named = storageNodes(draft);
   const policy = draft.features?.rook?.smallCluster === 'Allow' ? 'Allow' : 'Refuse';
-  const d = rookDefaults(props.nodes);
+  const hosts = osdHosts(draft, props.nodes);
+  const d = rookDefaults(props.nodes, hosts);
   if (view.created) {
     return (
       <Panel
@@ -182,8 +227,17 @@ export function CephSection(props: CephSectionProps) {
         </Alert>
         <CephClustersList clusters={props.clusters} />
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
-          Creation inputs, read when the cluster was created and doing nothing now: disks{' '}
-          <Mono>{filter || 'every blank disk'}</Mono>, below 3 nodes <Mono>{policy}</Mono>.
+          Creation inputs, read when the cluster was created and doing nothing now:{' '}
+          {named.length > 0 ? (
+            <>
+              named devices <Mono>{formatStorageNodes(named)}</Mono>
+            </>
+          ) : (
+            <>
+              disks <Mono>{filter || 'every blank disk'}</Mono>
+            </>
+          )}
+          , below 3 nodes <Mono>{policy}</Mono>.
         </Typography>
       </Panel>
     );
@@ -192,7 +246,9 @@ export function CephSection(props: CephSectionProps) {
     <Panel title="Ceph cluster k4all creates" icon="mdi:database-plus-outline">
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
         Read once, when k4all creates the cluster; after that Cairn manages it. For {props.nodes}{' '}
-        node{props.nodes === 1 ? '' : 's'}: {d.mons} mon{d.mons === 1 ? '' : 's'}, {d.mgrs} mgr
+        node{props.nodes === 1 ? '' : 's'}
+        {named.length > 0 ? `, ${named.length} with OSDs` : ''}: {d.mons} mon
+        {d.mons === 1 ? '' : 's'}, {d.mgrs} mgr
         {d.mgrs === 1 ? '' : 's'}, pool <Mono>vm-pool</Mono> of size {d.poolSize}, StorageClass{' '}
         <Mono>ceph-rbd</Mono> (ReadWriteMany block, for live migration).
       </Typography>
@@ -208,7 +264,7 @@ export function CephSection(props: CephSectionProps) {
             size="small"
             placeholder="every blank disk"
             value={filter}
-            disabled={disabled}
+            disabled={disabled || (named.length > 0 && !filter)}
             onChange={e => {
               const next = e.target.value || undefined;
               update(dr => setPruned(dr, FIELDS.rookDeviceFilter.path, next));
@@ -219,11 +275,21 @@ export function CephSection(props: CephSectionProps) {
         }
         messages={
           <Stack spacing={1}>
+            {named.length > 0 && !filter && (
+              <Typography variant="body2" color="text.secondary">
+                Named devices are set: the two are exclusive.
+              </Typography>
+            )}
             <FieldMessages issues={props.issues} field="rookDeviceFilter" />
-            <DiskPreview inventories={props.inventories} filter={filter || undefined} />
+            <DiskPreview
+              inventories={props.inventories}
+              filter={filter || undefined}
+              named={named.length > 0 ? named : undefined}
+            />
           </Stack>
         }
       />
+      <NamedDevicesRow {...props} nodeNames={props.nodeNames ?? []} />
       <SettingRow
         label={FIELDS.rookSmallCluster.label}
         htmlFor="k4all-rook-small"
