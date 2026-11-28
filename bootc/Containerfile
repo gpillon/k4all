@@ -10,7 +10,7 @@ FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR}
 
 ARG FEDORA_MAJOR
 ARG K4ALL_VERSION=dev
-ARG KUBERNETES_VERSION=1.36.6
+ARG KUBERNETES_VERSION=1.36.7
 ARG CRIO_PACKAGE=cri-o1.36
 ARG CRIO_MINOR=1.36
 ARG YQ_VERSION=v4.53.3
@@ -145,6 +145,8 @@ COPY systemd/*.path /etc/systemd/system/
 COPY overlay/etc/systemd/system/kubelet.service.d/ /etc/systemd/system/kubelet.service.d/
 COPY overlay/usr/lib/systemd/system/ovs-delete-transient-ports.service.d/ \
      /usr/lib/systemd/system/ovs-delete-transient-ports.service.d/
+COPY overlay/usr/lib/systemd/system/fstrim.service.d/ \
+     /usr/lib/systemd/system/fstrim.service.d/
 
 # Enable services that should start at boot
 RUN systemctl enable crio.service && \

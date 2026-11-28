@@ -156,6 +156,12 @@ class FakeHost(ku.Host):
         # downloads: with this set, every call runs out of its time (rc 124)
         self.bootc_busy = False
         self.bootc_status_timeouts = []     # the timeout of every `bootc status`
+        # `findmnt -n -o MAJ:MIN --target <mount>`: mount -> "253:3"; a
+        # mount not in it fails, as with no findmnt
+        self.mounts = {}
+        self.lvs = None             # what `lvs --reportformat json` prints; None: it fails
+        # what `ld-linux-x86-64.so.2 --help` prints; None: it cannot run
+        self.ld_so_help = None
         self.cluster_config = {
             "apiVersion": "kubeadm.k8s.io/v1beta4",
             "kind": "ClusterConfiguration",
@@ -309,6 +315,18 @@ class FakeHost(ku.Host):
             return self._kubeadm(cmd, argv[1:])
         if cmd == "podman":
             return Proc()
+        if cmd == "findmnt":
+            if argv[-1] not in self.mounts:
+                return Proc(returncode=1)
+            return Proc(" %s\n" % self.mounts[argv[-1]])
+        if cmd == "lvs":
+            if self.lvs is None:
+                return Proc(returncode=5, stderr="  Volume group not found")
+            return Proc(self.lvs)
+        if cmd == ku.LD_SO_X86_64 and argv[1:] == ["--help"]:
+            if self.ld_so_help is None:
+                return Proc(returncode=127, stderr="No such file or directory")
+            return Proc(self.ld_so_help)
         if cmd == "yq":
             raise AssertionError("tests have PyYAML; yq must not be needed")
         return Proc(returncode=127, stderr="unexpected command %s" % argv)
