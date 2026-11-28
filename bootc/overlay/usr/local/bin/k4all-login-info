@@ -1,0 +1,113 @@
+#!/bin/bash
+# k4all-login-info: the message root sees at login on a control plane: the
+# dashboard's addresses and a Headlamp token.
+#
+#   k4all-login-info                   print the message
+#   k4all-login-info --update-profile [FILE]
+#                                      make the K4ALL HELPER block of FILE
+#                                      (default /root/.bash_profile) call
+#                                      this script (k4all-login-info.service)
+#
+# The token comes from the Secret headlamp/headlamp-admin-token (k4all 2.x),
+# else from headlamp/admin-user (a cluster restored from 1.x), else the
+# message says how to get one. The block calls the script only where it is
+# installed: after a rollback to an older image the login stays quiet.
+#
+# K4ALL_ROOT: the tests run the script against a fake root.
+
+ROOT="${K4ALL_ROOT:-}"
+LOGIN_DATA="$ROOT/etc/login_data"
+PROFILE="$ROOT/root/.bash_profile"
+HEADLAMP_NS="headlamp"
+TOKEN_SECRETS="headlamp-admin-token admin-user"
+
+HELPER_BEGIN="#### K4ALL HELPER ####"
+HELPER_END="#### END K4ALL HELPER ####"
+HELPER_BLOCK="$HELPER_BEGIN
+#### pls, DO NOT REMOVE \"K4ALL HELPER\" tags, or you could mess up updates :) ###
+if [ -x /usr/local/bin/k4all-login-info ]; then /usr/local/bin/k4all-login-info; fi
+$HELPER_END"
+
+# headlamp_token: the token of the first Secret of TOKEN_SECRETS that has
+# one. A slow or absent API server must not hold up the login.
+headlamp_token() {
+    local secret token
+    for secret in $TOKEN_SECRETS; do
+        token=$(kubectl --request-timeout=5s -n "$HEADLAMP_NS" get secret \
+                    "$secret" -o jsonpath='{.data.token}' 2>/dev/null \
+                | base64 -d 2>/dev/null) || token=""
+        if [ -n "$token" ]; then
+            printf '%s\n' "$token"
+            return 0
+        fi
+    done
+    return 1
+}
+
+print_info() {
+    local host_ip token
+    # Root's login has its own kubeconfig; `sudo k4all-login-info` may not.
+    if [ -z "${KUBECONFIG:-}" ] && [ ! -f "${HOME:-/root}/.kube/config" ] \
+            && [ -r /etc/kubernetes/admin.conf ]; then
+        export KUBECONFIG=/etc/kubernetes/admin.conf
+    fi
+    host_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    echo ""
+    echo "Welcome! Connect to the dashboard using those addresses: "
+    if [ -f "$LOGIN_DATA" ]; then
+        cat "$LOGIN_DATA"
+    fi
+    echo " - Nodeport Fallback Route: http://$host_ip:32323"
+    echo ""
+    if token=$(headlamp_token); then
+        echo "Using this token"
+        echo "$token"
+    else
+        echo "No Headlamp token found (Secret $HEADLAMP_NS/headlamp-admin-token or $HEADLAMP_NS/admin-user)."
+        echo "Get one with:"
+        echo "  kubectl -n $HEADLAMP_NS create token headlamp-admin"
+    fi
+    echo ""
+}
+
+# update_profile FILE: replace each K4ALL HELPER block of FILE (from its
+# begin tag to its end tag, both on lines of their own) with HELPER_BLOCK.
+# FILE is written only when that changes it. A begin tag without an end tag
+# leaves FILE as it is.
+update_profile() {
+    local file="$1" new
+    [ -f "$file" ] || return 0
+    if ! new=$(HELPER_BEGIN="$HELPER_BEGIN" HELPER_END="$HELPER_END" \
+               HELPER_BLOCK="$HELPER_BLOCK" awk '
+        { line = $0; sub(/[ \t\r]+$/, "", line) }
+        !inside && line == ENVIRON["HELPER_BEGIN"] { inside = 1; next }
+        inside && line == ENVIRON["HELPER_END"] {
+            inside = 0; print ENVIRON["HELPER_BLOCK"]; next
+        }
+        inside { next }
+        { print }
+        END { if (inside) exit 1 }' "$file"); then
+        echo "$file: \"$HELPER_BEGIN\" has no \"$HELPER_END\": left as it is" >&2
+        return 0
+    fi
+    # $(...) drops the trailing newlines; the file keeps one.
+    if [ "$new" = "$(cat "$file")" ]; then
+        return 0
+    fi
+    local tmp
+    tmp=$(mktemp "$file.k4all.XXXXXX") || return 1
+    printf '%s\n' "$new" > "$tmp" &&
+        chmod --reference="$file" "$tmp" &&
+        chown --reference="$file" "$tmp" 2>/dev/null
+    if ! mv -f "$tmp" "$file"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    echo "$file: the K4ALL HELPER block now calls k4all-login-info"
+}
+
+case "${1:-}" in
+    --update-profile) update_profile "${2:-$PROFILE}" ;;
+    "") print_info ;;
+    *) echo "usage: $0 [--update-profile [FILE]]" >&2; exit 2 ;;
+esac
