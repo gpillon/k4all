@@ -152,6 +152,10 @@ class FakeHost(ku.Host):
         self.pod_stop_rc = {}       # pod id -> rc of its stop (default 0)
         self.pod_stop_tries = {}    # pod id -> crictl stopp tries (default 1)
         self.sleeps = []            # seconds of every Host.sleep, in order
+        # `findmnt -n -o MAJ:MIN --target <mount>`: mount -> "253:3"; a
+        # mount not in it fails, as with no findmnt
+        self.mounts = {}
+        self.lvs = None             # what `lvs --reportformat json` prints; None: it fails
         self.cluster_config = {
             "apiVersion": "kubeadm.k8s.io/v1beta4",
             "kind": "ClusterConfiguration",
@@ -298,6 +302,14 @@ class FakeHost(ku.Host):
             return self._kubeadm(cmd, argv[1:])
         if cmd == "podman":
             return Proc()
+        if cmd == "findmnt":
+            if argv[-1] not in self.mounts:
+                return Proc(returncode=1)
+            return Proc(" %s\n" % self.mounts[argv[-1]])
+        if cmd == "lvs":
+            if self.lvs is None:
+                return Proc(returncode=5, stderr="  Volume group not found")
+            return Proc(self.lvs)
         if cmd == "yq":
             raise AssertionError("tests have PyYAML; yq must not be needed")
         return Proc(returncode=127, stderr="unexpected command %s" % argv)

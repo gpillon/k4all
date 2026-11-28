@@ -25,3 +25,8 @@ window:
 # the static pods), so the reboot waits at most twice this long. A VM's
 # virt-launcher pod asks for its VMI's grace period plus 30 s.
 podStopMaxSeconds: 300
+
+# Before a hop, when /sysroot or /var sits on a thin LV (df sees only the
+# filesystem): the hop stops in HOLD while the thin pool under it is fuller
+# than this, data or metadata, in percent. 100 turns the check off.
+maxThinPoolPercent: 90
