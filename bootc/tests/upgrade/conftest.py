@@ -203,6 +203,10 @@ class FakeHost(ku.Host):
     def now(self):
         return self.clock
 
+    def utcnow(self):
+        # the fake node runs in UTC
+        return self.clock.replace(tzinfo=datetime.timezone.utc)
+
     def sleep(self, seconds):
         self.sleeps.append(seconds)
         self.clock += datetime.timedelta(seconds=seconds)

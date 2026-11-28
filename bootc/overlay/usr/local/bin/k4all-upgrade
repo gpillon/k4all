@@ -867,6 +867,10 @@ class Host:
     def now(self):
         return datetime.datetime.now()
 
+    def utcnow(self):
+        """Now, aware, in UTC: for the times other programs write."""
+        return datetime.datetime.now(datetime.timezone.utc)
+
     def sleep(self, seconds):
         time.sleep(seconds)
 
@@ -1487,6 +1491,234 @@ def bare_pods_note(node, names):
             "refuses them, and with --force deletes them for good: delete them "
             "or recreate them under a controller first (see %s)."
             % (node, _some(names), BARE_PODS_DOCS))
+
+
+# The k4all-operator's readiness verdict for a node (k4all-operator v0.7.0
+# on): it writes it on every Node at each of its checks, at most 30 minutes
+# apart while a release is available or an upgrade runs, and never removes
+# it. Format version 1, as the operator's DrainReadiness.Encode writes it
+# (api/v1alpha1/annotation_formats.go):
+#   {"v":1,"at":"2026-11-24T01:12:25Z","release":"v2.8.0","blocks":1,
+#    "disrupts":12,"first":["<Kind> <namespace>/<name>: <message>"]}
+# - blocks: the node's Blocks findings plus the cluster's (Ceph not healthy
+#   holds every node); disrupts: the node's Disrupts findings;
+# - first: at most 3 messages, Blocks first, always present ([] when
+#   empty); the whole value takes at most 2048 bytes.
+# A field is never renamed, and a reader ignores the fields it does not
+# know (ADR-0006). This tool runs no rules of its own: it reads the verdict,
+# and its own checks (drain_blockers, bare_pods) stay as the fallback.
+ANNOTATION_DRAIN_READINESS = "k4all.magesgate.com/drain-readiness"
+DRAIN_READINESS_FORMAT = 1
+DRAIN_READINESS_MAX_MESSAGES = 3
+# The operator refreshes the verdict at most 30 minutes apart: 5 minutes
+# more for that period and for clock skew (k4all#126).
+DRAIN_READINESS_FRESH_MINUTES = 35
+# What a malformed value's WARNING quotes of it.
+DRAIN_READINESS_QUOTE = 200
+# Asks the k4all-operator for a new check now (k4all-operator#59): after a
+# fix by hand, the old verdict would hold the hop again until its next one.
+CHECK_READINESS_COMMAND = ("kubectl annotate clusterupgrade k4all "
+                           "k4all.magesgate.com/check-readiness=now --overwrite")
+_RFC3339_RE = re.compile(r"^(\d{4})-(\d\d)-(\d\d)[Tt](\d\d):(\d\d):(\d\d)(\.\d+)?"
+                         r"([Zz]|[+-]\d\d:\d\d)$")
+
+
+def parse_rfc3339(text):
+    """An RFC 3339 time, as Go's time.RFC3339 reads it (metav1.Time), as an
+    aware datetime; ValueError when it is not one."""
+    match = _RFC3339_RE.match(text)
+    if not match:
+        raise ValueError("not an RFC 3339 time: %r" % text[:40])
+    year, month, day, hour, minute, second, frac, zone = match.groups()
+    if zone in ("Z", "z"):
+        tz = datetime.timezone.utc
+    else:
+        offset = datetime.timedelta(hours=int(zone[1:3]), minutes=int(zone[4:6]))
+        tz = datetime.timezone(-offset if zone[0] == "-" else offset)
+    micro = int((frac[1:] + "000000")[:6]) if frac else 0
+    return datetime.datetime(int(year), int(month), int(day), int(hour),
+                             int(minute), int(second), micro, tzinfo=tz)
+
+
+def _json_int(value):
+    """Whether a JSON value is an integer (a bool is not, nor 1.0: Go
+    refuses both for an int field)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def decode_drain_readiness(value):
+    """The six fields of a drain-readiness value, as the operator's
+    DecodeDrainReadiness reads it, and stricter on the types: ValueError
+    (why) for a value that is not a JSON object, a format version other
+    than 1, or a field missing or of another type. Fields of a later
+    operator are ignored."""
+    try:
+        data = json.loads(value)
+    except ValueError as exc:
+        raise ValueError("not JSON: %s" % exc) from None
+    if not isinstance(data, dict):
+        raise ValueError("not a JSON object")
+    version = data.get("v")
+    if not _json_int(version) or version != DRAIN_READINESS_FORMAT:
+        raise ValueError("format version %s, want %d"
+                         % (json.dumps(version), DRAIN_READINESS_FORMAT))
+    at = data.get("at")
+    if not isinstance(at, str):
+        raise ValueError("at is not a time")
+    parse_rfc3339(at)
+    if not isinstance(data.get("release"), str):
+        raise ValueError("release is not a string")
+    for key in ("blocks", "disrupts"):
+        if not _json_int(data.get(key)) or data[key] < 0:
+            raise ValueError("%s is not a count" % key)
+    first = data.get("first")
+    if not isinstance(first, list) or not all(isinstance(m, str) for m in first):
+        raise ValueError("first is not a list of strings")
+    return {"v": version, "at": at, "release": data["release"],
+            "blocks": data["blocks"], "disrupts": data["disrupts"],
+            "first": list(first)}
+
+
+def _same_release(a, b):
+    try:
+        return parse_version(a) == parse_version(b)
+    except ValueError:
+        return False
+
+
+def drain_readiness(node, now, releases=None, after=None):
+    """The k4all-operator's verdict on ``node`` (its Node object) at ``now``
+    (aware), as a dict with "state":
+    - "missing": no annotation (an operator older than v0.7.0, or none);
+    - "malformed": unreadable, with "error" and "value" (its start);
+    - "fresh": the six fields of the value, which is at most
+      DRAIN_READINESS_FRESH_MINUTES from ``now`` and for one of
+      ``releases`` (the hop's release and the later ones of its plan), or
+      with ``releases`` None for a release after ``after`` (when known);
+    - "stale": the same fields, and "staleBecause": "age", "clock" (ahead
+      of ``now``) or "release"."""
+    annotations = ((node or {}).get("metadata") or {}).get("annotations") or {}
+    value = annotations.get(ANNOTATION_DRAIN_READINESS)
+    if value is None:
+        return {"state": "missing"}
+    try:
+        verdict = decode_drain_readiness(value)
+    except ValueError as exc:
+        return {"state": "malformed", "error": str(exc),
+                "value": value[:DRAIN_READINESS_QUOTE]}
+    age = now - parse_rfc3339(verdict["at"])
+    window = datetime.timedelta(minutes=DRAIN_READINESS_FRESH_MINUTES)
+    release = verdict["release"]
+    because = None
+    if age > window:
+        because = "age"
+    elif age < -window:
+        because = "clock"
+    elif releases is not None:
+        if not any(_same_release(release, r) for r in releases):
+            because = "release"
+    elif after and is_version(after) and not (
+            is_version(release) and parse_version(release) > parse_version(after)):
+        because = "release"
+    verdict["state"] = "stale" if because else "fresh"
+    if because:
+        verdict["staleBecause"] = because
+    return verdict
+
+
+def plan_releases(state):
+    """The releases a verdict may be for during ``state``'s plan: its hop's
+    and the later ones; None without a plan in progress."""
+    if not _active(state):
+        return None
+    hop = state.get("hop") or {}
+    return [r for r in [hop.get("to")] + [p.get("version") for p in
+                                          state.get("pending") or []] if r]
+
+
+def _things(count, verb_one, verb_many):
+    return "1 thing %s" % verb_one if count == 1 \
+        else "%d things %s" % (count, verb_many)
+
+
+def _blocks_named(verdict):
+    """The verdict's Blocks messages, joined: the first ``blocks`` of
+    ``first``, and how many more."""
+    blocks = verdict["blocks"]
+    named = [m for m in verdict["first"][:blocks] if m]
+    if blocks > len(named):
+        named.append("and %d more in the k4all addon (Upgrades)"
+                     % (blocks - len(named)) if named
+                     else "named in the k4all addon (Upgrades)")
+    return "; ".join(named).rstrip(".")
+
+
+def drain_readiness_hold(node, verdict):
+    """The HOLD of a hop on a node that drains itself, when the operator's
+    fresh verdict has Blocks findings."""
+    return ("the k4all-operator holds the drain of %s: %s (checked %s, for "
+            "%s): %s. Nothing was changed. Approve a fix in the k4all addon "
+            "(Upgrades) and run the upgrade as a ClusterUpgrade, or fix it by "
+            "hand (see %s). After a fix by hand, ask the k4all-operator for a "
+            "new check (`%s`), then `k4all-upgrade clear-hold` and "
+            "`k4all-upgrade resume`"
+            % (node, _things(verdict["blocks"], "stops it", "stop it"),
+               verdict["at"], verdict["release"], _blocks_named(verdict),
+               DRAIN_DOCS, CHECK_READINESS_COMMAND))
+
+
+def drain_readiness_note(node, verdict):
+    """What a node that waits for its drain from outside says first, when
+    the operator's fresh verdict has Blocks findings."""
+    blocks = verdict["blocks"]
+    return ("Node %s: the k4all-operator found %s (checked %s): %s. Fix %s "
+            "(the k4all addon, Upgrades), then drain this node from a control "
+            "plane."
+            % (node, _things(blocks, "that stops its drain",
+                             "that stop its drain"),
+               verdict["at"], _blocks_named(verdict),
+               "it" if blocks == 1 else "them"))
+
+
+def drain_readiness_skipped(node, verdict):
+    """The log line of a verdict the preflight does not use; None for a
+    missing one (an older operator, or none: as before v2.7.2)."""
+    state = verdict["state"]
+    if state == "stale":
+        why = {"age": "too old",
+               "clock": "ahead of this node's clock",
+               "release": "for another release than this plan's"}[
+                   verdict["staleBecause"]]
+        return ("the k4all-operator's readiness check of %s is from %s (for "
+                "%s): %s, using the built-in check"
+                % (node, verdict["at"], verdict["release"], why))
+    if state == "malformed":
+        return ("WARNING: the k4all-operator's readiness annotation %s of %s "
+                "is unreadable (%s), using the built-in check: %s"
+                % (ANNOTATION_DRAIN_READINESS, node, verdict["error"],
+                   verdict["value"]))
+    return None
+
+
+READINESS_INDENT = " " * len("Readiness: ")
+
+
+def readiness_lines(verdict):
+    """The Readiness: lines of `status` and `plan`."""
+    state = verdict["state"]
+    if state == "missing":
+        return ["Readiness: not reported by the k4all-operator"]
+    if state == "malformed":
+        return ["Readiness: unreadable annotation (%s)" % verdict["error"]]
+    if state == "unknown":
+        return ["Readiness: unknown, %s" % verdict["error"]]
+    lines = ["Readiness: %d blocks, %d disrupts (k4all-operator, checked %s%s, "
+             "for %s)" % (verdict["blocks"], verdict["disrupts"], verdict["at"],
+                          " (stale)" if state == "stale" else "",
+                          verdict["release"])]
+    lines += [READINESS_INDENT + m
+              for m in verdict["first"][:DRAIN_READINESS_MAX_MESSAGES]]
+    return lines
 
 
 def cluster_kubernetes_version(host, kubeconfig):
@@ -2671,6 +2903,32 @@ class Upgrader:
         except ValueError as exc:
             return None, "unreadable Node: %s" % exc
 
+    def drain_readiness(self, releases=None, after=None):
+        """drain_readiness() of this node's own Node; {"state": "unknown",
+        "error"} when it cannot be read; None without a kubeconfig."""
+        if not self._kubeconfig():
+            return None
+        node, why = self.read_node()
+        if node is None:
+            return {"state": "unknown",
+                    "error": "cannot read Node %s: %s" % (self._node_name(), why)}
+        return drain_readiness(node, self.host.utcnow(), releases, after)
+
+    def _operator_verdict(self, state):
+        """The k4all-operator's verdict for this hop when it is fresh, else
+        None: the built-in checks decide. A stale or malformed one is
+        logged."""
+        verdict = self.drain_readiness(plan_releases(state))
+        if verdict is None:
+            return None
+        if verdict["state"] == "unknown":
+            self.host.log("%s, using the built-in check" % verdict["error"])
+            return None
+        line = drain_readiness_skipped(self._node_name(), verdict)
+        if line:
+            self.host.log(line)
+        return verdict if verdict["state"] == "fresh" else None
+
     def patch_annotations(self, changes, resource_version=None):
         """Merge-patch annotations of this Node (None removes one). Best
         effort: returns False when the apiserver refuses or is down."""
@@ -2811,6 +3069,12 @@ class Upgrader:
                     kc, "the pods that declare no controller") or [])
                 if bare:
                     problem = bare_pods_note(self._node_name(), bare) + " " + problem
+                # The k4all-operator's verdict comes first: its findings
+                # are what whoever drains this node has to fix.
+                verdict = self._operator_verdict(state)
+                if verdict and verdict["blocks"] > 0:
+                    problem = drain_readiness_note(self._node_name(),
+                                                   verdict) + " " + problem
                 raise NotYet(problem)
         # A drain this node runs itself would never end on a pod whose
         # budget allows no disruption: stop before anything is downloaded,
@@ -2818,6 +3082,14 @@ class Upgrader:
         # operator asked for was checked before its cordon.
         if not operator_driven(state) and kc == ADMIN_KUBECONFIG \
                 and not self._single_node():
+            # The k4all-operator's fresh verdict covers more than budgets
+            # (VMs that cannot move, Ceph not healthy): its Blocks hold the
+            # hop. With none, the built-in checks run too: they are live
+            # and cheap. Without a fresh verdict they alone decide.
+            verdict = self._operator_verdict(state)
+            if verdict and verdict["blocks"] > 0:
+                raise UpgradeError(drain_readiness_hold(self._node_name(),
+                                                        verdict))
             blockers = self._drain_blockers(kc)
             # So would a drain on a pod that declares no controller: kubectl
             # refuses the whole drain, after STAGE and PRE_REBOOT and with
@@ -4633,7 +4905,16 @@ def uncommitted_release_line(state, booted):
             % (committed, booted, why, booted))
 
 
-def cmd_status(host, cfg, args):
+def status_readiness(upgrader, releases=None, after=None):
+    """The k4all-operator's verdict that `status` and `plan` show; None on a
+    node without a kubeconfig (or that cannot tell its type)."""
+    try:
+        return upgrader.drain_readiness(releases, after)
+    except UpgradeError:
+        return None
+
+
+def cmd_status(host, cfg, args, upgrader):
     state = load_state(host)
     try:
         version = current_version(host, timeout=BOOTC_STATUS_QUICK)
@@ -4641,6 +4922,10 @@ def cmd_status(host, cfg, args):
         version = "unknown (%s)" % exc
     info = {"version": version, "mode": cfg["mode"], "autoAllow": cfg["autoAllow"],
             "window": cfg["window"], "state": state}
+    # Outside a plan, any verdict for a release after the one booted.
+    readiness = status_readiness(upgrader, plan_releases(state), version)
+    if readiness is not None:
+        info["readiness"] = readiness
     if args.json:
         print(json.dumps(info, indent=2))
         return 0
@@ -4648,9 +4933,17 @@ def cmd_status(host, cfg, args):
     print("Policy:    mode=%s autoAllow=%s window=%s %s +%smin"
           % (cfg["mode"], cfg["autoAllow"], ",".join(cfg["window"]["days"]),
              cfg["window"]["start"], cfg["window"]["durationMinutes"]))
+    _print_upgrade(state, version)
+    for line in readiness_lines(readiness) if readiness else []:
+        print(line)
+    return 0
+
+
+def _print_upgrade(state, version):
+    """The lines of `status` about the plan in ``state``."""
     if not state:
         print("Upgrade:   none")
-        return 0
+        return
     if not _active(state):
         # A plan that is over stays in state.json: say so, and say when the
         # node no longer runs what it committed: an older release is a
@@ -4670,7 +4963,7 @@ def cmd_status(host, cfg, args):
         last = (state.get("history") or [{}])[-1]
         if last.get("warning"):
             print("Warning:   %s (hop to %s)" % (last["warning"], last.get("to")))
-        return 0
+        return
     print("Upgrade:   target %s, phase %s%s"
           % (state.get("target"), state.get("phase"),
              " (asked by the k4all-operator)" if operator_driven(state) else ""))
@@ -4691,7 +4984,6 @@ def cmd_status(host, cfg, args):
         print("Waiting:   %s%s" % (state["waiting"], how_it_goes_on(state)))
     if state.get("abandoned"):
         print("Abandoned: %s" % abandoned_message(state["abandoned"]))
-    return 0
 
 
 def _plan(host, cfg, args, upgrader):
@@ -4718,6 +5010,9 @@ def cmd_plan(host, cfg, args, upgrader):
     pending = (load_state(host) or {}).get("syncPending")
     if pending:
         print("Not yet:   %s" % sync_pending_message(pending))
+    readiness = status_readiness(upgrader, [r.version for r in path])
+    for line in readiness_lines(readiness) if readiness else []:
+        print(line)
     return 0
 
 
@@ -5135,7 +5430,7 @@ def main(argv=None, host=None):
         cfg = load_config(host)
         upgrader = Upgrader(host, cfg)
         if args.command == "status":
-            return cmd_status(host, cfg, args)
+            return cmd_status(host, cfg, args, upgrader)
         if args.command == "kube-vip-manifest":
             # no lock: one file, written atomically; also used before the
             # node has joined a cluster
