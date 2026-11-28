@@ -711,7 +711,6 @@ export function ReadinessHeader(props: {
       <Box>
         <Typography sx={{ fontWeight: 600 }} color={blocks ? 'error' : 'text.primary'}>
           {view.headline}
-          {view.perHop ? ', per hop' : ''}
         </Typography>
         <Typography variant="body2" color="text.secondary">
           For {view.release ?? 'the next release'}

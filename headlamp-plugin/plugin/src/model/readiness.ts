@@ -315,7 +315,11 @@ function podsOn(node?: string): Command[] {
     : [];
 }
 
-/** The finding kinds of the seed set (gpillon/k4all-operator#58), by kind. */
+/**
+ * The finding kinds of the seed set (gpillon/k4all-operator#58), by kind,
+ * with the two Info kinds its embedded rules add (CNPGSwitchover,
+ * RookOSDBudget).
+ */
 export const FINDING_KINDS: Record<string, KindInfo> = {
   PDBNeverAllows: {
     label: 'Budget that never allows',
@@ -358,6 +362,12 @@ export const FINDING_KINDS: Record<string, KindInfo> = {
     advice:
       'The drain shuts the guest down (evictionStrategy None, or it cannot move live). The message says where it ' +
       'starts again.',
+  },
+  CNPGSwitchover: {
+    label: 'CloudNativePG switches over',
+    advice:
+      'The primary has a ready replica on another node: CloudNativePG switches over to it once the node is ' +
+      'cordoned, and the drain goes on.',
   },
   VMLiveMigrates: {
     label: 'VM moves live',
@@ -438,6 +448,11 @@ export const FINDING_KINDS: Record<string, KindInfo> = {
     label: 'Ceph daemons here',
     advice:
       "Ceph's mons, OSDs, mgr or MDS on this node stop until it is back; Ceph runs degraded meanwhile.",
+  },
+  RookOSDBudget: {
+    label: "Rook's OSD budget",
+    advice:
+      "Rook manages its OSD budgets during a drain: it lets this node's OSDs go and holds the others. Never relaxed.",
   },
   CephBelowMinSize: {
     label: 'Ceph pool below min_size',
@@ -928,7 +943,8 @@ export function readinessView(
   });
   return {
     report,
-    headline: report.message || summaryHeadline(report),
+    // The operator's sentence says "per hop" itself; one built here says it too.
+    headline: report.message || `${summaryHeadline(report)}${hops > 1 ? ', per hop' : ''}`,
     perHop: hops > 1,
     hops,
     checkedAt: report.checkedAt,

@@ -176,7 +176,7 @@ describe('ReadinessPanel (Before you upgrade)', () => {
     render(<ReadinessPanel view={readinessView(report)} now={NOW} checking={false} />);
     expect(
       screen.getByText(
-        '1 thing will stop the upgrade; 2 VMs will shut down, 1 of them until its node is back'
+        '1 thing will stop the upgrade; 2 VMs will shut down per hop, 1 of them until their node is back'
       )
     ).toBeTruthy();
     const cp1 = screen.getByRole('region', { name: 'Readiness of cp-1' });
@@ -190,10 +190,18 @@ describe('ReadinessPanel (Before you upgrade)', () => {
 
   it('says the counts are per hop over several hops', () => {
     const report = clusterUpgradeWithReadiness().status!.readiness!;
-    render(<ReadinessPanel view={readinessView(report)} now={NOW} checking={false} />);
-    expect(screen.getByText(/, per hop$/)).toBeTruthy();
+    const { unmount } = render(
+      <ReadinessPanel view={readinessView(report)} now={NOW} checking={false} />
+    );
+    // the operator's sentence says it once
+    expect(screen.getAllByText(/per hop/)).toHaveLength(1);
     expect(screen.getByText(/in 4 hops: every hop drains and reboots every node/)).toBeTruthy();
     expect(screen.getByText(/with dry-run evictions/)).toBeTruthy();
+    unmount();
+    // a sentence built from the counts says it too
+    delete report.message;
+    render(<ReadinessPanel view={readinessView(report)} now={NOW} checking={false} />);
+    expect(screen.getByText(/, per hop$/)).toBeTruthy();
   });
 
   it('asks for a new check, and shows checking meanwhile', () => {

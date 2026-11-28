@@ -1,6 +1,6 @@
 # k4all Headlamp plugin: design
 
-Status: built and unit-tested (529 tests), not yet run against a live
+Status: built and unit-tested (531 tests), not yet run against a live
 cluster. Ships from k4all v2.4.0 (k4all-operator v0.5.0, Traefik, Headlamp
 chart 0.46.0, Kubernetes 1.35 and later); plugin 0.2.0 adds the k4all v2.7.0
 pages (k4all-operator v0.6.0, section 3.8-3.10); plugin 0.3.0 adds upgrade
@@ -1112,7 +1112,7 @@ npm ci
 npm run lint && npm run tsc && npm test && npm run build   # dist/main.js
 ```
 
-Tests: 529 (vitest, jsdom). Plugin 0.3.0 adds model tests for the
+Tests: 531 (vitest, jsdom). Plugin 0.3.0 adds model tests for the
 catalog (auto allowed per entry), a label and advice for every finding kind
 of the seed set and an unknown one, the answers (choices per mode, existing
 approvals by release or settings hash and node), the approval append and

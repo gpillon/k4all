@@ -630,7 +630,7 @@ export function clusterUpgradeWithReadiness(): ClusterUpgradeObject {
     dryRun: true,
     summary: { blocks: 1, disrupts: 3, info: 3, vmShutdowns: 2, vmsDownUntilNodeBack: 1 },
     message:
-      '1 thing will stop the upgrade; 2 VMs will shut down, 1 of them until its node is back',
+      '1 thing will stop the upgrade; 2 VMs will shut down per hop, 1 of them until their node is back',
     cluster: [
       {
         severity: 'Info',
@@ -754,10 +754,11 @@ export function clusterUpgradeBlocked(): ClusterUpgradeObject {
   return cu;
 }
 
-/** The finding kinds of the seed set (gpillon/k4all-operator#58). */
+/** The finding kinds of the seed set (gpillon/k4all-operator#58) and of its embedded rules. */
 export const SEED_FINDING_KINDS = [
   'PDBNeverAllows',
   'CNPGSingleInstance',
+  'CNPGSwitchover',
   'PDBExhausted',
   'PDBSequential',
   'VMNotMigratable',
@@ -776,6 +777,7 @@ export const SEED_FINDING_KINDS = [
   'CephNotHealthy',
   'CephHealthy',
   'CephDaemonsHere',
+  'RookOSDBudget',
   'CephBelowMinSize',
   'CephNoRedundancy',
   'NodeNotReady',

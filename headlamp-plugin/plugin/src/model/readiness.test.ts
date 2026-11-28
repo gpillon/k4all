@@ -284,7 +284,7 @@ describe('readinessView', () => {
   it("takes the operator's headline, per hop, Blocks first", () => {
     const v = readinessView(report, { release: 'v2.7.0' });
     expect(v.headline).toBe(
-      '1 thing will stop the upgrade; 2 VMs will shut down, 1 of them until its node is back'
+      '1 thing will stop the upgrade; 2 VMs will shut down per hop, 1 of them until their node is back'
     );
     expect(v.perHop).toBe(true);
     expect(v.otherRelease).toBeUndefined();
@@ -306,6 +306,9 @@ describe('readinessView', () => {
       readinessView({ summary: { blocks: 2, vmShutdowns: 3, vmsDownUntilNodeBack: 1 } }).headline
     ).toBe('2 things will stop the upgrade, 3 VMs will shut down, 1 until their node is back');
     expect(readinessView({ summary: {} }).headline).toBe('Nothing stops or disrupts the upgrade');
+    expect(readinessView({ hops: 2, summary: { blocks: 1 } }).headline).toBe(
+      '1 thing will stop the upgrade, per hop'
+    );
   });
 
   it("marks the node Headlamp's pod runs on, and a Headlamp pinned there", () => {
