@@ -7,21 +7,27 @@
 import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 import { classifyError } from '../model/errors';
 import { withRolloutPaused } from '../model/nodeSettings';
-import { escapePointerToken } from '../model/objects';
+import { escapePointerToken, Path } from '../model/objects';
 import {
   annotationMergePatch,
   buildSpecPatch,
   JsonPatchOp,
   precondition,
+  Versioned,
   writeQuery,
 } from '../model/patch';
+import { addApprovalOps, AnyApproval } from '../model/readiness';
 import {
+  CHECK_READINESS_ANNOTATION,
   CLUSTER_UPGRADE_NAME,
   ClusterConfigObject,
   ClusterUpgradeObject,
   ComponentManagement,
   FORCE_RESYNC_ANNOTATION,
+  NodeRolloutApproval,
   ReleaseManifestObject,
+  RemediationApproval,
+  RESTORE_ANNOTATION,
   RETRY_ANNOTATION,
 } from '../model/types';
 import { apiPath, K4allResource } from './resources';
@@ -125,20 +131,94 @@ export function getClusterUpgrade(): Promise<ClusterUpgradeObject> {
   ) as Promise<ClusterUpgradeObject>;
 }
 
+/** Sets one annotation on the ClusterUpgrade "k4all" (a merge patch on that key only). */
+function annotateClusterUpgrade(key: string, value: string): Promise<ClusterUpgradeObject> {
+  return ApiProxy.request(
+    `${apiPath('clusterupgrades', CLUSTER_UPGRADE_NAME)}?${writeQuery({ dryRun: false })}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(annotationMergePatch(key, value)),
+      headers: { 'Content-Type': 'application/merge-patch+json', Accept: 'application/json' },
+    }
+  ) as Promise<ClusterUpgradeObject>;
+}
+
 /**
  * Asks the operator to retry the nodes whose hop failed: sets the retry
  * annotation (any value; a timestamp here), which the operator consumes. A
  * merge patch on that key only, like force-resync.
  */
 export function retryClusterUpgrade(at: Date = new Date()): Promise<ClusterUpgradeObject> {
-  return ApiProxy.request(
-    `${apiPath('clusterupgrades', CLUSTER_UPGRADE_NAME)}?${writeQuery({ dryRun: false })}`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify(annotationMergePatch(RETRY_ANNOTATION, at.toISOString())),
-      headers: { 'Content-Type': 'application/merge-patch+json', Accept: 'application/json' },
+  return annotateClusterUpgrade(RETRY_ANNOTATION, at.toISOString());
+}
+
+/**
+ * Asks the operator for a new readiness check, with dry-run evictions
+ * (operator v0.7.0): the check-readiness annotation, any value (a
+ * timestamp here). The operator removes it after the check.
+ */
+export function checkClusterUpgradeReadiness(at: Date = new Date()): Promise<ClusterUpgradeObject> {
+  return annotateClusterUpgrade(CHECK_READINESS_ANNOTATION, at.toISOString());
+}
+
+/**
+ * Asks the operator to put back a remediation record now, whatever its
+ * node's state (operator v0.7.0): the restore annotation, the record id.
+ */
+export function restoreRemediation(id: string): Promise<ClusterUpgradeObject> {
+  return annotateClusterUpgrade(RESTORE_ANNOTATION, id);
+}
+
+/**
+ * Adds one approval to a list of approvals on the latest object (addApprovalOps):
+ * an append, or the list created under a generation test; built once more
+ * on the newer object when someone saved in between.
+ */
+async function appendApproval<T extends Versioned & { spec?: unknown }>(
+  get: () => Promise<T>,
+  patch: (ops: JsonPatchOp[]) => Promise<T>,
+  path: Path,
+  approval: AnyApproval
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    const obj = await get();
+    const ops = addApprovalOps(obj, path, approval);
+    if (ops.length === 0) {
+      return obj;
     }
-  ) as Promise<ClusterUpgradeObject>;
+    try {
+      return await patch(ops);
+    } catch (err) {
+      if (attempt > 0 || classifyError(err).kind !== 'conflict') {
+        throw err;
+      }
+    }
+  }
+}
+
+/** Apply fix / Accept on the upgrade: one approval more in spec.approvals (operator v0.7.0). */
+export function addClusterUpgradeApproval(
+  approval: RemediationApproval
+): Promise<ClusterUpgradeObject> {
+  return appendApproval(
+    getClusterUpgrade,
+    ops => patchClusterUpgrade(ops, false),
+    ['spec', 'approvals'],
+    approval
+  );
+}
+
+/** Apply fix / Accept on the node-settings rollout: spec.nodes.rollout.approvals (operator v0.7.0). */
+export function addNodeRolloutApproval(
+  name: string,
+  approval: NodeRolloutApproval
+): Promise<ClusterConfigObject> {
+  return appendApproval(
+    () => getClusterConfig(name),
+    ops => patchClusterConfig(name, ops, false),
+    ['spec', 'nodes', 'rollout', 'approvals'],
+    approval
+  );
 }
 
 // ------------------------------------------- Ingresses still on the nginx class

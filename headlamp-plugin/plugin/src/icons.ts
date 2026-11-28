@@ -11,13 +11,17 @@ import mdiAlertOctagonOutline from '@iconify/icons-mdi/alert-octagon-outline';
 import mdiAlertOutline from '@iconify/icons-mdi/alert-outline';
 import mdiApi from '@iconify/icons-mdi/api';
 import mdiArrowRight from '@iconify/icons-mdi/arrow-right';
+import mdiArrowRightBoldOutline from '@iconify/icons-mdi/arrow-right-bold-outline';
 import mdiArrowUpBoldCircleOutline from '@iconify/icons-mdi/arrow-up-bold-circle-outline';
+import mdiBackupRestore from '@iconify/icons-mdi/backup-restore';
 import mdiBridge from '@iconify/icons-mdi/bridge';
 import mdiCheck from '@iconify/icons-mdi/check';
 import mdiCheckCircleOutline from '@iconify/icons-mdi/check-circle-outline';
 import mdiChevronDown from '@iconify/icons-mdi/chevron-down';
 import mdiChevronRight from '@iconify/icons-mdi/chevron-right';
 import mdiChip from '@iconify/icons-mdi/chip';
+import mdiClipboardCheckOutline from '@iconify/icons-mdi/clipboard-check-outline';
+import mdiClipboardListOutline from '@iconify/icons-mdi/clipboard-list-outline';
 import mdiCloudAlertOutline from '@iconify/icons-mdi/cloud-alert-outline';
 import mdiCloudDownloadOutline from '@iconify/icons-mdi/cloud-download-outline';
 import mdiCloudOutline from '@iconify/icons-mdi/cloud-outline';
@@ -83,6 +87,7 @@ import mdiTrayArrowDown from '@iconify/icons-mdi/tray-arrow-down';
 import mdiTuneVariant from '@iconify/icons-mdi/tune-variant';
 import mdiTuneVertical from '@iconify/icons-mdi/tune-vertical';
 import mdiUpdate from '@iconify/icons-mdi/update';
+import mdiWrenchCheckOutline from '@iconify/icons-mdi/wrench-check-outline';
 import { addCollection, IconifyIcon } from '@iconify/react';
 
 export const ICONS: Record<string, IconifyIcon> = {
@@ -91,13 +96,17 @@ export const ICONS: Record<string, IconifyIcon> = {
   'alert-outline': mdiAlertOutline,
   api: mdiApi,
   'arrow-right': mdiArrowRight,
+  'arrow-right-bold-outline': mdiArrowRightBoldOutline,
   'arrow-up-bold-circle-outline': mdiArrowUpBoldCircleOutline,
+  'backup-restore': mdiBackupRestore,
   bridge: mdiBridge,
   check: mdiCheck,
   'check-circle-outline': mdiCheckCircleOutline,
   'chevron-down': mdiChevronDown,
   'chevron-right': mdiChevronRight,
   chip: mdiChip,
+  'clipboard-check-outline': mdiClipboardCheckOutline,
+  'clipboard-list-outline': mdiClipboardListOutline,
   'cloud-alert-outline': mdiCloudAlertOutline,
   'cloud-download-outline': mdiCloudDownloadOutline,
   'cloud-outline': mdiCloudOutline,
@@ -163,6 +172,7 @@ export const ICONS: Record<string, IconifyIcon> = {
   'tune-variant': mdiTuneVariant,
   'tune-vertical': mdiTuneVertical,
   update: mdiUpdate,
+  'wrench-check-outline': mdiWrenchCheckOutline,
 };
 
 export function registerIcons(): void {

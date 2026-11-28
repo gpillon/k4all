@@ -99,8 +99,31 @@ against the release file with the new chart version.
 | v2.4.0 | v0.5.0 | 1.35 | 0.46.0 / v0.46.0 | 0.14.0 | 0.1.2 |
 | v2.7.0 | v0.6.0 | 1.36 | 0.46.0 / v0.46.0 | 0.14.0 | 0.2.0 |
 | v2.7.1 | v0.6.1 | 1.36 | 0.46.0 / v0.46.0 | 0.14.0 | 0.2.1 |
+| v2.7.2 | v0.7.0 | 1.36 | 0.46.0 / v0.46.0 | 0.14.0 | 0.3.0 |
 
 ## Changelog
+
+### 0.3.0
+
+For k4all v2.7.2 (k4all-operator v0.7.0); with an older operator nothing
+new is shown or written (DESIGN.md 3.11).
+
+- Upgrades: "Before you upgrade" (the readiness report per node, Check
+  again), its first step in the start review with the fixes to pre-approve
+  and "Approve all safe fixes", the live blockers of a node with Apply fix
+  and Accept, "What k4all changed" with Put back now, the `Blocked` and
+  `RulesInvalid` conditions, the note on the node that runs this page;
+  "ask also for disruptions" (`spec.drain.confirmDisruptions`). The new
+  node reasons (DrainBlocked, WaitingForApproval, Remediating, Restoring,
+  RestoreFailed) have their guidance; Retry also retries a failed restore.
+  The drain texts are read only without structured blockers.
+- Settings → Upgrades: the mode of each remediation
+  (`spec.upgrades.remediations`), `auto` only where the catalog allows it.
+- Node settings: the rollout's blockers with Apply fix and Accept
+  (`spec.nodes.rollout.approvals`), and its records.
+- The CNI switch and the OVS bridge toggle wait for k4all-operator v0.8.0
+  (0.2.x gated them on v0.7.0, which does not have them).
+- Optional read: pods in `headlamp`, for the node this page runs on.
 
 ### 0.2.1
 

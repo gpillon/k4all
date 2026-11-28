@@ -23,12 +23,13 @@ export const CAPABILITY_SINCE = {
   clusterUpgrade: 'v0.4.0',
   /**
    * Switching spec.networking.cni.type on a running cluster. Planned for
-   * v0.6.0 until the k4all v2.7.0 spec moved it to v0.7.0 (D1): v0.6.0 does
-   * not have it.
+   * v0.6.0 until the k4all v2.7.0 spec moved it to v0.7.0 (D1), then for
+   * v0.7.0 until the k4all v2.7.2 decisions moved it to v0.8.0: v0.6.x and
+   * v0.7.x do not have it.
    */
-  cniSwitch: 'v0.7.0',
+  cniSwitch: 'v0.8.0',
   /** Turning spec.features.ovsBridge.enabled on and off on a running cluster (with the CNI switch). */
-  ovsBridgeToggle: 'v0.7.0',
+  ovsBridgeToggle: 'v0.8.0',
   /**
    * Turning virt off keeps KubeVirt, CDI and kubevirt-manager while VMs and
    * their disks exist ("uninstall refused: ..."); before, they were deleted
@@ -44,6 +45,15 @@ export const CAPABILITY_SINCE = {
   nodeSettings: 'v0.6.0',
   /** features.rook: Rook/Ceph with the Cairn console. */
   rookStorage: 'v0.6.0',
+  /**
+   * Upgrade readiness and remediations (k4all v2.7.2): ClusterUpgrade
+   * status.readiness, nodes[].blockers, remediations and spec.approvals,
+   * drain.confirmDisruptions, the check-readiness and restore annotations;
+   * ClusterConfig spec.upgrades.remediations, the rollout's approvals,
+   * blockers and records. Older CRDs do not have the fields, and a strict
+   * write with them would be refused.
+   */
+  upgradeReadiness: 'v0.7.0',
 } as const;
 
 export type CapabilityId = keyof typeof CAPABILITY_SINCE;
@@ -55,6 +65,7 @@ export const CAPABILITY_RELEASE: Partial<Record<CapabilityId, string>> = {
   virtSettings: 'v2.7.0',
   nodeSettings: 'v2.7.0',
   rookStorage: 'v2.7.0',
+  upgradeReadiness: 'v2.7.2',
 };
 
 export type Capabilities = Record<CapabilityId, boolean> & {

@@ -44,10 +44,12 @@ import {
   RolloutView,
 } from '../../model/nodeSettings';
 import { getIn, setPruned } from '../../model/objects';
-import { NodeLike } from '../../model/types';
+import { Answer } from '../../model/readiness';
+import { NodeLike, NodeRolloutApproval } from '../../model/types';
 import { ApplyBadge, Mono, Panel, SettingRow, TonePill } from '../common/ui';
 import { FieldMessages, isChanged, SectionProps } from '../settings/common';
 import { GuidanceAlert } from '../upgrades/parts';
+import { NodeBlockers, RemediationsTable } from '../upgrades/readiness';
 
 export interface NodeSectionProps extends SectionProps {
   nodes: NodeLike[];
@@ -514,19 +516,34 @@ function DrainBlockAlert(props: { node: string; block: DrainBlock }) {
   return <GuidanceAlert guidance={{ node: props.node, retry: false, ...advice }} />;
 }
 
-/** The rollout as status.nodes reports it, with Pause / Resume. */
+/**
+ * The rollout as status.nodes reports it, with Pause / Resume; with operator
+ * v0.7.0 (readiness) what holds each node with its fixes (Apply fix and
+ * Accept write spec.nodes.rollout.approvals for the settings hash), and
+ * what the rollout changed.
+ */
 export function RolloutPanel(props: {
   view: RolloutView;
   canPause: boolean;
   busy: boolean;
   onPause: (paused: boolean) => void;
+  /** The operator has upgrade readiness (v0.7.0). */
+  readiness?: boolean;
+  /** spec.nodes.rollout.approvals. */
+  approvals?: NodeRolloutApproval[];
+  /** Apply fix / Accept, for a user who may patch the ClusterConfig; absent: read-only. */
+  onAnswer?: (answer: Answer) => void;
+  now?: number;
 }) {
   const { view } = props;
   // The specific advice of a blocked drain says it all: no generic sentence then.
   const guidance =
-    view.drainBlock && view.condition?.reason === 'DrainBlocked'
+    (view.drainBlock || (props.readiness && view.structured)) &&
+    view.condition?.reason === 'DrainBlocked'
       ? undefined
       : rolloutGuidance(view);
+  const binding = view.settingsHash ? { settingsHash: view.settingsHash } : undefined;
+  const blocked = props.readiness ? view.nodes.filter(n => n.blockers.length > 0) : [];
   const pausing = view.paused && view.phase === 'Rolling';
   return (
     <Panel
@@ -580,6 +597,17 @@ export function RolloutPanel(props: {
         {view.drainBlock && (
           <DrainBlockAlert node={view.drainBlock.node} block={view.drainBlock.block} />
         )}
+        {blocked.map(n => (
+          <NodeBlockers
+            key={n.name}
+            node={n.name}
+            blockers={n.blockers}
+            approvals={props.approvals}
+            binding={binding}
+            onAnswer={binding ? props.onAnswer : undefined}
+            busy={props.busy}
+          />
+        ))}
         {pausing && (
           <Typography variant="body2" color="text.secondary">
             Paused: the node in progress finishes, then the rollout stops.
@@ -633,6 +661,14 @@ export function RolloutPanel(props: {
           <Typography variant="body2" color="text.secondary">
             No rollout yet: k4all owns no node setting, or the operator has not reported one.
           </Typography>
+        )}
+        {props.readiness && view.records.length > 0 && (
+          <Box>
+            <Typography variant="overline" color="text.secondary">
+              What k4all changed for the drains
+            </Typography>
+            <RemediationsTable records={view.records} now={props.now ?? Date.now()} />
+          </Box>
         )}
       </Stack>
     </Panel>

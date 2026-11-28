@@ -506,6 +506,21 @@ the cluster a replica on another node (`instances: 2`) before the hop. Then
 `sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume` on the node, or
 wait for the ClusterUpgrade to go on by itself.
 
+**The fixes the k4all-operator may apply (from v2.7.2).** For a finding
+that stops a drain the operator offers fixes (remediations), which it puts
+back once the node is done; their modes are in the ClusterConfig, set from
+the k4all addon (Settings → Upgrades) or by hand. In YAML, quote `"off"`:
+unquoted, YAML reads `off` as the boolean false, and the API server refuses
+it.
+
+```yaml
+spec:
+  upgrades:
+    remediations:
+      vm-migrate-first: auto
+      pdb-relax-for-node: "off"
+```
+
 ### Pods that declare no controller
 
 A pod that no controller owns makes `kubectl drain` refuse the whole drain

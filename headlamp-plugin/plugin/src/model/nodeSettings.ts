@@ -1,7 +1,8 @@
 /*
  * Node settings (spec.nodes, k4all v2.7.0 / operator v0.6.0): what a change
  * makes the nodes do, the plan the plugin shows before saving, the checks
- * against the nodes' capacity, and the rollout as status.nodes reports it.
+ * against the nodes' capacity, and the rollout as status.nodes reports it
+ * (from operator v0.7.0 with each node's blockers and the rollout's records).
  *
  * The operator rolls a change out one node at a time. The action class comes
  * from the fields that change (spec §6.1-6.2):
@@ -21,11 +22,13 @@ import {
   ClusterConfigSpec,
   Condition,
   CONDITION_NODE_SETTINGS_ROLLOUT,
+  Finding,
   NODE_SETTINGS_RECORD_ANNOTATION,
   NODE_TYPE_ANNOTATION,
   NodeConfigObject,
   NodeLike,
   NodesConfig,
+  RemediationRecordStatus,
 } from './types';
 import type { Issue } from './validation';
 
@@ -528,6 +531,8 @@ export interface RolloutNodeRow {
    * anything else is a refusal (the rollout is Blocked, NodeRefused).
    */
   kind?: 'progress' | 'refusal';
+  /** What holds the node's drain now (operator v0.7.0). */
+  blockers: Finding[];
 }
 
 const NEXT_PREFIX = 'next: ';
@@ -547,9 +552,16 @@ export interface RolloutView {
   condition?: Condition;
   /**
    * A drain held by a budget or by pods that declare no controller (operator
-   * v0.5.8+), from the node's message (drainBlock.ts), with the node.
+   * v0.5.8+), from the node's message (drainBlock.ts), with the node. Only
+   * when no node has structured blockers (an operator before v0.7.0).
    */
   drainBlock?: { node: string; block: DrainBlock };
+  /** Some node lists structured blockers (operator v0.7.0). */
+  structured: boolean;
+  /** What the rollout changed for its drains and puts back (operator v0.7.0). */
+  records: RemediationRecordStatus[];
+  /** The hash the rollout's approvals are bound to (status.nodes.settingsHash). */
+  settingsHash?: string;
 }
 
 /** The rollout of spec.nodes, from status.nodes and the NodeSettingsRollout condition. */
@@ -575,13 +587,17 @@ export function rolloutView(cc: ClusterConfigObject): RolloutView {
       current: n.name === current,
       next: next && next in RANK ? next : undefined,
       kind,
+      blockers: n.blockers ?? [],
     };
   });
   const generation = cc.metadata.generation;
   const observed = cc.status?.observedGeneration;
+  const structured = nodes.some(n => n.blockers.length > 0);
   // The node in its step first, then any node the operator did not cordon.
   let drainBlock: RolloutView['drainBlock'];
-  for (const n of [...nodes.filter(x => x.current), ...nodes.filter(x => !x.current)]) {
+  for (const n of structured
+    ? []
+    : [...nodes.filter(x => x.current), ...nodes.filter(x => !x.current)]) {
     const block = parseDrainBlock(n.message);
     if (block) {
       drainBlock = { node: n.name, block };
@@ -590,6 +606,9 @@ export function rolloutView(cc: ClusterConfigObject): RolloutView {
   }
   return {
     drainBlock,
+    structured,
+    records: status?.remediations ?? [],
+    settingsHash: hash || undefined,
     phase: status?.rollout?.phase || 'Idle',
     currentNode: current || undefined,
     message: status?.rollout?.message || undefined,
@@ -624,6 +643,16 @@ const ROLLOUT_GUIDANCE: Record<string, string> = {
     'kube-system/kubelet-config is missing: kubeadm keeps the kubelet settings of every node there. Restore it (kubeadm init phase upload-config kubelet).',
   KubeletConfigUnreadable:
     'kube-system/kubelet-config cannot be read as a KubeletConfiguration (the message says why): fix it by hand first.',
+  // operator v0.7.0
+  WaitingForApproval:
+    'The next node waits for an answer: apply a fix, or go on without it (Accept), in the list of what holds it. ' +
+    'The modes in Settings → Upgrades decide which fixes ask first.',
+  Remediating:
+    'k4all applies the approved and automatic fixes before the drain, and waits for them to take effect.',
+  Restoring: 'The node has the settings: k4all puts back what it changed for its drain.',
+  RestoreFailed:
+    'Putting back a fix failed (What k4all changed says why): the rollout does not go on. Fix the cause; ' +
+    'the rollout goes on once the restore succeeds.',
 };
 
 /** Guidance for the reason the rollout is held, if it is. */

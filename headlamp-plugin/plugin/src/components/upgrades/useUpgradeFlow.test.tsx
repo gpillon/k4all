@@ -6,8 +6,21 @@
 
 import { act, renderHook } from '@testing-library/react';
 import { vi } from 'vitest';
-import { getClusterUpgrade, patchClusterUpgrade, retryClusterUpgrade } from '../../api/k4allApi';
-import { clusterUpgrade, clusterUpgradeInProgress } from '../../model/fixtures';
+import {
+  addClusterUpgradeApproval,
+  checkClusterUpgradeReadiness,
+  getClusterUpgrade,
+  patchClusterUpgrade,
+  restoreRemediation,
+  retryClusterUpgrade,
+} from '../../api/k4allApi';
+import {
+  clusterUpgrade,
+  clusterUpgradeBlocked,
+  clusterUpgradeInProgress,
+  clusterUpgradeWithReadiness,
+  cnpgFinding,
+} from '../../model/fixtures';
 import { applyOps, JsonPatchOp } from '../../model/patch';
 import { ClusterUpgradeObject } from '../../model/types';
 import { useUpgradeFlow } from './useUpgradeFlow';
@@ -18,6 +31,9 @@ vi.mock('../../api/k4allApi', () => ({
   patchClusterUpgrade: vi.fn(),
   getClusterUpgrade: vi.fn(),
   retryClusterUpgrade: vi.fn(),
+  checkClusterUpgradeReadiness: vi.fn(async () => ({})),
+  restoreRemediation: vi.fn(async () => ({})),
+  addClusterUpgradeApproval: vi.fn(async () => ({})),
 }));
 
 const patchMock = vi.mocked(patchClusterUpgrade);
@@ -184,5 +200,78 @@ describe('useUpgradeFlow', () => {
     expect(snackbar).toHaveBeenLastCalledWith(expect.stringMatching(/Retry requested/), {
       variant: 'success',
     });
+  });
+
+  it('Apply fix adds one approval for the target release', async () => {
+    const approve = vi.mocked(addClusterUpgradeApproval);
+    approve.mockClear();
+    const hook = renderHook(() => useUpgradeFlow(clusterUpgradeBlocked()));
+    const f = cnpgFinding();
+    await act(async () => {
+      await hook.result.current.approve({
+        remediation: 'cnpg-disable-pdb',
+        target: f.object,
+        decision: 'Apply',
+      });
+    });
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(approve).toHaveBeenCalledWith({
+      remediation: 'cnpg-disable-pdb',
+      target: f.object,
+      decision: 'Apply',
+      release: 'v2.6.0',
+    });
+    expect(snackbar).toHaveBeenLastCalledWith(expect.stringMatching(/^Approved: /), {
+      variant: 'success',
+    });
+  });
+
+  it('writes no approval without a running upgrade', async () => {
+    const approve = vi.mocked(addClusterUpgradeApproval);
+    approve.mockClear();
+    const hook = renderHook(() => useUpgradeFlow(clusterUpgradeWithReadiness()));
+    await act(async () => {
+      await hook.result.current.approve({
+        remediation: 'cnpg-disable-pdb',
+        target: cnpgFinding().object,
+        decision: 'Apply',
+      });
+    });
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it('shows checking from Check again until the report changes', async () => {
+    const check = vi.mocked(checkClusterUpgradeReadiness);
+    let cu = clusterUpgradeWithReadiness();
+    const hook = renderHook(() => useUpgradeFlow(cu));
+    expect(hook.result.current.checking).toBe(false);
+    await act(async () => {
+      await hook.result.current.checkReadiness();
+    });
+    expect(check).toHaveBeenCalled();
+    expect(hook.result.current.checking).toBe(true);
+    // the watch brings the object with the annotation, then the new report
+    cu = {
+      ...cu,
+      metadata: {
+        ...cu.metadata,
+        annotations: { 'k4all.magesgate.com/check-readiness': 'now' },
+      },
+    };
+    hook.rerender();
+    expect(hook.result.current.checking).toBe(true);
+    cu = clusterUpgradeWithReadiness();
+    cu.status!.readiness!.checkedAt = '2026-11-17T09:05:00Z';
+    hook.rerender();
+    expect(hook.result.current.checking).toBe(false);
+  });
+
+  it('puts a record back with its id', async () => {
+    const restore = vi.mocked(restoreRemediation);
+    const hook = renderHook(() => useUpgradeFlow(clusterUpgradeBlocked()));
+    await act(async () => {
+      await hook.result.current.restore('rm-4c1f9a');
+    });
+    expect(restore).toHaveBeenCalledWith('rm-4c1f9a');
   });
 });

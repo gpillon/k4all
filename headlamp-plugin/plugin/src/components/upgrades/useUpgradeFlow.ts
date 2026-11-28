@@ -9,6 +9,8 @@
  *                                         same intent, dry run again, review again
  *   pause / resume / stop: applied at once; a conflict is retried once on the newer object
  *   retry: the retry annotation (merge patch on that key)
+ *   check again, put back now: the check-readiness and restore annotations (operator v0.7.0)
+ *   apply fix / accept: one approval appended to spec.approvals, at once (operator v0.7.0)
  *
  * The patch is rebuilt from the user's intent ("target v2.7.0") instead of
  * rebasing a draft: the intent is what the user confirmed, and the review
@@ -17,11 +19,24 @@
 
 import { useSnackbar } from 'notistack';
 import React from 'react';
-import { getClusterUpgrade, patchClusterUpgrade, retryClusterUpgrade } from '../../api/k4allApi';
+import {
+  addClusterUpgradeApproval,
+  checkClusterUpgradeReadiness,
+  getClusterUpgrade,
+  patchClusterUpgrade,
+  restoreRemediation,
+  retryClusterUpgrade,
+} from '../../api/k4allApi';
 import { ChangeItem } from '../../model/changes';
 import { ClassifiedError, classifyError } from '../../model/errors';
 import { JsonPatchOp } from '../../model/patch';
-import { ClusterUpgradeObject, ClusterUpgradeSpec } from '../../model/types';
+import { Answer, refText, remediationTitle, toApproval } from '../../model/readiness';
+import {
+  CHECK_READINESS_ANNOTATION,
+  ClusterUpgradeObject,
+  ClusterUpgradeSpec,
+  RemediationApproval,
+} from '../../model/types';
 import {
   describeUpgradeChanges,
   desiredSpec,
@@ -61,8 +76,16 @@ export interface UpgradeFlow {
   act: (intent: ActionIntent) => Promise<boolean>;
   /** Sets the retry annotation. Resolves true when written. */
   retry: () => Promise<boolean>;
+  /** Asks for a new readiness check (check-readiness annotation). */
+  checkReadiness: () => Promise<boolean>;
+  /** A check was asked for and the report has not changed since (or the annotation is still there). */
+  checking: boolean;
+  /** Adds one answer for spec.targetRelease to spec.approvals. */
+  approve: (answer: Answer) => Promise<boolean>;
+  /** Puts a remediation record back now (restore annotation). */
+  restore: (id: string) => Promise<boolean>;
   /** The action in flight, to disable its button. */
-  busy: ActionIntent['kind'] | 'retry' | null;
+  busy: ActionIntent['kind'] | 'retry' | 'check' | 'approve' | 'restore' | null;
 }
 
 /** How many times a conflict is rebuilt on a newer object before giving up. */
@@ -77,6 +100,17 @@ const ACTION_DONE: Record<ActionIntent['kind'], string> = {
 export function useUpgradeFlow(cu: ClusterUpgradeObject | null): UpgradeFlow {
   const [phase, setPhaseState] = React.useState<UpgradeFlowPhase>({ kind: 'idle' });
   const [busy, setBusy] = React.useState<UpgradeFlow['busy']>(null);
+  // The report's check time when Check again was clicked: checking until it changes.
+  const [checkFrom, setCheckFrom] = React.useState<{ at: string | undefined } | null>(null);
+  const checkedAt = cu?.status?.readiness?.checkedAt;
+  React.useEffect(() => {
+    if (checkFrom && checkedAt !== checkFrom.at) {
+      setCheckFrom(null);
+    }
+  }, [checkedAt, checkFrom]);
+  const checking =
+    (checkFrom !== null && checkedAt === checkFrom.at) ||
+    cu?.metadata.annotations?.[CHECK_READINESS_ANNOTATION] !== undefined;
   const { enqueueSnackbar } = useSnackbar();
   // Like the settings flow: close() moves the session on, so late results are dropped.
   const session = React.useRef(0);
@@ -237,5 +271,76 @@ export function useUpgradeFlow(cu: ClusterUpgradeObject | null): UpgradeFlow {
     }
   };
 
-  return { phase, review, apply, close, act, retry, busy };
+  /** Runs one write with its busy state and snackbars. */
+  const write = async (
+    kind: NonNullable<UpgradeFlow['busy']>,
+    run: () => Promise<unknown>,
+    done: string
+  ): Promise<boolean> => {
+    setBusy(kind);
+    try {
+      await run();
+      enqueueSnackbar(done, { variant: 'success' });
+      return true;
+    } catch (err) {
+      const classified = classifyError(err);
+      enqueueSnackbar(`${classified.hint} ${classified.message}`, { variant: 'error' });
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const checkReadiness = async (): Promise<boolean> => {
+    const from = { at: latestCu.current?.status?.readiness?.checkedAt };
+    const ok = await write(
+      'check',
+      () => checkClusterUpgradeReadiness(),
+      'Check requested: k4all-operator checks every node again, with dry-run evictions.'
+    );
+    if (ok) {
+      setCheckFrom(from);
+    }
+    return ok;
+  };
+
+  const approve = async (answer: Answer): Promise<boolean> => {
+    const release = latestCu.current?.spec?.targetRelease;
+    if (!release) {
+      enqueueSnackbar('No upgrade is running: choose the fixes when you start one.', {
+        variant: 'info',
+      });
+      return false;
+    }
+    const approval = toApproval(answer, { release }) as RemediationApproval;
+    const what = `${remediationTitle(answer.remediation)} for ${refText(answer.target)}`;
+    return write(
+      'approve',
+      () => addClusterUpgradeApproval(approval),
+      answer.decision === 'Accept'
+        ? `Accepted: the drain of ${answer.node ?? 'the node'} goes on without a fix (${what}).`
+        : `Approved: ${what}. k4all-operator applies it before the drain.`
+    );
+  };
+
+  const restore = (id: string): Promise<boolean> =>
+    write(
+      'restore',
+      () => restoreRemediation(id),
+      `Put back requested: k4all-operator restores ${id} now.`
+    );
+
+  return {
+    phase,
+    review,
+    apply,
+    close,
+    act,
+    retry,
+    checkReadiness,
+    checking,
+    approve,
+    restore,
+    busy,
+  };
 }

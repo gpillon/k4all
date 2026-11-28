@@ -20,7 +20,15 @@
 # node-settings rollout order) and the disks of Hangar's node agent (list
 # pods and get pods/proxy in hangar-system; Hangar's hangar-hardware-admin
 # role has them), and the ConfigMap kube-system/kubelet-config (what a
-# cleared kubelet field goes back to; the page then gives the rule).
+# cleared kubelet field goes back to; the page then gives the rule). From
+# k4all v2.7.2 the Upgrades page also lists pods in the headlamp namespace,
+# where it can, to warn on the node this page runs on (it moves when that
+# node drains); without it the page says so once. No read needs a Secret.
+#
+# The upgrade-readiness writes of k4all v2.7.2 (k4all-operator v0.7.0) need
+# no new rule: Check again, pre-approve, Apply fix, Accept and Put back now
+# patch the ClusterUpgrade k4all (k4all-upgrader); the remediation modes and
+# the node-settings rollout's answers patch the ClusterConfig (k4all-editor).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

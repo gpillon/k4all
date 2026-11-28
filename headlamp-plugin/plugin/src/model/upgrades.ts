@@ -8,7 +8,8 @@
  *   Failed condition;
  * - node order, drain timer, hop and node durations, reboot/downtime estimate;
  * - nodeGuidance: what to do about a node, by its machine-readable reason;
- * - the spec changes the page sends (start, pause, resume, stop, settings).
+ * - the spec changes the page sends (start with its pre-approvals, pause,
+ *   resume, stop, settings).
  */
 
 import { ChangeItem } from './changes';
@@ -22,6 +23,15 @@ import {
 } from './drainBlock';
 import { clone } from './objects';
 import { buildSpecPatch, JsonPatchOp } from './patch';
+import {
+  approvalKey,
+  catalogEntry,
+  effectiveDecision,
+  mergePreApproval,
+  PreApproval,
+  refText,
+  remediationTitle,
+} from './readiness';
 import { compareSemver, parseSemver, SemVer } from './semver';
 import {
   ClusterUpgradeObject,
@@ -39,6 +49,7 @@ import {
   NodeLike,
   NodeUpgradeStatus,
   ReleaseInfo,
+  RemediationApproval,
 } from './types';
 
 /** The CRD default of spec.drain.timeoutMinutes. */
@@ -338,6 +349,8 @@ export interface Estimate {
   controlPlanes: number;
   drainTimeoutMinutes: number;
   continueOnTimeout: boolean;
+  /** A Disrupts finding waits for an answer too (operator v0.7.0). */
+  confirmDisruptions: boolean;
   /** Plain sentences on what goes down and for how long. */
   notes: string[];
 }
@@ -349,6 +362,7 @@ export function estimate(hops: number, order: OrderedNode[], drain?: DrainSpec):
   const controlPlanes = order.filter(n => n.role === 'bootstrap' || n.role === 'control').length;
   const drainTimeoutMinutes = drain?.timeoutMinutes || DEFAULT_DRAIN_TIMEOUT_MINUTES;
   const continueOnTimeout = drain?.continueOnTimeout === true;
+  const confirmDisruptions = drain?.confirmDisruptions === true;
   const notes: string[] = [];
   if (singleNode) {
     notes.push(
@@ -379,13 +393,15 @@ export function estimate(hops: number, order: OrderedNode[], drain?: DrainSpec):
     controlPlanes,
     drainTimeoutMinutes,
     continueOnTimeout,
+    confirmDisruptions,
     notes,
   };
 }
 
 /** What happens when a node is drained, in words. */
 export function drainBehaviour(
-  e: Pick<Estimate, 'singleNode' | 'drainTimeoutMinutes' | 'continueOnTimeout'>
+  e: Pick<Estimate, 'singleNode' | 'drainTimeoutMinutes' | 'continueOnTimeout'> &
+    Partial<Pick<Estimate, 'confirmDisruptions'>>
 ): string {
   if (e.singleNode) {
     return 'Single node: it is cordoned before its hop, not drained.';
@@ -394,7 +410,10 @@ export function drainBehaviour(
     `Before its hop each node is cordoned and drained: its pods are evicted, respecting PodDisruptionBudgets, for at most ${e.drainTimeoutMinutes} minutes. ` +
     (e.continueOnTimeout
       ? 'If the drain is not done by then, the hop runs anyway and the pods left on the node stop at its reboot.'
-      : 'If the drain is not done by then, the node fails and the upgrade waits until you retry.')
+      : 'If the drain is not done by then, the node fails and the upgrade waits until you retry.') +
+    (e.confirmDisruptions
+      ? ' A node also waits for an answer to what would only disrupt (a VM that shuts down, a pod that waits for its node).'
+      : '')
   );
 }
 
@@ -601,17 +620,22 @@ export interface Guidance {
   links?: DocLink[];
 }
 
-/** Node reasons the retry annotation acts on. */
-export const RETRYABLE_REASONS = ['DrainTimeout', 'Abandoned'];
+/**
+ * Node reasons the retry annotation acts on: a drain that timed out, a hop
+ * abandoned, and a restore that failed (operator v0.7.0: the retry tries the
+ * restore again).
+ */
+export const RETRYABLE_REASONS = ['DrainTimeout', 'Abandoned', 'RestoreFailed'];
 
 /**
  * What the user can do about a node, by the operator's machine-readable
  * reason (nodes[].reason) and the host phase. Never from message texts: the
- * message is only quoted. One exception, for want of a reason: a node the
- * operator does not cordon, or cannot finish draining, because of a budget
- * that allows no disruption or pods that declare no controller (operator
- * v0.5.8, k4all#87/#99), read from the shared drain's own phrases
- * (drainBlock.ts).
+ * message is only quoted. What holds a node comes from nodes[].blockers
+ * (operator v0.7.0), which the page lists with their fixes. One exception,
+ * for want of both, kept for an operator before v0.7.0: a node the operator
+ * does not cordon, or cannot finish draining, because of a budget that
+ * allows no disruption or pods that declare no controller (operator v0.5.8,
+ * k4all#87/#99), read from the shared drain's own phrases (drainBlock.ts).
  */
 export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec): Guidance | null {
   const onNode = `on ${node.name}`;
@@ -705,6 +729,68 @@ export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec):
         commands: [{ command: `kubectl describe node ${node.name}`, where: 'with kubectl' }],
         retry: false,
       };
+    case 'DrainBlocked':
+      if (node.blockers?.length) {
+        const draining = node.phase === 'Draining';
+        return {
+          node: node.name,
+          severity: draining ? 'warning' : 'error',
+          title: draining ? `The drain of ${node.name} is held` : `${node.name} cannot be drained`,
+          text: draining
+            ? 'An eviction was refused: the drain goes on trying, up to its timeout. What holds it is listed with its fixes; approve one, accept, or fix it yourself.'
+            : 'k4all-operator does not cordon the node while what is listed holds it: approve a fix, accept, or fix it yourself, and the upgrade goes on by itself.',
+          commands: [],
+          retry: false,
+        };
+      }
+      break;
+    case 'WaitingForApproval':
+      return {
+        node: node.name,
+        severity: 'warning',
+        title: `${node.name} waits for your answer`,
+        text:
+          'k4all-operator does not cordon the node until each finding listed has an answer: apply a fix, or go on without it (Accept). ' +
+          'The modes in Settings → Upgrades decide which fixes ask first.' +
+          (node.message ? ` (${node.message})` : ''),
+        commands: [],
+        retry: false,
+      };
+    case 'Remediating':
+      return {
+        node: node.name,
+        severity: 'info',
+        title: `Applying fixes before the drain of ${node.name}`,
+        text:
+          'k4all applies the approved and automatic fixes (What k4all changed) and waits for them to take effect, then cordons the node.' +
+          (node.message ? ` (${node.message})` : ''),
+        commands: [],
+        retry: false,
+      };
+    case 'Restoring':
+      return {
+        node: node.name,
+        severity: 'info',
+        title: `Putting back what k4all changed for ${node.name}`,
+        text:
+          'The node is done: k4all restores what it changed for its drain, then the next node starts.' +
+          (node.message ? ` (${node.message})` : ''),
+        commands: [],
+        retry: false,
+      };
+    case 'RestoreFailed':
+      return {
+        node: node.name,
+        severity: 'error',
+        title: `Putting back a fix failed for ${node.name}`,
+        text:
+          `k4all could not restore what it changed for this node's drain${
+            node.message ? ` (${node.message})` : ''
+          }, so the next node does not start. What k4all changed says which record failed and why. ` +
+          'Fix the cause, then Retry: it tries the restore again. Put back now forces it.',
+        commands: [],
+        retry: true,
+      };
   }
   const block = node.phase !== 'Failed' ? parseDrainBlock(node.message) : null;
   if (block) {
@@ -744,18 +830,27 @@ export function nodeGuidance(node: NodeUpgradeStatus, spec: ClusterUpgradeSpec):
 
 /**
  * Whether Retry does something: the operator runs again a node that failed
- * with reason DrainTimeout or Abandoned, and nothing else.
+ * with reason DrainTimeout or Abandoned, and tries a failed restore again
+ * (reason RestoreFailed, whatever the node's phase), and nothing else.
  */
 export function canRetry(cu: ClusterUpgradeObject): boolean {
   return (cu.status?.nodes ?? []).some(
-    n => n.phase === 'Failed' && RETRYABLE_REASONS.includes(n.reason ?? '')
+    n =>
+      RETRYABLE_REASONS.includes(n.reason ?? '') &&
+      (n.phase === 'Failed' || n.reason === 'RestoreFailed')
   );
 }
 
 // ------------------------------------------------------------- Spec writes
 
 export type UpgradeIntent =
-  | { kind: 'start'; target: string; drain?: DrainSpec }
+  | {
+      kind: 'start';
+      target: string;
+      drain?: DrainSpec;
+      /** Answers chosen in the review's first step ("Before you upgrade"), for the target. */
+      approvals?: Omit<PreApproval, 'release'>;
+    }
   | { kind: 'settings'; drain: DrainSpec; graphUrl: string }
   | { kind: 'pause' }
   | { kind: 'resume' }
@@ -777,6 +872,9 @@ function withDrain(spec: ClusterUpgradeSpec, drain: DrainSpec): ClusterUpgradeSp
   if (drain.continueOnTimeout !== undefined) {
     setOrDrop(next, 'continueOnTimeout', drain.continueOnTimeout);
   }
+  if (drain.confirmDisruptions !== undefined) {
+    setOrDrop(next, 'confirmDisruptions', drain.confirmDisruptions);
+  }
   return { ...spec, drain: next };
 }
 
@@ -789,6 +887,17 @@ export function desiredSpec(cu: ClusterUpgradeObject, intent: UpgradeIntent): Cl
       delete spec.paused; // starting means going: a pause left from before is lifted
       if (intent.drain) {
         spec = withDrain(spec, intent.drain);
+      }
+      if (intent.approvals) {
+        const merged = mergePreApproval(spec.approvals, {
+          ...intent.approvals,
+          release: normalizeRelease(intent.target),
+        });
+        if (merged.length) {
+          spec.approvals = merged;
+        } else {
+          delete spec.approvals;
+        }
       }
       break;
     case 'settings':
@@ -871,6 +980,19 @@ export function describeUpgradeChanges(
         : 'A node whose drain times out fails and waits for a retry.',
     });
   }
+  if (!!before.drain?.confirmDisruptions !== !!after.drain?.confirmDisruptions) {
+    items.push({
+      key: 'spec.drain.confirmDisruptions',
+      label: 'Ask also for disruptions',
+      from: before.drain?.confirmDisruptions ? 'yes' : 'no',
+      to: after.drain?.confirmDisruptions ? 'yes' : 'no',
+      severity: 'info',
+      consequence: after.drain?.confirmDisruptions
+        ? 'A node also waits for an answer to what would only disrupt (a VM that shuts down, a pod that waits for its node) before its drain.'
+        : 'Only what would stop a drain waits for an answer; disruptions go ahead as reported.',
+    });
+  }
+  items.push(...describeApprovalChanges(before.approvals, after.approvals));
   if ((before.graphUrl ?? '') !== (after.graphUrl ?? '')) {
     items.push({
       key: 'spec.graphUrl',
@@ -881,6 +1003,54 @@ export function describeUpgradeChanges(
       consequence:
         'The path is planned on this graph. The nodes must read the same graph (graphUrl in /etc/k4all-upgrade.yaml), or they refuse the hops.',
     });
+  }
+  return items;
+}
+
+function approvalText(a: RemediationApproval): string {
+  return `${remediationTitle(a.remediation)} for ${refText(a.target)}${
+    a.node ? `, on ${a.node} only` : ''
+  } (${a.release})`;
+}
+
+/** The approvals added and removed, one item each, in words. */
+export function describeApprovalChanges(
+  before: RemediationApproval[] | undefined,
+  after: RemediationApproval[] | undefined
+): ChangeItem[] {
+  const keys = (l: RemediationApproval[] | undefined) => new Set((l ?? []).map(approvalKey));
+  const had = keys(before);
+  const has = keys(after);
+  const items: ChangeItem[] = [];
+  for (const a of after ?? []) {
+    if (had.has(approvalKey(a))) {
+      continue;
+    }
+    const accept = effectiveDecision(a) === 'Accept';
+    const entry = catalogEntry(a.remediation);
+    items.push({
+      key: `spec.approvals.${approvalKey(a)}`,
+      label: accept ? `Go on without a fix: ${approvalText(a)}` : `Approve ${approvalText(a)}`,
+      from: 'no answer',
+      to: accept ? 'Accept' : 'Apply',
+      severity: accept || entry?.risk === 'Downtime' ? 'warning' : 'info',
+      consequence: accept
+        ? 'The disruption happens; for a finding that blocks, the node is cordoned and drained anyway, up to the drain timeout.'
+        : entry
+        ? `${entry.does} Risk: ${entry.riskText}`
+        : undefined,
+    });
+  }
+  for (const a of before ?? []) {
+    if (!has.has(approvalKey(a))) {
+      items.push({
+        key: `spec.approvals.${approvalKey(a)}`,
+        label: `Answer removed: ${approvalText(a)}`,
+        from: effectiveDecision(a),
+        to: 'no answer',
+        severity: 'info',
+      });
+    }
   }
   return items;
 }

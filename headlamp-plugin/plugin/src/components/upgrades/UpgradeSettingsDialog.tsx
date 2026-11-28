@@ -17,17 +17,23 @@ import { DEFAULT_DRAIN_TIMEOUT_MINUTES } from '../../model/upgrades';
 import { Mono } from '../common/ui';
 import { ReviewIntent } from './useUpgradeFlow';
 
-/** Edits spec.drain and spec.graphUrl; saving goes through the review (dry run). */
+/**
+ * Edits spec.drain and spec.graphUrl; saving goes through the review (dry
+ * run). With operator v0.7.0 (readiness) also spec.drain.confirmDisruptions.
+ */
 export function UpgradeSettingsDialog(props: {
   open: boolean;
   spec: ClusterUpgradeSpec;
   singleNode: boolean;
+  /** The operator has upgrade readiness (v0.7.0): confirmDisruptions can be set. */
+  readiness?: boolean;
   onClose: () => void;
   onReview: (intent: ReviewIntent) => void;
 }) {
   const { spec } = props;
   const [timeout, setTimeoutText] = React.useState('');
   const [cont, setCont] = React.useState(false);
+  const [confirm, setConfirm] = React.useState(false);
   const [graph, setGraph] = React.useState('');
 
   // Fill the form when the dialog opens, not on every watch update: the
@@ -36,6 +42,7 @@ export function UpgradeSettingsDialog(props: {
     if (props.open) {
       setTimeoutText(String(spec.drain?.timeoutMinutes || DEFAULT_DRAIN_TIMEOUT_MINUTES));
       setCont(spec.drain?.continueOnTimeout === true);
+      setConfirm(spec.drain?.confirmDisruptions === true);
       setGraph(spec.graphUrl ?? '');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,6 +94,26 @@ export function UpgradeSettingsDialog(props: {
               </span>
             }
           />
+          {props.readiness && (
+            <FormControlLabel
+              control={<Switch checked={confirm} onChange={(_, checked) => setConfirm(checked)} />}
+              label={
+                <span>
+                  Ask also for disruptions
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    component="span"
+                    display="block"
+                  >
+                    A node waits for an answer to what would only disrupt (a VM that shuts down, a
+                    pod that waits for its node) before its drain. Off: only what would stop a drain
+                    waits; an unattended upgrade goes through.
+                  </Typography>
+                </span>
+              }
+            />
+          )}
           <TextField
             label="Upgrade graph URL"
             size="small"
@@ -115,7 +142,11 @@ export function UpgradeSettingsDialog(props: {
           onClick={() =>
             props.onReview({
               kind: 'settings',
-              drain: { timeoutMinutes: minutes, continueOnTimeout: cont },
+              drain: {
+                timeoutMinutes: minutes,
+                continueOnTimeout: cont,
+                ...(props.readiness ? { confirmDisruptions: confirm } : {}),
+              },
               graphUrl: graph,
             })
           }

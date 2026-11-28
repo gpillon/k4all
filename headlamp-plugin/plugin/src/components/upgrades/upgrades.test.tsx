@@ -77,6 +77,10 @@ function flowStub(phase: UpgradeFlow['phase']): UpgradeFlow {
     close: vi.fn(),
     act: vi.fn(async () => true),
     retry: vi.fn(async () => true),
+    checkReadiness: vi.fn(async () => true),
+    checking: false,
+    approve: vi.fn(async () => true),
+    restore: vi.fn(async () => true),
     busy: null,
   };
 }

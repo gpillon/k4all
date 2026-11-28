@@ -109,6 +109,11 @@ describe('applyOps', () => {
     expect(() => applyOps({}, [{ op: 'replace', path: '/a', value: 1 }])).toThrow();
     expect(() => applyOps({}, [{ op: 'add', path: '/a/b', value: 1 }])).toThrow();
   });
+
+  it('appends to an array with "-", as RFC 6902 says', () => {
+    expect(applyOps({ a: [1] }, [{ op: 'add', path: '/a/-', value: 2 }])).toEqual({ a: [1, 2] });
+    expect(() => applyOps({}, [{ op: 'add', path: '/a/-', value: 2 }])).toThrow();
+  });
 });
 
 describe('annotationMergePatch', () => {

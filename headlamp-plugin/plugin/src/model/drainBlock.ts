@@ -9,9 +9,13 @@
  * - while it evicts, drain.Drain: "<n> pods left: …; not evicted, they
  *   declare no controller: <pods> (…)".
  *
- * The operator gives no machine-readable reason for these (ClusterUpgrade
- * nodes[].reason has no value for them), so this is the one place the plugin
- * reads a message: only the shared drain's own phrases, never free text.
+ * Before k4all-operator v0.7.0 the operator gives no machine-readable reason
+ * for these (ClusterUpgrade nodes[].reason has no value for them), so this
+ * is the one place the plugin reads a message: only the shared drain's own
+ * phrases, never free text. From v0.7.0 the structured blockers
+ * (nodes[].blockers, status.nodes.perNode[].blockers; readiness.ts) replace
+ * it; it stays as the fallback for an operator that does not write them, as
+ * v0.7.0 keeps these texts word for word.
  */
 
 import type { Command } from './upgrades';

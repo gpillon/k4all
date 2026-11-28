@@ -125,6 +125,11 @@ export function applyOps<T>(doc: T, ops: JsonPatchOp[]): T {
         if (path.length > 0 && !isPlainObject(parent) && !Array.isArray(parent)) {
           throw new Error(`add ${op.path}: parent does not exist`);
         }
+        if (Array.isArray(parent) && path[path.length - 1] === '-') {
+          // RFC 6902: "-" appends to the array
+          cur = setIn(cur, path.slice(0, -1), [...parent, clone(op.value)]);
+          break;
+        }
         cur = setIn(cur, path, clone(op.value));
         break;
       case 'replace':

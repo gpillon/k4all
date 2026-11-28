@@ -15,6 +15,7 @@ import {
   NodeAction,
 } from './nodeSettings';
 import { dottedPath, getIn, isPlainObject, jsonEqual, Path } from './objects';
+import { catalogEntry, DEFAULT_MODE } from './readiness';
 import { activeIngress, effectiveIngress, INGRESS_LABEL } from './settings';
 import { ClusterConfigSpec, ComponentSpec } from './types';
 
@@ -284,6 +285,10 @@ export function describeChanges(
     ) {
       continue; // described above
     }
+    if (path[0] === 'upgrades' && path[1] === 'remediations' && path.length === 3) {
+      add(remediationModeChange(String(path[2]), getIn(base, path), getIn(draft, path)));
+      continue;
+    }
     if (path[0] === 'componentOverrides') {
       const component = String(path[1]);
       add({
@@ -351,6 +356,30 @@ export function describeChanges(
     });
   }
   return items;
+}
+
+/** A change of one remediation's mode (spec.upgrades.remediations, operator v0.7.0). */
+function remediationModeChange(id: string, before: unknown, after: unknown): ChangeItem {
+  const entry = catalogEntry(id);
+  const mode = (v: unknown) => (v === undefined ? `${DEFAULT_MODE} (default)` : String(v));
+  const to = after === undefined ? DEFAULT_MODE : String(after);
+  const consequence: Record<string, string> = {
+    auto:
+      'k4all applies it by itself, without asking, on every drain that offers it (upgrades and the ' +
+      `node-settings rollout).${entry ? ` Risk: ${entry.riskText}` : ''}`,
+    ask: 'k4all applies it once you approve it for the object (Upgrades page).',
+    off:
+      'k4all only reports it. A finding that stops a drain still holds the node until you fix it ' +
+      'or accept; one that only disrupts does not wait.',
+  };
+  return {
+    key: `upgrades.remediations.${id}`,
+    label: `Mode of ${entry?.title ?? id}`,
+    from: mode(before),
+    to: mode(after),
+    severity: to === 'auto' && entry?.risk === 'Downtime' ? 'warning' : 'info',
+    consequence: consequence[to] ?? (entry ? undefined : 'An id this addon does not know.'),
+  };
 }
 
 /** How a gate, a field, k4all does not own reads in the review. */
