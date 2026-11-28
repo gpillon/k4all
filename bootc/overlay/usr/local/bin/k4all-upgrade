@@ -1515,6 +1515,10 @@ DRAIN_READINESS_MAX_MESSAGES = 3
 DRAIN_READINESS_FRESH_MINUTES = 35
 # What a malformed value's WARNING quotes of it.
 DRAIN_READINESS_QUOTE = 200
+# Asks the k4all-operator for a new check now (k4all-operator#59): after a
+# fix by hand, the old verdict would hold the hop again until its next one.
+CHECK_READINESS_COMMAND = ("kubectl annotate clusterupgrade k4all "
+                           "k4all.magesgate.com/check-readiness=now --overwrite")
 _RFC3339_RE = re.compile(r"^(\d{4})-(\d\d)-(\d\d)[Tt](\d\d):(\d\d):(\d\d)(\.\d+)?"
                          r"([Zz]|[+-]\d\d:\d\d)$")
 
@@ -1655,10 +1659,12 @@ def drain_readiness_hold(node, verdict):
     return ("the k4all-operator holds the drain of %s: %s (checked %s, for "
             "%s): %s. Nothing was changed. Approve a fix in the k4all addon "
             "(Upgrades) and run the upgrade as a ClusterUpgrade, or fix it by "
-            "hand (see %s)"
+            "hand (see %s). After a fix by hand, ask the k4all-operator for a "
+            "new check (`%s`), then `k4all-upgrade clear-hold` and "
+            "`k4all-upgrade resume`"
             % (node, _things(verdict["blocks"], "stops it", "stop it"),
                verdict["at"], verdict["release"], _blocks_named(verdict),
-               DRAIN_DOCS))
+               DRAIN_DOCS, CHECK_READINESS_COMMAND))
 
 
 def drain_readiness_note(node, verdict):

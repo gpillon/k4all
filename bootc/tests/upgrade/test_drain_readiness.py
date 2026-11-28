@@ -49,7 +49,10 @@ HOLD = ("the k4all-operator holds the drain of k4all-node-1: 1 thing stops it "
         "(checked 2026-11-24T01:12:25Z, for v2.8.0): " + CNPG + ". Nothing was "
         "changed. Approve a fix in the k4all addon (Upgrades) and run the "
         "upgrade as a ClusterUpgrade, or fix it by hand (see docs/upgrades.md, "
-        "Drains that never end)")
+        "Drains that never end). After a fix by hand, ask the k4all-operator "
+        "for a new check (`kubectl annotate clusterupgrade k4all "
+        "k4all.magesgate.com/check-readiness=now --overwrite`), then "
+        "`k4all-upgrade clear-hold` and `k4all-upgrade resume`")
 WAIT = ("Node k4all-node-1: the k4all-operator found 1 thing that stops its "
         "drain (checked 2026-11-24T01:12:25Z): " + CNPG + ". Fix it (the k4all "
         "addon, Upgrades), then drain this node from a control plane.")

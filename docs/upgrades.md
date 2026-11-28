@@ -439,8 +439,8 @@ What a fresh verdict changes:
   `the k4all-operator holds the drain of <node>: 1 thing stops it (checked
   <at>, for <release>): <finding>. Nothing was changed. Approve a fix in the
   k4all addon (Upgrades) and run the upgrade as a ClusterUpgrade, or fix it
-  by hand ...`. With none, the built-in check runs too: it is live and
-  cheap.
+  by hand (see ...)`. It ends with what to run after a fix by hand (below).
+  With none, the built-in check runs too: it is live and cheap.
 - A worker that waits for its drain says the verdict first in `Waiting:`:
   `Node <node>: the k4all-operator found 1 thing that stops its drain
   (checked <at>): <finding>. Fix it (the k4all addon, Upgrades), then drain
@@ -450,10 +450,11 @@ What a fresh verdict changes:
 
 A verdict is as old as the operator's last check. After a fix by hand, ask
 for a new check before `clear-hold` and `resume`, or the old verdict holds
-the hop again until the next one:
+the hop again until the next one (the HOLD says so):
 
 ```bash
-kubectl annotate clusterupgrade k4all k4all.magesgate.com/check-readiness=now
+kubectl annotate clusterupgrade k4all k4all.magesgate.com/check-readiness=now --overwrite
+sudo k4all-upgrade clear-hold && sudo k4all-upgrade resume
 ```
 
 `k4all-upgrade status` and `k4all-upgrade plan` (after the hops) show the
